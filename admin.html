@@ -143,7 +143,7 @@ window._countDistinctCpfsSimulado = async function() {
   }
 };
 
-/** Atualiza cards Alunos B2B (alunos_master) e impacto simulado (CPFs em simulado_respostas). */
+/** Atualiza cards Alunos B2B (alunos_master) e alunos só-simulado. */
 window._refreshDashAlunoStats = async function() {
   const fmt = n => n.toLocaleString('pt-BR');
   const elB = document.getElementById('statAlunos');
@@ -154,7 +154,11 @@ window._refreshDashAlunoStats = async function() {
     'select=cpf&or=(cadastro_origem.eq.ies,cadastro_origem.is.null)'
   );
   if (elB) elB.textContent = nB2b != null ? fmt(nB2b) : '—';
-  const nSim = await window._countDistinctCpfsSimulado();
+  // Alunos que só existem por simulado (não são B2B)
+  const nSim = await window._supaAdminCount(
+    'alunos_master',
+    'select=cpf&cadastro_origem=eq.simulado'
+  );
   if (elS) elS.textContent = nSim != null ? fmt(nSim) : '—';
 };
 
@@ -960,7 +964,7 @@ window.parseArr = function(v) {
       </div>
       <div class="dash-stats" id="dashStats">
         <div class="dash-stat"><div class="dash-stat-number" id="statAlunos">—</div><div class="dash-stat-label">Alunos ativos B2B</div></div>
-        <div class="dash-stat"><div class="dash-stat-number" id="statAlunosSimulado">—</div><div class="dash-stat-label">Alunos (simulado / impacto)</div></div>
+        <div class="dash-stat"><div class="dash-stat-number" id="statAlunosSimulado">—</div><div class="dash-stat-label">Alunos (só simulado)</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statQuestoes">—</div><div class="dash-stat-label">Questões realizadas</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statHoras">—</div><div class="dash-stat-label">Horas de estudo</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statMedia">—</div><div class="dash-stat-label">Instituições cadastradas</div></div>
@@ -1430,7 +1434,11 @@ window.parseArr = function(v) {
                 <input type="file" accept=".xlsx,.xls,.xlsm" id="simFileBq">
               </div>
             </div>
-            <!-- Questões anuladas — aparece para qualquer tipo de simulado -->
+            <!-- Banner de formato detectado -->
+            <div id="simFormatBanner" style="display:none;margin:16px 0;padding:14px 18px;border-radius:12px;font-size:0.82rem;line-height:1.6"></div>
+
+            <!-- Questões anuladas — escondido para planilha aprimorada -->
+            <div id="bqAnuladasSection">
             <div class="subsection" style="margin-top:20px">
               <div class="subsection-title">Questões anuladas <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted)">(opcional)</span></div>
             </div>
@@ -1455,6 +1463,7 @@ window.parseArr = function(v) {
               </div>
             </div>
             <div id="bqAnuladasPreview" style="display:none;margin-bottom:16px;padding:8px 12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);font-size:0.78rem;color:var(--amber)"></div>
+            </div><!-- /bqAnuladasSection -->
 
             <!-- Ranking e médias — só aparece para tipo tendências -->
             <div id="bqRankPanel" style="display:none">
@@ -7856,7 +7865,62 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     zone.classList.add("has-file");
   }
 
-  setupSimUpload("simUploadBq","simFileBq", f=>{simBQFile=f; updateSimBtn("BQ");});
+  setupSimUpload("simUploadBq","simFileBq", async f => {
+    simBQFile = f;
+    updateSimBtn("BQ");
+    // Early format detection
+    try {
+      const wb = await readExcelFile(f);
+      const picked = pickBQSheet(wb);
+      const rows = wsToRows(picked.sheet);
+      const fmt = detectPlanilhaFormat(rows);
+      window._detectedFormat = fmt;
+      window._preloadedWb = wb;
+      _showFormatBanner(fmt);
+    } catch(e) {
+      console.warn('Early format detection failed:', e);
+      window._detectedFormat = null;
+      window._preloadedWb = null;
+    }
+  });
+
+  function _showFormatBanner(fmt) {
+    const banner = $("simFormatBanner");
+    const anuladasSection = $("bqAnuladasSection");
+    if (!banner) return;
+
+    if (fmt.format === 'aprimorada') {
+      banner.style.display = 'block';
+      banner.style.background = 'rgba(22,163,74,0.08)';
+      banner.style.border = '1.5px solid rgba(22,163,74,0.3)';
+      banner.style.color = 'var(--text)';
+      banner.innerHTML = `
+        <div style="font-weight:700;color:#16a34a;font-size:0.9rem;margin-bottom:6px">📊 Planilha Aprimorada detectada</div>
+        <div>
+          ${fmt.title ? `<strong>${fmt.title}</strong><br>` : ''}
+          ${fmt.institutionName ? `${fmt.institutionName}<br>` : ''}
+          <strong>${fmt.totalStudents}</strong> alunos com nome, email e período
+          ${fmt.mediaFromPlanilha != null ? ` · Média IES: <strong style="color:#16a34a">${fmt.mediaFromPlanilha.toFixed(1)}%</strong> (da planilha)` : ''}
+          <br><span style="color:var(--text-muted);font-size:0.78rem">Notas já corrigidas na planilha — anuladas não serão recalculadas</span>
+        </div>`;
+      if (anuladasSection) anuladasSection.style.display = 'none';
+    } else if (fmt.format === 'remark') {
+      banner.style.display = 'block';
+      banner.style.background = 'rgba(59,130,246,0.08)';
+      banner.style.border = '1.5px solid rgba(59,130,246,0.3)';
+      banner.style.color = 'var(--text)';
+      banner.innerHTML = `
+        <div style="font-weight:700;color:#3b82f6;font-size:0.9rem;margin-bottom:6px">📋 Planilha Remark detectada</div>
+        <div>
+          <strong>${fmt.totalStudents}</strong> alunos identificados por CPF
+          <br><span style="color:var(--text-muted);font-size:0.78rem">Notas serão calculadas a partir das respostas + gabarito do banco de questões</span>
+        </div>`;
+      if (anuladasSection) anuladasSection.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
+      if (anuladasSection) anuladasSection.style.display = 'block';
+    }
+  }
 
   $("simBQSelect").addEventListener("change",()=>{ updateSimBtn("BQ"); _showSimTipoHint(); });
   /** Alinha radios de anuladas ao cadastro do simulado (ou excluir). */
@@ -7913,6 +7977,70 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     hint.innerHTML = `${icon} Tipo: <strong>${tipo}</strong> — resultado será exibido em <strong>${dest}</strong> no painel do coordenador`;
     if (rankPanel) rankPanel.style.display = isTendencias ? 'block' : 'none';
     _syncBqAnuladaTratFromSim();
+    // Auto-preencher ranking nacional se disponível
+    if (isTendencias) _autoFillRanking(sim);
+  }
+
+  /** Busca ranking nacional e regional salvos e auto-preenche os campos */
+  async function _autoFillRanking(sim) {
+    try {
+      const slug = ($("simInst")?.value || '').trim();
+      if (!slug) return;
+
+      // Buscar rankings salvos (nacional + regional)
+      const rows = await window._supaRest('simulado_respostas',
+        `select=respostas,aluno_nome&aluno_nome=in.(__NACIONAL_RANKING__,__REGIONAL_RANKING__)&ies_slug=eq.__GLOBAL__&order=id.desc&limit=10`);
+      if (!rows.length) return;
+
+      const nacRow = rows.find(r => r.aluno_nome === '__NACIONAL_RANKING__');
+      const regRow = rows.find(r => r.aluno_nome === '__REGIONAL_RANKING__');
+
+      let nacData = nacRow?.respostas;
+      let regData = regRow?.respostas;
+
+      if (!nacData?.ranking || !nacData?.slug_map) return;
+
+      const slugMap = nacData.slug_map;
+      const iesName = slugMap[slug];
+      if (!iesName) return;
+
+      // Nacional
+      const nacEntry = nacData.ranking.find(r => r.ies === iesName);
+      if (!nacEntry) return;
+
+      const elRankNac = $("bqRankNac");
+      const elRankNacTotal = $("bqRankNacTotal");
+      const elMediaGeral = $("bqMediaGeral");
+      const elRankReg = $("bqRankReg");
+      const elRankRegTotal = $("bqRankRegTotal");
+
+      if (elRankNac && !elRankNac.value) elRankNac.value = nacEntry.rank;
+      if (elRankNacTotal && !elRankNacTotal.value) elRankNacTotal.value = nacData.total_ies;
+      if (elMediaGeral && !elMediaGeral.value) elMediaGeral.value = nacData.media_geral;
+
+      // Regional
+      let regInfo = '';
+      if (regData?.regions && regData?.slug_map) {
+        const regIesName = regData.slug_map[slug] || iesName;
+        for (const [regiao, entries] of Object.entries(regData.regions)) {
+          const regEntry = entries.find(e => e.ies === regIesName);
+          if (regEntry) {
+            if (elRankReg && !elRankReg.value) elRankReg.value = regEntry.rank;
+            if (elRankRegTotal && !elRankRegTotal.value) elRankRegTotal.value = entries.length;
+            regInfo = ` | Regional ${regiao}: <strong>#${regEntry.rank}/${entries.length}</strong>`;
+            break;
+          }
+        }
+      }
+
+      // Feedback visual
+      const hintEl = $("simBQTipoHint");
+      if (hintEl) {
+        hintEl.innerHTML += `<br><span style="font-size:0.78rem;color:#16a34a">✅ Ranking auto-preenchido: Nacional <strong>#${nacEntry.rank}/${nacData.total_ies}</strong>${regInfo} — média geral: ${nacData.media_geral}%</span>`;
+      }
+    } catch(e) {
+      console.warn('Auto-fill ranking:', e);
+    }
   }
 
   // ── Logging ─────────────────────────────────────────────────
@@ -7928,9 +8056,10 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
    * Exibe modal de revisão com várias camadas de confirmação antes de gravar.
    * Retorna Promise<{ confirmed: boolean, notaSource: 'planilha'|'calculada' }>
    */
-  function _showUploadReviewAndConfirm({ studentsData, colNotaPlanilha, anuladaTrat, anuladasCount, totalQuestoes, simTitulo, slug }) {
+  function _showUploadReviewAndConfirm({ studentsData, colNotaPlanilha, anuladaTrat, anuladasCount, anuladasFromDb, totalQuestoes, simTitulo, slug, formatInfo, bqJaExistiam, bqNovosCount, bqNovosComNome }) {
     return new Promise((resolve) => {
       // ── Compute stats ──
+      const isAprim = formatInfo && formatInfo.format === 'aprimorada';
       const temPlanilha = studentsData.some(a => a.notaPlanilha != null);
       const temCalculada = studentsData.length > 0;
 
@@ -7993,6 +8122,34 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
               As notas foram <strong>calculadas automaticamente</strong> a partir das respostas com tratamento de anuladas: <strong>${anuladaTrat === 'creditar' ? 'creditadas para todos' : 'excluídas do denominador'}</strong>.
               <br>Média IES calculada: <strong style="color:${_fc(mediaCalc)}">${fmtP(mediaCalc)}</strong>
               <br><br><span style="color:var(--text-muted)">Confira se o tratamento de anuladas está correto e se a média confere com sua planilha original.</span>
+            </div>
+          </div>`;
+      }
+
+      // Anuladas info
+      let anuladasHTML = '';
+      if (anuladasCount > 0) {
+        const origemAnul = anuladasFromDb > 0
+          ? `<strong>${anuladasFromDb}</strong> do cadastro do simulado no banco` + (anuladasCount > anuladasFromDb ? ` + <strong>${anuladasCount - anuladasFromDb}</strong> informada(s) manualmente` : '')
+          : `<strong>${anuladasCount}</strong> informada(s) manualmente`;
+        anuladasHTML = `
+          <div style="background:rgba(217,119,6,0.08);border:1.5px solid rgba(217,119,6,0.3);border-radius:12px;padding:16px 20px;margin-bottom:16px">
+            <div style="font-weight:700;color:#d97706;font-size:0.9rem;margin-bottom:8px">🚫 Questões anuladas: ${anuladasCount}</div>
+            <div style="font-size:0.82rem;color:var(--text);line-height:1.6">
+              Origem: ${origemAnul}
+              <br>Tratamento atual: <strong>${anuladaTrat === 'creditar' ? 'creditadas para todos (conta como acerto)' : 'excluídas do denominador'}</strong>
+              ${temPlanilha ? '<br><span style="color:var(--text-muted);font-size:0.78rem">Como há coluna de nota na planilha, o tratamento só afeta alunos sem valor nessa coluna.</span>' : ''}
+            </div>
+            <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1px solid var(--border-subtle);font-size:0.78rem;font-weight:600">
+                <input type="radio" name="_reviewAnuladaTrat" value="excluir" ${anuladaTrat === 'excluir' ? 'checked' : ''} style="accent-color:#d97706"> Excluir do denominador (Remark®)
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1px solid var(--border-subtle);font-size:0.78rem;font-weight:600">
+                <input type="radio" name="_reviewAnuladaTrat" value="creditar" ${anuladaTrat === 'creditar' ? 'checked' : ''} style="accent-color:#d97706"> Creditar para todos
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1px solid var(--border-subtle);font-size:0.78rem;font-weight:600">
+                <input type="radio" name="_reviewAnuladaTrat" value="ignorar" style="accent-color:#6b7280"> Ignorar anuladas (tratar como questão normal)
+              </label>
             </div>
           </div>`;
       }
@@ -8072,6 +8229,23 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
         <!-- Step 1: Resumo geral -->
         <div id="_reviewStep1">
+          <!-- Format banner -->
+          ${isAprim ? `
+          <div style="background:rgba(22,163,74,0.08);border:1.5px solid rgba(22,163,74,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:0.82rem">
+            <strong style="color:#16a34a">📊 Planilha Aprimorada</strong> — notas da planilha (já corrigidas) · anuladas não aplicadas
+          </div>` : `
+          <div style="background:rgba(59,130,246,0.08);border:1.5px solid rgba(59,130,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:0.82rem">
+            <strong style="color:#3b82f6">📋 Planilha Remark</strong> — notas calculadas a partir das respostas + gabarito do banco
+          </div>`}
+
+          <!-- Cross-reference alunos -->
+          ${bqJaExistiam != null ? `
+          <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:0.82rem">
+            <div style="font-weight:700;font-size:0.8rem;margin-bottom:6px;color:var(--text)">Cruzamento com alunos_master</div>
+            <div>✅ <strong>${bqJaExistiam}</strong> CPFs encontrados no cadastro (B2B)</div>
+            ${bqNovosCount > 0 ? `<div>🆕 <strong>${bqNovosCount}</strong> CPFs novos (auto-cadastrados)${isAprim && bqNovosComNome ? ` — ${bqNovosComNome} com nome/email/turma` : bqNovosCount > 0 && !isAprim ? ' — apenas CPF (completar nome depois)' : ''}</div>` : '<div>✅ Todos os CPFs já estavam no cadastro</div>'}
+          </div>` : ''}
+
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
             <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
               <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Alunos</div>
@@ -8079,19 +8253,19 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
             </div>
             <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
               <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Questões</div>
-              <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${totalQuestoes}${anuladasCount > 0 ? ` <span style="font-size:0.7rem;color:#d97706">(${anuladasCount} anul.)</span>` : ''}</div>
+              <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${totalQuestoes}${!isAprim && anuladasCount > 0 ? ` <span style="font-size:0.7rem;color:#d97706">(${anuladasCount} anul.)</span>` : ''}</div>
             </div>
             <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
-              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Média IES (calc.)</div>
-              <div style="font-size:1.3rem;font-weight:800;color:${mediaCalc != null ? _fc(mediaCalc) : 'var(--text)'}">${fmtP(mediaCalc)}</div>
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">${isAprim ? 'Média IES (planilha)' : 'Média IES (calc.)'}</div>
+              <div style="font-size:1.3rem;font-weight:800;color:${(isAprim ? mediaPlan || mediaCalc : mediaCalc) != null ? _fc(isAprim ? (mediaPlan || mediaCalc) : mediaCalc) : 'var(--text)'}">${isAprim ? fmtP(mediaPlan || mediaCalc) : fmtP(mediaCalc)}</div>
             </div>
-            ${temPlanilha ? `<div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+            ${!isAprim && temPlanilha ? `<div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
               <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Média IES (plan.)</div>
               <div style="font-size:1.3rem;font-weight:800;color:${mediaPlan != null ? _fc(mediaPlan) : 'var(--text)'}">${fmtP(mediaPlan)}</div>
             </div>` : ''}
-            <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+            ${!isAprim ? `<div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
               <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Anuladas</div>
-              <div style="font-size:1.3rem;font-weight:800;color:${anuladasCount > 0 ? '#d97706' : 'var(--text)'}">${anuladasCount > 0 ? anuladasCount + ' (' + (anuladaTrat === 'creditar' ? 'credit.' : 'excl.') + ')' : '0'}</div>
+              <div style="font-size:1.3rem;font-weight:800;color:${anuladasCount > 0 ? '#d97706' : 'var(--text)'}">${anuladasCount > 0 ? anuladasCount + ' (' + (anuladaTrat === 'creditar' ? 'credit.' : 'excl.') + ')' : '0'}</div>` : ''}
             </div>
             <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
               <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Turmas</div>
@@ -8099,8 +8273,9 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
             </div>
           </div>
 
-          ${notaSourceHTML}
-          ${divHTML}
+          ${isAprim ? '' : notaSourceHTML}
+          ${isAprim ? '' : anuladasHTML}
+          ${isAprim ? '' : divHTML}
           ${turmaHTML}
 
           <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--border-subtle)">
@@ -8148,15 +8323,17 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
       // Step 1 → Step 2
       modal.querySelector('#_reviewNextBtn').addEventListener('click', () => {
-        const source = (modal.querySelector('input[name="_reviewNotaSource"]:checked')?.value) || (temPlanilha ? 'planilha' : 'calculada');
+        const source = isAprim ? 'planilha' : ((modal.querySelector('input[name="_reviewNotaSource"]:checked')?.value) || (temPlanilha ? 'planilha' : 'calculada'));
+        const chosenAnulTrat = modal.querySelector('input[name="_reviewAnuladaTrat"]:checked')?.value || anuladaTrat;
+        const anulTratLabel = chosenAnulTrat === 'creditar' ? 'creditadas' : chosenAnulTrat === 'excluir' ? 'excluídas do denominador' : 'ignoradas (questão normal)';
         const chosenMedia = source === 'planilha' && mediaPlan != null ? mediaPlan : mediaCalc;
 
         modal.querySelector('#_reviewFinalSummary').innerHTML = `
           ✅ <strong>${studentsData.length}</strong> alunos serão gravados<br>
-          ✅ Fonte de nota: <strong>${source === 'planilha' ? 'coluna da planilha (Remark/Excel)' : 'calculada (' + (anuladaTrat === 'creditar' ? 'anuladas creditadas' : 'anuladas excluídas') + ')'}</strong><br>
+          ✅ Fonte de nota: <strong>${source === 'planilha' ? 'coluna da planilha (Remark/Excel)' : 'calculada'}</strong><br>
           ✅ Média IES final: <strong style="color:${_fc(chosenMedia)}">${fmtP(chosenMedia)}</strong><br>
           ✅ Turmas: ${turmaStats.map(t => t.label + ' (' + t.n + ')').join(', ')}
-          ${anuladasCount > 0 ? '<br>✅ Questões anuladas: <strong>' + anuladasCount + '</strong> — tratamento: <strong>' + (anuladaTrat === 'creditar' ? 'creditadas' : 'excluídas') + '</strong>' : ''}
+          ${anuladasCount > 0 ? '<br>✅ Questões anuladas: <strong>' + anuladasCount + '</strong> — tratamento: <strong>' + anulTratLabel + '</strong>' : ''}
         `;
 
         modal.querySelector('#_reviewStep1').style.display = 'none';
@@ -8174,7 +8351,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
         finalBtn.addEventListener('click', () => {
           if (finalBtn.disabled) return;
-          closeModal({ confirmed: true, notaSource: source });
+          closeModal({ confirmed: true, notaSource: source, anuladaTrat: chosenAnulTrat });
         });
       });
 
@@ -8314,6 +8491,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
    */
   function findBqColNotaPlanilha(hdr, skipColIdx) {
     const skip = new Set(skipColIdx.filter(i => i >= 0));
+    // Pass 1: exact known patterns (highest confidence)
     for (let c = 0; c < hdr.length; c++) {
       if (skip.has(c)) continue;
       if (parseQuestaoHeaderLabel(hdr[c]) !== null) continue;
@@ -8324,11 +8502,156 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       const low = lbl.toLowerCase();
       if (/^%?\s*acertos?$/.test(low) || /^acertos?\s*%$/.test(low)) return c;
       if (/^(nota|pontuacao|score|resultado|percentual)$/.test(low)) return c;
+      if (/^%?\s*(correto|corretas?)$/.test(low)) return c;
+      if (/^desempenho$/.test(low)) return c;
+      if (/^aproveitamento$/.test(low)) return c;
+      if (/^total\s*%$/.test(low) || /^%\s*total$/.test(low)) return c;
+      if (/^(percent|pct)\s*(acerto|correct)?$/.test(low)) return c;
+      if (/^media\s*%?$/.test(low)) return c;
+    }
+    // Pass 2: partial match (lower confidence — column contains keyword + % or "nota")
+    for (let c = 0; c < hdr.length; c++) {
+      if (skip.has(c)) continue;
+      if (parseQuestaoHeaderLabel(hdr[c]) !== null) continue;
+      const lbl = String(hdr[c] || "")
+        .trim()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+      const low = lbl.toLowerCase();
+      if (low.includes('%') && (low.includes('acert') || low.includes('corret') || low.includes('nota') || low.includes('desempenho') || low.includes('aprov'))) return c;
+      if (/nota\s*(final|geral|aluno)?/i.test(low)) return c;
     }
     return -1;
   }
 
   function wsToRows(ws) { return XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:false}); }
+
+  /**
+   * Detecta se a planilha é "Aprimorada" (com nome/email/período/nota corrigida)
+   * ou "Remark" (CPF + respostas brutas).
+   * @returns {{ format: 'aprimorada'|'remark'|'unknown', headerRow, studentStartRow, mediaRow, gabaritoRow, colNota, colNome, colEmail, colPeriodo, mediaFromPlanilha, institutionName, title }}
+   */
+  function detectPlanilhaFormat(rows) {
+    const result = {
+      format: 'unknown', headerRow: -1, studentStartRow: -1,
+      mediaRow: -1, gabaritoRow: -1,
+      colNota: -1, colNome: -1, colEmail: -1, colPeriodo: -1,
+      mediaFromPlanilha: null, institutionName: null, title: null,
+      totalStudents: 0
+    };
+
+    // 1. Check for Remark fingerprints in first 6 rows
+    for (let i = 0; i < Math.min(6, rows.length); i++) {
+      const rowText = (rows[i] || []).join(' ').toLowerCase();
+      if (rowText.includes('relatório das respostas') || rowText.includes('relatorio das respostas')) {
+        result.format = 'remark';
+        break;
+      }
+      if (rowText.includes('remark') || rowText.includes('gravic')) {
+        result.format = 'remark';
+        break;
+      }
+    }
+
+    // 2. Find header row (CPF in col A)
+    for (let i = 0; i < Math.min(20, rows.length); i++) {
+      const cellA = String(rows[i]?.[0] || '').trim().toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (cellA === 'cpf') {
+        result.headerRow = i;
+        break;
+      }
+    }
+    if (result.headerRow < 0) return result;
+
+    const hdr = rows[result.headerRow];
+
+    // 3. Check header columns (normalize NFD to handle accented chars like Período)
+    for (let c = 0; c < hdr.length; c++) {
+      const lbl = String(hdr[c] || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      if (/nome\s*(completo)?/.test(lbl) && !/cpf/.test(lbl) && result.colNome < 0) result.colNome = c;
+      if (/^e-?mail$/.test(lbl)) result.colEmail = c;
+      if (/periodo|^turma$/.test(lbl)) result.colPeriodo = c;
+      if (/^total$/.test(lbl) && c > 0 && c < 6) result.colNota = c;
+    }
+
+    // 4. If already identified as remark, fill remaining fields and return
+    if (result.format === 'remark') {
+      result.gabaritoRow = result.headerRow + 1;
+      result.studentStartRow = result.headerRow + 2;
+      // Count students
+      for (let i = result.studentStartRow; i < rows.length; i++) {
+        const cpf = String(rows[i]?.[0] || '').replace(/\D/g, '');
+        if (cpf.length >= 11) result.totalStudents++;
+      }
+      return result;
+    }
+
+    // 5. Aprimorada detection: header has Nome + Email columns
+    const hasNomeEmail = result.colNome >= 0 && result.colEmail >= 0;
+    if (hasNomeEmail) {
+      result.format = 'aprimorada';
+
+      // Extract title and institution from rows above header
+      if (result.headerRow >= 1) result.title = String(rows[0]?.[0] || '').trim() || null;
+      if (result.headerRow >= 2) result.institutionName = String(rows[1]?.[0] || '').trim() || null;
+
+      // Find metadata rows: Grande Área, Tema, Subtema, Dificuldade, % MedCof, Gabarito, Média
+      // Then find first student row (first row with valid CPF after header)
+      let gabRow = -1, mediaRow = -1;
+      for (let i = result.headerRow + 1; i < Math.min(result.headerRow + 15, rows.length); i++) {
+        const cellA = String(rows[i]?.[0] || '').trim();
+        const cellALow = cellA.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+        if (cellALow.includes('gabarito')) {
+          gabRow = i;
+        } else if (cellALow.includes('media') || cellALow.includes('média') || cellALow === 'media') {
+          mediaRow = i;
+        }
+
+        // Check if this is a student row (CPF in col A)
+        const cpfClean = cellA.replace(/\D/g, '');
+        if (cpfClean.length >= 11 && result.studentStartRow < 0) {
+          result.studentStartRow = i;
+          break;
+        }
+      }
+
+      result.gabaritoRow = gabRow;
+      result.mediaRow = mediaRow;
+
+      // Read Média IES from media row
+      if (mediaRow >= 0 && result.colNota >= 0) {
+        const mediaVal = rows[mediaRow]?.[result.colNota];
+        result.mediaFromPlanilha = _parsePercentNotaPlanilha(mediaVal);
+      }
+
+      // Count students
+      if (result.studentStartRow >= 0) {
+        for (let i = result.studentStartRow; i < rows.length; i++) {
+          const cpf = String(rows[i]?.[0] || '').replace(/\D/g, '');
+          if (cpf.length >= 11) result.totalStudents++;
+        }
+      }
+
+      return result;
+    }
+
+    // 6. Fallback: check row after header for gabarito pattern (single letters)
+    const nextRow = rows[result.headerRow + 1] || [];
+    const gabLike = nextRow.slice(1, 10).filter(v => /^[A-Ea-e]$/.test(String(v || '').trim())).length;
+    if (gabLike >= 3) {
+      result.format = 'remark';
+      result.gabaritoRow = result.headerRow + 1;
+      result.studentStartRow = result.headerRow + 2;
+      for (let i = result.studentStartRow; i < rows.length; i++) {
+        const cpf = String(rows[i]?.[0] || '').replace(/\D/g, '');
+        if (cpf.length >= 11) result.totalStudents++;
+      }
+    }
+
+    return result;
+  }
 
   function findHeaderRow(rows, kws) {
     for(let i=0;i<Math.min(rows.length,20);i++){
@@ -8874,13 +9197,23 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       }));
       simLog(logId, `✅ ${questoesMeta.length} questões carregadas com gabarito e área`, "ok");
 
-      // ── 6. Ler workbook (Remark® clássico ou export enriquecido — mesma pipeline)
-      simLog(logId, "📂 Lendo planilha (Remark® ou export com Nome/Email/Período)...");
-      const wb = await readExcelFile(_bqFile);
+      // ── 6. Ler workbook — usar cache se já detectado no file drop
+      simLog(logId, "📂 Lendo planilha...");
+      const wb = window._preloadedWb || await readExcelFile(_bqFile);
+      window._preloadedWb = null; // liberar memória
       const picked = pickBQSheet(wb);
       simLog(logId, `📊 Aba: "${picked.name}"` + (picked.matchedHint ? ` — correspondencia: "${picked.matchedHint}"` : " — primeira aba do arquivo"), "ok");
       const rows = wsToRows(picked.sheet);
       if (!rows.length) throw new Error("Planilha vazia.");
+
+      // ── 6b. Detectar formato da planilha
+      const formatInfo = window._detectedFormat || detectPlanilhaFormat(rows);
+      window._detectedFormat = null;
+      const isAprimorada = formatInfo.format === 'aprimorada';
+      simLog(logId, `📋 Formato: ${isAprimorada ? 'Planilha Aprimorada (notas corrigidas, nome/email/turma)' : 'Remark (CPF + respostas, cálculo necessário)'}`, "ok");
+      if (isAprimorada && formatInfo.mediaFromPlanilha != null) {
+        simLog(logId, `📊 Média IES da planilha: ${formatInfo.mediaFromPlanilha.toFixed(1)}% (fonte de verdade — não será recalculada)`, "ok");
+      }
 
       // ── 7. Linha de cabeçalho: coluna A = CPF (vários layouts de export)
       const hRow = findBQHeaderRow(rows, 45);
@@ -8904,10 +9237,10 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       for (let c = 0; c < hdr.length; c++) {
         const lbl = String(hdr[c] || "").trim();
         if (!lbl) continue;
-        const low = lbl.toLowerCase();
-        if (/^e-?mail$/i.test(lbl) || low === "email") colEmail = c;
-        else if (/per[ií]odo/.test(lbl) || /^turma$/i.test(lbl)) colPeriodo = c;
-        else if (/nome/i.test(lbl) && !/cpf/i.test(lbl) && colNome < 0) colNome = c;
+        const low = lbl.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        if (/^e-?mail$/i.test(low) || low === "email") colEmail = c;
+        else if (/periodo/i.test(low) || /^turma$/i.test(low)) colPeriodo = c;
+        else if (/nome/i.test(low) && !/cpf/i.test(low) && colNome < 0) colNome = c;
       }
       const bqPlanilhaEnriquecida = colNome >= 0 || colEmail >= 0 || colPeriodo >= 0;
       simLog(
@@ -8920,13 +9253,16 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       }
 
       const _skipForNotaCol = [0, colNome, colEmail, colPeriodo, ...questCols.map(q => q.colIdx)].filter(i => i >= 0);
-      const colNotaPlanilha = findBqColNotaPlanilha(hdr, _skipForNotaCol);
+      // Para aprimorada, usar colNota detectado no formato; senão, buscar na header
+      let colNotaPlanilha = isAprimorada && formatInfo.colNota >= 0 ? formatInfo.colNota : findBqColNotaPlanilha(hdr, _skipForNotaCol);
       if (colNotaPlanilha >= 0) {
         simLog(
           logId,
-          `📊 Coluna de desempenho detectada: "${String(hdr[colNotaPlanilha] || "").trim()}" — a nota de cada aluno e a média da IES usarão o valor da planilha (Remark já pós-anulação).`,
+          `📊 Coluna de nota detectada: "${String(hdr[colNotaPlanilha] || "").trim()}" (col ${String.fromCharCode(65 + colNotaPlanilha)})${isAprimorada ? ' — fonte de verdade (planilha aprimorada)' : ''}`,
           "ok"
         );
+      } else if (isAprimorada) {
+        simLog(logId, `⚠️ Planilha aprimorada mas coluna de nota não encontrada. Notas serão calculadas.`, "warn");
       }
 
       // ── 9. Verificar contagem de questões
@@ -9004,15 +9340,13 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         simLog(logId, "⚠️ Erro ao buscar alunos: " + e.message, "warn");
       }
 
-      // ── 10b. CPF ausente no master → auto-cadastro (nome, email, turma, IES) a partir da planilha
-      const instNomeParaAluno =
-        typeof _resolveInstituicaoNomeForAlunos === "function"
-          ? (_resolveInstituicaoNomeForAlunos(slug) || String(slug).replace(/-/g, " ").toUpperCase())
-          : String(slug).replace(/-/g, " ").toUpperCase();
+      // ── 10b. Identificar CPFs novos (SEM gravar — gravação só após confirmação final)
+      const instNomeParaAluno = slug; // sempre usar slug para uniformizar com cadastro IES
       const cpfKeysAntesLookup = new Set(Object.keys(cpfToAluno));
       let bqJaExistiam = 0;
       const bqNovosMap = new Map();
-      for (let ri = hRow + 1; ri < rows.length; ri++) {
+      const _autoRegStartRow = isAprimorada && formatInfo.studentStartRow >= 0 ? formatInfo.studentStartRow : hRow + 1;
+      for (let ri = _autoRegStartRow; ri < rows.length; ri++) {
         const row = rows[ri];
         const cpfNorm = _bqCpfFromCell(row[0]);
         if (!cpfNorm) continue;
@@ -9028,113 +9362,66 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
             email: emailX || null,
             turma: turmaX
           });
+          // Atualizar lookup local para o processamento (sem gravar no banco ainda)
+          cpfToAluno[cpfNorm] = { nome: nomeX || "", turma: turmaX || "" };
         }
       }
-      let bqCadastradosNovos = 0;
-      const cpfStubSemNomeOk = new Set();
-      if (bqNovosMap.size > 0) {
-        simLog(logId, `📝 ${bqNovosMap.size} CPF(s) não encontrado(s) no master — gravando alunos_master (origem simulado; nome opcional)...`, "ok");
-        const tsIns = new Date().toISOString();
-        const arrNovos = [...bqNovosMap.values()];
-        const chunkAl = 200;
-        for (let ci = 0; ci < arrNovos.length; ci += chunkAl) {
-          const slice = arrNovos.slice(ci, ci + chunkAl);
-          const batch = slice.map(r => ({
-            cpf: r.cpf,
-            nome: r.nome || "",
-            email: r.email,
-            instituicao: instNomeParaAluno,
-            turma: r.turma != null ? r.turma : null,
-            cadastro_origem: "simulado",
-            updated_at: tsIns
-          }));
-          try {
-            const resp = await window._supaWrite(`alunos_master?on_conflict=cpf,instituicao`, "POST", batch);
-            if (resp.ok) {
-              bqCadastradosNovos += slice.length;
-              slice.forEach(r => {
-                cpfToAluno[r.cpf] = { nome: r.nome || "", turma: r.turma || "" };
-                if (!String(r.nome || "").trim()) cpfStubSemNomeOk.add(r.cpf);
-              });
-            } else {
-              const errTxt = await resp.text().catch(() => "");
-              simLog(logId, `⚠️ alunos_master (lote): HTTP ${resp.status} — ${errTxt.slice(0, 220)}`, "warn");
-            }
-          } catch (eUps) {
-            simLog(logId, `⚠️ alunos_master: ${eUps.message}`, "warn");
-          }
-        }
-      }
-      const bqSemNomeStub = [...bqNovosMap.values()].filter(r => !String(r.nome || "").trim()).length;
-      simLog(
-        logId,
-        `📊 Cadastro alunos_master (esta importação): ${bqJaExistiam} já existiam | ${bqCadastradosNovos} cadastrado(s)/atualizado(s) a partir do simulado` +
-          (bqSemNomeStub > 0 ? ` | ${bqSemNomeStub} só CPF (atribua o nome em Gestão de alunos)` : ""),
-        "ok"
-      );
-      if (bqNovosMap.size > 0 && bqCadastradosNovos < bqNovosMap.size) {
-        simLog(logId, `⚠️ Auto-cadastro parcial: ${bqNovosMap.size - bqCadastradosNovos} de ${bqNovosMap.size} não gravaram — verifique o log acima.`, "warn");
-      }
+      simLog(logId, `📊 CPFs: ${bqJaExistiam} já no master | ${bqNovosMap.size} novos (serão cadastrados após confirmação)`, "ok");
 
-      // ── 11. Processar questões anuladas (campo manual + cadastro do simulado no BQ)
-      const _anuladasRaw = ($("bqAnuladas")?.value || "").trim();
-      const _totalQ = questCols.length;
-      const _parsedAnuladas = _anuladasRaw.split(/[\s,;]+/).map(v => parseInt(v, 10) - 1).filter(n => !isNaN(n) && n >= 0);
-      const _foraRange = _parsedAnuladas.filter(n => n >= _totalQ);
-      const anuladasIdx = new Set(_parsedAnuladas.filter(n => n < _totalQ));
-      const _paAnul = window.parseArr || function (v) {
-        if (Array.isArray(v)) return v;
-        try { return JSON.parse(v || "[]"); } catch (e) { return []; }
-      };
-      const qAnulSim = _paAnul(sim.questoes_anuladas);
+      // ── 11. Processar questões anuladas (SKIP para aprimorada — notas já corrigidas)
+      const anuladasIdx = new Set();
+      let anuladaTrat = 'excluir';
       let mergedAnulFromDb = 0;
-      if (Array.isArray(qAnulSim) && qAnulSim.length && compFinal.length) {
-        qAnulSim.forEach(qid => {
-          const idx = compFinal.findIndex(x => String(x) === String(qid));
-          if (idx >= 0 && idx < _totalQ) {
-            if (!anuladasIdx.has(idx)) mergedAnulFromDb++;
-            anuladasIdx.add(idx);
+      let totalAnuladas = 0;
+      const _totalQ = questCols.length;
+
+      if (isAprimorada) {
+        simLog(logId, `ℹ️ Planilha aprimorada — anuladas ignoradas (notas já ajustadas na planilha).`, "ok");
+      } else {
+        // Remark: processar anuladas normalmente
+        const _anuladasRaw = ($("bqAnuladas")?.value || "").trim();
+        const _parsedAnuladas = _anuladasRaw.split(/[\s,;]+/).map(v => parseInt(v, 10) - 1).filter(n => !isNaN(n) && n >= 0);
+        const _foraRange = _parsedAnuladas.filter(n => n >= _totalQ);
+        _parsedAnuladas.filter(n => n < _totalQ).forEach(n => anuladasIdx.add(n));
+        const _paAnul = window.parseArr || function (v) {
+          if (Array.isArray(v)) return v;
+          try { return JSON.parse(v || "[]"); } catch (e) { return []; }
+        };
+        const qAnulSim = _paAnul(sim.questoes_anuladas);
+        if (Array.isArray(qAnulSim) && qAnulSim.length && compFinal.length) {
+          qAnulSim.forEach(qid => {
+            const idx = compFinal.findIndex(x => String(x) === String(qid));
+            if (idx >= 0 && idx < _totalQ) {
+              if (!anuladasIdx.has(idx)) mergedAnulFromDb++;
+              anuladasIdx.add(idx);
+            }
+          });
+          if (mergedAnulFromDb > 0) {
+            simLog(logId, `📋 ${mergedAnulFromDb} questão(ões) anulada(s) do cadastro do simulado.`, "ok");
           }
-        });
-        if (mergedAnulFromDb > 0) {
-          simLog(
-            logId,
-            `📋 ${mergedAnulFromDb} questão(ões) anulada(s) aplicada(s) a partir do cadastro do simulado no Banco de Questões (evita divergência com o Remark).`,
-            "ok"
-          );
         }
-      }
-      let anuladaTrat = document.querySelector('input[name="bqAnuladaTrat"]:checked')?.value || "excluir";
-      if (!_anuladasRaw && (sim.questoes_anuladas_tratamento === "creditar" || sim.questoes_anuladas_tratamento === "excluir")) {
-        anuladaTrat = sim.questoes_anuladas_tratamento;
-        const rad = document.querySelector(`input[name="bqAnuladaTrat"][value="${anuladaTrat}"]`);
-        if (rad) rad.checked = true;
-      }
-      const totalAnuladas = anuladasIdx.size;
-      if (_foraRange.length > 0) {
-        simLog(logId, `⚠️ Índices de anuladas ignorados (fora do range 1-${_totalQ}): ${_foraRange.map(n => n + 1).join(", ")}`, "warn");
-      }
-      if (totalAnuladas > 0) {
-        simLog(
-          logId,
-          `⚠️ ${totalAnuladas} questão(ões) anulada(s): [${[...anuladasIdx].map(n => n + 1).join(", ")}] — tratamento: ${anuladaTrat === "creditar" ? "creditar para todos" : "excluir do denominador"}`,
-          "warn"
-        );
-      }
-      if (colNotaPlanilha >= 0 && totalAnuladas > 0) {
-        simLog(
-          logId,
-          `ℹ️ Há coluna de %/nota na planilha: a nota de cada aluno (e a média IES) segue essa coluna quando preenchida. O tratamento de anuladas acima só altera linhas sem valor válido na coluna — para bater com o Excel, use o mesmo critério do Remark na planilha.`,
-          "ok"
-        );
+        anuladaTrat = document.querySelector('input[name="bqAnuladaTrat"]:checked')?.value || "excluir";
+        if (!_anuladasRaw && (sim.questoes_anuladas_tratamento === "creditar" || sim.questoes_anuladas_tratamento === "excluir")) {
+          anuladaTrat = sim.questoes_anuladas_tratamento;
+          const rad = document.querySelector(`input[name="bqAnuladaTrat"][value="${anuladaTrat}"]`);
+          if (rad) rad.checked = true;
+        }
+        totalAnuladas = anuladasIdx.size;
+        if (_foraRange.length > 0) {
+          simLog(logId, `⚠️ Índices de anuladas ignorados (fora do range 1-${_totalQ}): ${_foraRange.map(n => n + 1).join(", ")}`, "warn");
+        }
+        if (totalAnuladas > 0) {
+          simLog(logId, `⚠️ ${totalAnuladas} questão(ões) anulada(s): [${[...anuladasIdx].map(n => n + 1).join(", ")}] — tratamento: ${anuladaTrat === "creditar" ? "creditar para todos" : "excluir do denominador"}`, "warn");
+        }
       }
 
       // ── 12. Processar linhas de alunos
-      simLog(logId, "👤 Processando alunos...");
+      const _studentStartRow = isAprimorada && formatInfo.studentStartRow >= 0 ? formatInfo.studentStartRow : hRow + 1;
+      simLog(logId, `👤 Processando alunos (início na linha ${_studentStartRow + 1})...`);
       const studentsData = [];
       let semNome = 0;
       let _bqLinhasIgnoradas = 0;
-      for (let i = hRow + 1; i < rows.length; i++) {
+      for (let i = _studentStartRow; i < rows.length; i++) {
         const row = rows[i];
         const cpfNorm = _bqCpfFromCell(row[0]);
         if (!cpfNorm) {
@@ -9144,8 +9431,11 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         }
         const cpf = cpfNorm;
         const alunoInfo = cpfToAluno[cpfNorm] || cpfToAluno[cpf] || null;
-        const nome  = alunoInfo?.nome  || '';
-        const turma = alunoInfo?.turma || '';
+        const nome  = alunoInfo?.nome  || (colNome >= 0 ? String(row[colNome] || "").trim() : '');
+        // Turma: prioriza alunos_master, depois coluna da planilha
+        const turmaMaster = alunoInfo?.turma || '';
+        const turmaPlanilha = colPeriodo >= 0 ? _normTurmaNr(row[colPeriodo]) : '';
+        const turma = turmaMaster || turmaPlanilha || '';
         if (!nome) semNome++;
 
         const respostas = [];
@@ -9222,7 +9512,127 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         `👥 ${studentsData.length} aluno(s) processado(s)` +
         (semNome > 0 ? ` (${semNome} sem nome — identificados por CPF)` : ''), "ok");
 
-      // ── 12. Salvar em simulado_respostas
+      // ── 12a. REVIEW & CONFIRM — Pausa para revisão antes de gravar ──
+      simLog(logId, "🔍 Abrindo painel de revisão — confira os dados antes de gravar...", "ok");
+      const _reviewResult = await _showUploadReviewAndConfirm({
+        studentsData,
+        colNotaPlanilha,
+        anuladaTrat,
+        anuladasCount: anuladasIdx.size,
+        anuladasFromDb: mergedAnulFromDb || 0,
+        totalQuestoes: questCols.length,
+        simTitulo: sim.titulo || 'Simulado',
+        slug,
+        formatInfo,
+        bqJaExistiam,
+        bqNovosCount: bqNovosMap.size,
+        bqNovosComNome: [...bqNovosMap.values()].filter(r => String(r.nome || '').trim()).length
+      });
+
+      if (!_reviewResult.confirmed) {
+        simLog(logId, "❌ Upload cancelado pelo usuário na etapa de revisão.", "warn");
+        return;
+      }
+
+      // ── 12b. Aplicar tratamento de anuladas escolhido pelo usuário ──
+      if (_reviewResult.anuladaTrat && _reviewResult.anuladaTrat !== anuladaTrat) {
+        const newTrat = _reviewResult.anuladaTrat;
+        simLog(logId, `📋 Tratamento de anuladas alterado: ${anuladaTrat} → ${newTrat}`, "ok");
+        anuladaTrat = newTrat;
+
+        // Se mudou o tratamento e não usa planilha, recalcular notas
+        if (newTrat === 'ignorar') {
+          // Ignorar = tratar anuladas como questões normais — recalcular
+          anuladasIdx.clear();
+        }
+        // Recalcular notaCalculada com novo tratamento
+        studentsData.forEach(a => {
+          let tc = 0, tv = 0;
+          const areaC = {}, areaT = {};
+          a.respostas.forEach((r, qi) => {
+            if (anuladasIdx.has(qi)) {
+              if (anuladaTrat === 'creditar') {
+                tc++; tv++;
+                if (r.area) { areaT[r.area] = (areaT[r.area]||0)+1; areaC[r.area] = (areaC[r.area]||0)+1; }
+              } else if (anuladaTrat === 'excluir') {
+                // skip
+              }
+            } else {
+              tv++;
+              const correct = !!(r.gab && (r.resp||'').toUpperCase() === r.gab);
+              if (correct) tc++;
+              if (r.area) { areaT[r.area] = (areaT[r.area]||0)+1; if (correct) areaC[r.area] = (areaC[r.area]||0)+1; }
+            }
+          });
+          a.notaCalculada = tv > 0 ? Math.round((tc / tv) * 10000) / 100 : 0;
+          for (const [area, total] of Object.entries(areaT)) {
+            a.notaPorArea[area] = Math.round(((areaC[area]||0) / total) * 10000) / 100;
+          }
+        });
+      }
+
+      // ── 12c. Aplicar fonte de notas escolhida pelo usuário ──
+      const _notaSource = _reviewResult.notaSource || (colNotaPlanilha >= 0 ? 'planilha' : 'calculada');
+      if (_notaSource === 'calculada') {
+        studentsData.forEach(a => { a.notaPct = a.notaCalculada; });
+        simLog(logId, `📋 Fonte de nota: CALCULADA (${anuladaTrat === 'creditar' ? 'anuladas creditadas' : anuladaTrat === 'excluir' ? 'anuladas excluídas do denominador' : 'anuladas ignoradas'}).`, "ok");
+      } else if (_notaSource === 'planilha') {
+        studentsData.forEach(a => {
+          a.notaPct = a.notaPlanilha != null ? a.notaPlanilha : a.notaCalculada;
+        });
+        simLog(logId, `📋 Fonte de nota: PLANILHA (coluna de % da planilha original).`, "ok");
+      }
+
+      // Para aprimorada: usar média da planilha (E10) como fonte de verdade
+      const _mediaIesFinal = isAprimorada && formatInfo.mediaFromPlanilha != null
+        ? formatInfo.mediaFromPlanilha
+        : (studentsData.length > 0
+          ? Math.round(studentsData.reduce((s, a) => s + a.notaPct, 0) / studentsData.length * 10) / 10
+          : null);
+      const _mediaSource = isAprimorada && formatInfo.mediaFromPlanilha != null ? 'planilha_aprimorada' : _notaSource;
+      simLog(logId, `📊 Média IES final: ${_mediaIesFinal != null ? _mediaIesFinal.toFixed(1) + '%' : 'n/d'} (fonte: ${_mediaSource})`, "ok");
+
+      // ── 12c. Agora sim: gravar alunos novos no alunos_master (após confirmação) ──
+      let bqCadastradosNovos = 0;
+      const cpfStubSemNomeOk = new Set();
+      if (bqNovosMap.size > 0) {
+        simLog(logId, `📝 Gravando ${bqNovosMap.size} aluno(s) novo(s) no alunos_master...`, "ok");
+        const tsIns = new Date().toISOString();
+        const arrNovos = [...bqNovosMap.values()];
+        const chunkAl = 200;
+        for (let ci = 0; ci < arrNovos.length; ci += chunkAl) {
+          const slice = arrNovos.slice(ci, ci + chunkAl);
+          const batch = slice.map(r => ({
+            cpf: r.cpf,
+            nome: r.nome || "",
+            email: r.email,
+            instituicao: instNomeParaAluno,
+            turma: r.turma != null ? r.turma : null,
+            cadastro_origem: "simulado",
+            updated_at: tsIns
+          }));
+          try {
+            const resp = await window._supaWrite(`alunos_master?on_conflict=cpf,instituicao`, "POST", batch);
+            if (resp.ok) {
+              bqCadastradosNovos += slice.length;
+              slice.forEach(r => {
+                if (!String(r.nome || "").trim()) cpfStubSemNomeOk.add(r.cpf);
+              });
+            } else {
+              const errTxt = await resp.text().catch(() => "");
+              simLog(logId, `⚠️ alunos_master (lote): HTTP ${resp.status} — ${errTxt.slice(0, 220)}`, "warn");
+            }
+          } catch (eUps) {
+            simLog(logId, `⚠️ alunos_master: ${eUps.message}`, "warn");
+          }
+        }
+        const bqSemNomeStub = [...bqNovosMap.values()].filter(r => !String(r.nome || "").trim()).length;
+        simLog(logId,
+          `✅ ${bqCadastradosNovos} aluno(s) cadastrado(s) no master` +
+          (bqSemNomeStub > 0 ? ` | ${bqSemNomeStub} só CPF` : ''), "ok");
+      }
+
+      // ── 12d. Salvar em simulado_respostas ──
       const simRef = `bq_${slug}_${simId.slice(0, 8)}`;
       const _SUPA  = 'https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1';
       const _KEY   = window._SUPA_REST_KEY;
@@ -9243,7 +9653,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         body: JSON.stringify({
           simulado_ref: simRef, ies_slug: slug,
           aluno_nome: '__META__',
-          respostas: { questions: compactQuestions, tipo: sim.tipo || 'personalizado', titulo: sim.titulo, anuladas: anuladasInfo }
+          respostas: { questions: compactQuestions, tipo: sim.tipo || 'personalizado', titulo: sim.titulo, anuladas: anuladasInfo,
+            _notaSource: _notaSource }
         })
       });
       if (!metaResp.ok) simLog(logId, `⚠️ Erro META: ${metaResp.status}`, "err");
@@ -9287,9 +9698,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       }
 
       // ── 13. Salvar métricas comparativas (__RANKING__) ────────────────
-      const mediaIes = studentsData.length > 0
-        ? Math.round(studentsData.reduce((s, a) => s + a.notaPct, 0) / studentsData.length * 10) / 10
-        : null;
+      const mediaIes = _mediaIesFinal;
       const _linkGab = (document.getElementById('bqLinkGabarito')?.value || '').trim();
       const _linkBol = (document.getElementById('bqLinkBoletins')?.value || '').trim();
       const rankMeta = {
@@ -9299,6 +9708,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         ranking_regional_total: parseInt(document.getElementById('bqRankRegTotal')?.value) || null,
         media_geral:  parseFloat(document.getElementById('bqMediaGeral')?.value) || null,
         media_ies:    mediaIes,
+        nota_source:  _mediaSource,
+        anuladas_tratamento: anuladaTrat,
         simulado_titulo: sim.titulo,
         processado_em:   new Date().toISOString(),
         link_gabarito: _linkGab || null,

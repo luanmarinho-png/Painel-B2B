@@ -1682,6 +1682,8 @@ async function _renderSimuladoDetail(root, slug, ref) {
   const totalQuestoes = questions.length || (persData && persData.totalQuestoes) || 0;
   const anuladasInfo = (meta && meta.anuladas) || null;
   const anuladasCount = anuladasInfo ? (anuladasInfo.indices || []).length : 0;
+  const _notaSourceMeta = (meta && meta._notaSource) || (ranking && ranking.nota_source) || null;
+  const _anuladasTratMeta = (anuladasInfo && anuladasInfo.tratamento) || (ranking && ranking.anuladas_tratamento) || null;
 
   // ── 3. Compute statistics from alunos ──
   const notas = alunos.map(a => a.nota).filter(n => n != null).sort((a, b) => a - b);
@@ -1778,14 +1780,20 @@ async function _renderSimuladoDetail(root, slug, ref) {
       ? 'Anuladas no upload: <strong>creditadas</strong> (contam como acerto — média tende a ficar acima do Excel com “excluir”).'
       : 'Anuladas no upload: <strong>excluídas do denominador</strong> (alinha ao Remark®).')
     : '';
+  const _notaSourceHint = _notaSourceMeta
+    ? (_notaSourceMeta === 'planilha'
+      ? '<span style=”display:inline-block;margin-top:4px;padding:2px 8px;border-radius:4px;background:rgba(22,163,74,0.1);color:#16a34a;font-size:0.58rem;font-weight:700”>Fonte: planilha</span>'
+      : '<span style=”display:inline-block;margin-top:4px;padding:2px 8px;border-radius:4px;background:rgba(234,179,8,0.1);color:#d97706;font-size:0.58rem;font-weight:700”>Fonte: calculada' + (_anuladasTratMeta ? ' · ' + (_anuladasTratMeta === 'creditar' ? 'anul. creditadas' : 'anul. excluídas') : '') + '</span>')
+    : '';
 
   // ── OVERVIEW ──
   let overviewMetrics = `
-    <div class="sim-metric-card">
-      <div class="sim-metric-label">Média IES</div>
-      <div class="sim-metric-value" style="color:${mediaIES != null ? _faixaColor(mediaIES) : 'var(--text)'}">${fmtPct(mediaIES)}</div>
-      ${mediaIES != null ? `<div style="font-size:0.62rem;font-weight:700;color:${_faixaColor(mediaIES)};margin-top:4px">${_faixaLabel(mediaIES)}</div>` : ''}
-      ${anuladasCount > 0 && anuladasTratHint ? `<div style="font-size:0.58rem;color:var(--text-muted);margin-top:8px;line-height:1.4;max-width:280px">${anuladasTratHint}</div>` : ''}
+    <div class=”sim-metric-card”>
+      <div class=”sim-metric-label”>Média IES</div>
+      <div class=”sim-metric-value” style=”color:${mediaIES != null ? _faixaColor(mediaIES) : 'var(--text)'}”>${fmtPct(mediaIES)}</div>
+      ${mediaIES != null ? `<div style=”font-size:0.62rem;font-weight:700;color:${_faixaColor(mediaIES)};margin-top:4px”>${_faixaLabel(mediaIES)}</div>` : ''}
+      ${_notaSourceHint}
+      ${anuladasCount > 0 && anuladasTratHint ? `<div style=”font-size:0.58rem;color:var(--text-muted);margin-top:8px;line-height:1.4;max-width:280px”>${anuladasTratHint}</div>` : ''}
     </div>
     ${mediaGeral != null ? `<div class="sim-metric-card"><div class="sim-metric-label">Média Geral</div><div class="sim-metric-value" style="color:var(--text-muted)">${fmtPct(mediaGeral)}</div></div>` : ''}
     <div class="sim-metric-card"><div class="sim-metric-label">Alunos</div><div class="sim-metric-value">${totalAlunos}</div></div>
@@ -1795,16 +1803,34 @@ async function _renderSimuladoDetail(root, slug, ref) {
     ${notaMin != null ? `<div class="sim-metric-card"><div class="sim-metric-label">Menor nota</div><div class="sim-metric-value" style="color:#dc2626">${fmtPct(notaMin)}</div></div>` : ''}
   `;
 
-  // Rankings (tendências only)
-  let rankingCards = '';
+  // Rankings (tendências only) — destaque visual
+  let rankingSection = '';
   if (isTend && rankNac != null) {
-    rankingCards = `
-      <div class="sim-metric-card">
-        <div class="sim-metric-label">Ranking Nacional</div>
-        <div class="sim-metric-value">${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span></div>
+    const _rankColor = (pos, total) => {
+      const pct = total > 0 ? pos / total : 1;
+      if (pct <= 0.25) return '#16a34a';
+      if (pct <= 0.50) return '#3b82f6';
+      if (pct <= 0.75) return '#eab308';
+      return '#dc2626';
+    };
+    const nacColor = _rankColor(rankNac, rankNacTotal);
+    const regColor = rankReg != null ? _rankColor(rankReg, rankRegTotal) : null;
+    rankingSection = `
+    <section class="section-shell" style="margin-top:24px">
+      <h2 class="section-title">Posicionamento no ranking</h2>
+      <div style="display:grid;grid-template-columns:${rankReg != null ? '1fr 1fr' : '1fr'};gap:14px">
+        <div style="background:var(--bg-card);border:1.5px solid ${nacColor}33;border-radius:16px;padding:24px;text-align:center">
+          <div style="font-size:0.7rem;text-transform:uppercase;font-weight:700;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px">Ranking Nacional</div>
+          <div style="font-size:2.8rem;font-weight:900;color:${nacColor};line-height:1">${rankNac}<span style="font-size:1.1rem;font-weight:700;color:var(--text-muted)">/${rankNacTotal}</span></div>
+          ${mediaGeral != null ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:10px">Média geral: <strong>${fmtPct(mediaGeral)}</strong></div>` : ''}
+        </div>
+        ${rankReg != null ? `
+        <div style="background:var(--bg-card);border:1.5px solid ${regColor}33;border-radius:16px;padding:24px;text-align:center">
+          <div style="font-size:0.7rem;text-transform:uppercase;font-weight:700;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px">Ranking Regional</div>
+          <div style="font-size:2.8rem;font-weight:900;color:${regColor};line-height:1">${rankReg}<span style="font-size:1.1rem;font-weight:700;color:var(--text-muted)">/${rankRegTotal}</span></div>
+        </div>` : ''}
       </div>
-      ${rankReg != null ? `<div class="sim-metric-card"><div class="sim-metric-label">Ranking Regional</div><div class="sim-metric-value">${rankReg}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankRegTotal}</span></div></div>` : ''}
-    `;
+    </section>`;
   }
 
   // ── DISTRIBUTION ──
@@ -1986,7 +2012,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
       const qDia = eng.questoesDia || 0;
       if (qDia >= 20) return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#16a34a;background:rgba(22,163,74,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#16a34a"></span>${qDia.toFixed(0)} q/dia</span>`;
       if (qDia >= 10) return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#d97706;background:rgba(217,119,6,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#d97706"></span>${qDia.toFixed(0)} q/dia</span>`;
-      return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:var(--text-muted);background:var(--bg-elevated);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted)"></span>${qDia.toFixed(0)} q/dia</span>`;
+      return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#dc2626"></span>${qDia.toFixed(0)} q/dia</span>`;
     };
 
     const alunoRows = alunosSorted.map((a, i) => {
@@ -2150,7 +2176,8 @@ async function _renderSimuladoDetail(root, slug, ref) {
   heroPills += _pill('Alunos', totalAlunos);
   heroPills += _pill('Questões', totalQuestoes);
   if (mediana != null) heroPills += _pill('Mediana', fmtPct(mediana));
-  if (isTend && rankNac != null) heroPills += _pill('Ranking', `${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span>`);
+  if (isTend && rankNac != null) heroPills += _pill('Nacional', `${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span>`);
+  if (isTend && rankReg != null) heroPills += _pill('Regional', `${rankReg}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankRegTotal}</span>`);
 
   // Gabarito link (stored in __RANKING__.respostas.link_gabarito)
   const linkGabarito = ranking ? ranking.link_gabarito : null;
@@ -2218,6 +2245,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
       </div>
     </section>
 
+    ${rankingSection}
     ${insightsHTML}
     ${distribHTML}
     ${areasHTML}
