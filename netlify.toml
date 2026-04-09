@@ -1,0 +1,42 @@
+functionsDirectory = "/Users/luanmarinho/Desktop/deploy atual b2b/Users/luanmarinho/Desktop/deploy atual b2b/netlify/functions"
+functionsDirectoryOrigin = "config-v1"
+headersOrigin = "config"
+redirectsOrigin = "config"
+plugins = []
+redirects = []
+
+[build]
+publish = "/Users/luanmarinho/Desktop/deploy atual b2b/Users/luanmarinho/Desktop/deploy atual b2b"
+publishOrigin = "config"
+functions = "/Users/luanmarinho/Desktop/deploy atual b2b/Users/luanmarinho/Desktop/deploy atual b2b/netlify/functions"
+
+  [build.environment]
+
+  [build.processing]
+
+    [build.processing.css]
+
+    [build.processing.html]
+
+    [build.processing.images]
+
+    [build.processing.js]
+
+  [build.services]
+
+[functions]
+
+  [functions.deploy-ies]
+  timeout = 60
+
+  [functions."*"]
+  node_bundler = "esbuild"
+
+[[headers]]
+for = "/.netlify/functions/*"
+
+  [headers.values]
+  Access-Control-Allow-Origin = "*"
+  Access-Control-Allow-Methods = "POST, OPTIONS"
+  Access-Control-Allow-Headers = "Content-Type, Authorization"
+  Access-Control-Max-Age = "86400"

@@ -1,0 +1,7 @@
+Este é um painel admin B2B (MedCof × IES) com:
+- admin.html: painel admin (741KB, monolítico)
+- facene/shared.js: lógica do dashboard do coordenador (propagado para 44 IES)
+- netlify/functions/: 7 Netlify Functions (admin-proxy, create-user, etc.)
+- Dados: Supabase (dashboard_engajamento, alunos_master, excluidos_master)
+- Deploy: Netlify (estático) + Supabase (dinâmico)
+- Service role key foi REMOVIDA do frontend — todas operações admin passam pelo admin-proxy

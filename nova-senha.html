@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedCof B2B — Nova Senha</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/supabase-config.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --bg-card: #181b23; --bg-elevated: #1e2230;
+    --border: #2a2f3e; --text: #e8eaf0; --text-soft: #8b91a5; --text-muted: #5c6175;
+    --accent: #dc2626; --accent-soft: rgba(220,38,38,0.12); --accent-glow: rgba(220,38,38,0.25);
+    --green: #22c55e; --radius-sm: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .bg-grid {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image: linear-gradient(rgba(42,47,62,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(42,47,62,0.4) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
+  }
+  .bg-glow {
+    position: fixed; top: -200px; left: 50%; transform: translateX(-50%);
+    width: 600px; height: 600px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(220,38,38,0.08) 0%, transparent 70%);
+    pointer-events: none; z-index: 0;
+  }
+  .card {
+    position: relative; z-index: 2; width: min(100%, 420px);
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 24px; padding: 40px 36px 36px;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+  }
+  .logo { display: block; max-width: 160px; margin: 0 auto 8px; }
+  .badge { display: block; text-align: center; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); margin-bottom: 28px; }
+  .title { font-size: 1.2rem; font-weight: 700; text-align: center; margin-bottom: 6px; }
+  .subtitle { text-align: center; font-size: 0.85rem; color: var(--text-soft); margin-bottom: 28px; line-height: 1.5; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-soft); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .field input {
+    width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
+    border: 1.5px solid var(--border); background: var(--bg-elevated);
+    color: var(--text); font-size: 0.95rem; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .field input::placeholder { color: var(--text-muted); }
+  .error { font-size: 0.82rem; color: var(--accent); min-height: 22px; margin-bottom: 4px; text-align: center; }
+  .btn {
+    display: block; width: 100%; padding: 14px; border: none;
+    border-radius: var(--radius-sm); background: var(--accent); color: #fff;
+    font-size: 0.95rem; font-weight: 700; cursor: pointer; transition: background 0.2s;
+  }
+  .btn:hover:not(:disabled) { background: #b91c1c; box-shadow: 0 0 20px var(--accent-glow); }
+  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .footer { margin-top: 24px; text-align: center; font-size: 0.7rem; color: var(--text-muted); }
+  #stepInvalid { text-align: center; }
+</style>
+</head>
+<body>
+<div class="bg-grid"></div>
+<div class="bg-glow"></div>
+
+<div class="card">
+  <img src="/facene/logo-novo-medcof.avif" alt="MedCof" class="logo" onerror="this.style.display='none'">
+  <span class="badge">Nova Senha</span>
+
+  <!-- Formulário de nova senha -->
+  <div id="stepForm">
+    <h2 class="title">Criar nova senha</h2>
+    <p class="subtitle">Escolha uma nova senha segura para sua conta.</p>
+    <div class="field">
+      <label for="newPass">Nova senha</label>
+      <input id="newPass" type="password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+    </div>
+    <div class="field">
+      <label for="confirmPass">Confirmar nova senha</label>
+      <input id="confirmPass" type="password" placeholder="Repita a senha" autocomplete="new-password">
+    </div>
+    <div class="error" id="formError"></div>
+    <button class="btn" id="saveBtn">Salvar nova senha</button>
+  </div>
+
+  <!-- Sucesso -->
+  <div id="stepSuccess" style="display:none; text-align:center">
+    <div style="font-size:3rem;margin-bottom:16px">✅</div>
+    <h2 class="title">Senha atualizada!</h2>
+    <p class="subtitle">Sua senha foi alterada com sucesso. Você será redirecionado para o login.</p>
+  </div>
+
+  <!-- Link inválido -->
+  <div id="stepInvalid" style="display:none">
+    <div style="font-size:3rem;margin-bottom:16px">⚠️</div>
+    <h2 class="title">Link inválido ou expirado</h2>
+    <p class="subtitle">Solicite um novo link de recuperação de senha.</p>
+    <a href="/recuperar-senha.html" style="display:block;text-align:center;margin-top:16px;color:var(--accent);font-weight:600;text-decoration:none">Solicitar novo link</a>
+  </div>
+
+  <div class="footer">Grupo MedCof &copy; 2026 — Uso interno</div>
+</div>
+
+<script>
+(async () => {
+  const sb = getSupabaseClient();
+  const stepForm    = document.getElementById('stepForm');
+  const stepSuccess = document.getElementById('stepSuccess');
+  const stepInvalid = document.getElementById('stepInvalid');
+  const saveBtn     = document.getElementById('saveBtn');
+  const formError   = document.getElementById('formError');
+
+  let sessionReady = false;
+
+  function showForm() {
+    if (sessionReady) return;
+    sessionReady = true;
+    stepForm.style.display = 'block';
+  }
+
+  function showInvalid() {
+    if (sessionReady) return;
+    sessionReady = true;
+    stepForm.style.display = 'none';
+    stepInvalid.style.display = 'block';
+  }
+
+  // Detectar o token de recovery no hash da URL (via onAuthStateChange)
+  // Este é o método correto para o fluxo: generate_link → redirect → nova-senha.html#access_token=...
+  const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session)) {
+      subscription.unsubscribe();
+      showForm();
+    } else if (event === 'SIGNED_OUT' || !session) {
+      subscription.unsubscribe();
+      showInvalid();
+    }
+  });
+
+  // Verificar sessão já existente (caso o token já tenha sido processado)
+  const { data: { session: existingSession } } = await sb.auth.getSession();
+  if (existingSession) {
+    subscription.unsubscribe();
+    showForm();
+  } else {
+    // Timeout de segurança: se em 5s não tiver sessão, mostrar "link inválido"
+    setTimeout(() => {
+      if (!sessionReady) showInvalid();
+    }, 5000);
+  }
+
+  // Handler do botão de salvar nova senha
+  saveBtn.addEventListener('click', async () => {
+    const newPass     = document.getElementById('newPass').value.trim();
+    const confirmPass = document.getElementById('confirmPass').value.trim();
+
+    if (!newPass || !confirmPass) { formError.textContent = 'Preencha os dois campos.'; return; }
+    if (newPass.length < 6)       { formError.textContent = 'A senha deve ter pelo menos 6 caracteres.'; return; }
+    if (newPass !== confirmPass)  { formError.textContent = 'As senhas não coincidem.'; return; }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Salvando...';
+    formError.textContent = '';
+
+    try {
+      const { error: updateErr } = await sb.auth.updateUser({ password: newPass });
+      if (updateErr) {
+        formError.textContent = 'Erro ao atualizar senha: ' + updateErr.message;
+        return;
+      }
+      stepForm.style.display = 'none';
+      stepSuccess.style.display = 'block';
+      // Redirecionar para login após 3s
+      setTimeout(() => { window.location.href = '/'; }, 3000);
+    } catch(e) {
+      formError.textContent = 'Erro ao conectar. Tente novamente.';
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Salvar nova senha';
+    }
+  });
+})();
+</script>
+</body>
+</html>

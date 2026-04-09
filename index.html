@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedCof B2B — Painéis Institucionais</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg-card: #181b23;
+    --bg-elevated: #1e2230;
+    --border: #2a2f3e;
+    --border-subtle: #222738;
+    --text: #e8eaf0;
+    --text-soft: #8b91a5;
+    --text-muted: #5c6175;
+    --accent: #dc2626;
+    --accent-hover: #b91c1c;
+    --accent-soft: rgba(220,38,38,0.12);
+    --accent-glow: rgba(220,38,38,0.25);
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Background effects */
+  .bg-grid {
+    position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(42,47,62,0.4) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(42,47,62,0.4) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
+  }
+  .bg-glow {
+    position: fixed; top: -200px; left: 50%; transform: translateX(-50%);
+    width: 600px; height: 600px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(220,38,38,0.08) 0%, transparent 70%);
+    pointer-events: none; z-index: 0;
+  }
+  .bg-glow-bottom {
+    position: fixed; bottom: -300px; left: 50%; transform: translateX(-50%);
+    width: 800px; height: 500px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(220,38,38,0.04) 0%, transparent 70%);
+    pointer-events: none; z-index: 0;
+  }
+
+  /* Main card */
+  .landing-card {
+    position: relative; z-index: 2;
+    width: min(100%, 460px);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 44px 40px 36px;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03) inset;
+    text-align: center;
+  }
+
+  .landing-logo {
+    display: block; max-width: 150px; margin: 0 auto 10px;
+  }
+  .landing-badge {
+    display: inline-block; font-size: 0.68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent);
+    background: var(--accent-soft); padding: 4px 14px; border-radius: 99px;
+    margin-bottom: 28px;
+  }
+
+  .landing-title {
+    font-size: 1.25rem; font-weight: 700; color: var(--text);
+    margin-bottom: 6px; line-height: 1.3;
+  }
+  .landing-subtitle {
+    font-size: 0.85rem; color: var(--text-soft);
+    line-height: 1.6; margin-bottom: 28px;
+  }
+
+  .landing-divider {
+    width: 40px; height: 2px; border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    margin: 0 auto 28px;
+  }
+
+  /* Login form */
+  .login-form { text-align: left; }
+
+  .form-group { margin-bottom: 16px; }
+  .form-label {
+    display: block; font-size: 0.72rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-muted); margin-bottom: 7px;
+  }
+  .form-input {
+    width: 100%; padding: 11px 14px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text); font-size: 0.92rem;
+    outline: none; transition: border-color 0.2s;
+    font-family: inherit;
+  }
+  .form-input:focus { border-color: var(--accent); }
+  .form-input::placeholder { color: var(--text-muted); }
+
+  .form-forgot {
+    display: block; text-align: right; font-size: 0.75rem;
+    color: var(--text-muted); text-decoration: none; margin-top: 6px;
+    transition: color 0.2s;
+  }
+  .form-forgot:hover { color: var(--accent); }
+
+  .btn-login {
+    width: 100%; padding: 12px;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: var(--radius-sm);
+    font-size: 0.92rem; font-weight: 700;
+    cursor: pointer; margin-top: 8px;
+    transition: background 0.2s, opacity 0.2s;
+    font-family: inherit; letter-spacing: 0.02em;
+  }
+  .btn-login:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .login-error {
+    display: none; margin-top: 14px;
+    background: rgba(220,38,38,0.1); border: 1px solid rgba(220,38,38,0.3);
+    border-radius: var(--radius-sm); padding: 10px 14px;
+    font-size: 0.82rem; color: #fca5a5; text-align: center;
+  }
+  .login-error.visible { display: block; }
+
+  .login-loading {
+    display: none; margin-top: 14px;
+    font-size: 0.82rem; color: var(--text-muted); text-align: center;
+  }
+  .login-loading.visible { display: block; }
+
+  /* Stats strip */
+  .landing-stats {
+    display: flex; justify-content: center; gap: 24px;
+    margin-top: 28px; flex-wrap: wrap;
+    padding-top: 24px; border-top: 1px solid var(--border-subtle);
+  }
+  .landing-stat { text-align: center; }
+  .landing-stat-num {
+    font-size: 1.3rem; font-weight: 800; color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .landing-stat-label {
+    font-size: 0.6rem; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-top: 1px;
+  }
+
+  .landing-footer {
+    font-size: 0.68rem; color: var(--text-muted);
+    letter-spacing: 0.02em; margin-top: 24px; text-align: center;
+  }
+
+  /* ENAMED fab */
+  .enamed-fab {
+    position: fixed; bottom: 24px; right: 24px; z-index: 10;
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 999px; padding: 10px 20px 10px 16px;
+    text-decoration: none; color: var(--text);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    font-size: 0.85rem; font-weight: 600;
+    transition: border-color 0.2s;
+  }
+  .enamed-fab:hover { border-color: var(--accent); }
+  .enamed-gray { color: var(--text-muted); }
+  .enamed-teal { color: #0d9488; }
+  .enamed-fab-logo { font-weight: 800; font-size: 1rem; }
+
+  @media (max-width: 480px) {
+    .landing-card { padding: 32px 22px 28px; }
+    .landing-title { font-size: 1.1rem; }
+    .landing-stats { gap: 16px; }
+    .landing-stat-num { font-size: 1.1rem; }
+    .enamed-fab { bottom: 14px; right: 14px; padding: 8px 14px 8px 12px; font-size: 0.78rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="bg-glow"></div>
+<div class="bg-glow-bottom"></div>
+
+<div class="landing-card">
+  <img src="facene/logo-novo-medcof.avif" alt="Grupo MedCof" class="landing-logo" onerror="this.style.display='none'">
+  <span class="landing-badge">Painéis Institucionais B2B</span>
+
+  <h1 class="landing-title">Acesso exclusivo para<br>instituições parceiras</h1>
+  <p class="landing-subtitle">Insira suas credenciais para acessar o painel da sua instituição.</p>
+
+  <div class="landing-divider"></div>
+
+  <form class="login-form" id="loginForm" autocomplete="off">
+    <div class="form-group">
+      <label class="form-label" for="loginEmail">E-mail</label>
+      <input class="form-input" type="email" id="loginEmail" placeholder="seu@email.com.br" required autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="loginPassword">Senha</label>
+      <input class="form-input" type="password" id="loginPassword" placeholder="••••••••" required autocomplete="current-password">
+      <a href="/recuperar-senha.html" class="form-forgot">Esqueci minha senha</a>
+    </div>
+    <button type="submit" class="btn-login" id="btnLogin">Entrar</button>
+    <div class="login-error" id="loginError"></div>
+    <div class="login-loading" id="loginLoading">Verificando credenciais...</div>
+  </form>
+
+  <div class="landing-stats">
+    <div class="landing-stat">
+      <div class="landing-stat-num">217</div>
+      <div class="landing-stat-label">1ºs lugares ENAMED</div>
+    </div>
+    <div class="landing-stat">
+      <div class="landing-stat-num">15k+</div>
+      <div class="landing-stat-label">Aprovações</div>
+    </div>
+    <div class="landing-stat">
+      <div class="landing-stat-num">2500</div>
+      <div class="landing-stat-label">1ºs lugares no país</div>
+    </div>
+  </div>
+
+  <div class="landing-footer">Grupo MedCof &copy; 2026 — Todos os direitos reservados</div>
+</div>
+
+<a class="enamed-fab" href="https://radiant-cuchufli-beb823.netlify.app/" target="_blank" rel="noopener">
+  <span class="enamed-fab-logo"><span class="enamed-gray">ena</span><span class="enamed-teal">med</span></span>
+  <span>Guia Estatístico</span>
+</a>
+
+<script>
+  const SUPABASE_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // Fallback estático (usado se a tabela Supabase não responder)
+  const INSTITUTION_MAP_FALLBACK = {
+    facene:'/facene/', unicet:'/unicet/', unisc:'/unisc/',
+    univassouras:'/univassouras/', unifeso:'/unifeso/', famene:'/famene/',
+    unifaa:'/unifaa/', faminas:'/faminas/', unichristus:'/unichristus/',
+    'uninassau-cacoal':'/uninassau-cacoal/', 'uninassau-recife':'/uninassau-recife/',
+    'uninassau-vilhena':'/uninassau-vilhena/', 'uninassau-barreiras':'/uninassau-barreiras/',
+    cesmac:'/cesmac/', unifip:'/unifip/', 'faminas-muria':'/faminas-muria/', unit:'/unit/',
+  };
+  const INSTITUTION_WIP_FALLBACK = [
+    'unimax','unipac','unochapeco','unieuro','ceuma-imperatriz','ceuma-saoluis',
+    'unifamaz','fpp','franco-montoro','fame','atitus','unifadra',
+    'faminas-bh','faminas-muriae','unipar','umc','uema',
+  ];
+
+  // Carrega mapeamento dinâmico do Supabase
+  let INSTITUTION_MAP = { ...INSTITUTION_MAP_FALLBACK };
+  let INSTITUTION_WIP = [...INSTITUTION_WIP_FALLBACK];
+
+  async function loadInstitutions() {
+    try {
+      const resp = await fetch(
+        `${SUPABASE_URL}/rest/v1/instituicoes?select=slug,path,wip&ativo=eq.true`,
+        { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+      );
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!Array.isArray(data) || data.length === 0) return;
+      INSTITUTION_MAP = {};
+      INSTITUTION_WIP = [];
+      for (const inst of data) {
+        if (inst.wip) INSTITUTION_WIP.push(inst.slug);
+        else INSTITUTION_MAP[inst.slug] = inst.path;
+      }
+    } catch (_) { /* mantém fallback */ }
+  }
+
+  // Se vier com token de recovery no hash, ir para nova-senha.html antes de qualquer coisa
+  (function() {
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const params = new URLSearchParams(hash);
+    if (params.get('type') === 'recovery') {
+      window.location.replace('/nova-senha.html' + window.location.hash);
+    }
+  })();
+
+  // Se já está logado, carregar instituições e redirecionar
+  (async () => {
+    await loadInstitutions();
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) redirectByRole(session.user);
+  })();
+
+  function redirectByRole(user) {
+    const role = user.user_metadata?.role || '';
+    const instituicao = user.user_metadata?.instituicao || '';
+
+    // Verificar URL salva para redirecionar após login (apenas para coordenadores)
+    const savedRedirect = sessionStorage.getItem('medcof_redirect_after_login');
+    sessionStorage.removeItem('medcof_redirect_after_login');
+
+    // Superadmin e admin: SEMPRE vão para o painel admin, sem exceção
+    if (role === 'superadmin' || role === 'admin') {
+      window.location.href = '/admin.html';
+      return;
+    }
+
+    // Coordenador: NUNCA acessa admin, vai apenas para a instituição vinculada
+    if (role === 'coordenador' && instituicao) {
+      // Painel ativo
+      if (INSTITUTION_MAP[instituicao]) {
+        const destino = (savedRedirect && savedRedirect.startsWith('/' + instituicao + '/')) 
+          ? savedRedirect 
+          : INSTITUTION_MAP[instituicao];
+        window.location.href = destino;
+        return;
+      }
+      // Painel em construção
+      if (INSTITUTION_WIP.includes(instituicao)) {
+        window.location.href = '/em-construcao.html';
+        return;
+      }
+    }
+
+    // Role não reconhecida ou instituição não mapeada
+    showError('Seu acesso ainda não foi configurado. Entre em contato com o suporte MedCof.');
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('loginError');
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function hideError() {
+    document.getElementById('loginError').classList.remove('visible');
+  }
+
+  function setLoading(on) {
+    document.getElementById('btnLogin').disabled = on;
+    const ld = document.getElementById('loginLoading');
+    if (on) ld.classList.add('visible'); else ld.classList.remove('visible');
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    hideError();
+    setLoading(true);
+
+    const email    = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+
+    setLoading(false);
+
+    if (error) {
+      showError('E-mail ou senha incorretos. Verifique suas credenciais.');
+      return;
+    }
+
+    redirectByRole(data.user);
+  });
+</script>
+
+</body>
+</html>
