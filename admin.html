@@ -83,6 +83,81 @@ window._supaWrite = async function(table, method, body) {
   return resp;
 };
 
+/**
+ * GET admin com Prefer count=exact + Range 0-0 — lê total em Content-Range (/N).
+ * @param {string} table ex: "alunos_master"
+ * @param {string} query ex: "select=cpf&or=(cadastro_origem.eq.ies,cadastro_origem.is.null)"
+ * @returns {Promise<number|null>}
+ */
+window._supaAdminCount = async function(table, query) {
+  try {
+    const token = await window._getAdminToken();
+    const resp = await fetch('/.netlify/functions/admin-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        table,
+        method: 'GET',
+        query: query || '',
+        prefer: 'count=exact',
+        range: '0-0'
+      })
+    });
+    if (!resp.ok) return null;
+    const cr = resp.headers.get('Content-Range');
+    const m = cr && cr.match(/\/(\d+)$/);
+    return m ? parseInt(m[1], 10) : null;
+  } catch (_) {
+    return null;
+  }
+};
+
+/**
+ * Conta CPFs distintos presentes em resultados de simulado (blocos __BATCH__).
+ * @returns {Promise<number|null>}
+ */
+window._countDistinctCpfsSimulado = async function() {
+  try {
+    const cpfs = new Set();
+    let offset = 0;
+    const limit = 400;
+    for (;;) {
+      const rows = await window._supaRestAdmin(
+        'simulado_respostas',
+        `select=respostas&aluno_nome=like.__BATCH_*&limit=${limit}&offset=${offset}`
+      );
+      if (!rows || rows.length === 0) break;
+      rows.forEach(r => {
+        (r.respostas?.alunos || []).forEach(a => {
+          const c = String(a.cpf || '').replace(/\D/g, '');
+          if (c) cpfs.add(c.padStart(11, '0'));
+        });
+      });
+      if (rows.length < limit) break;
+      offset += limit;
+      if (offset > 150000) break;
+    }
+    return cpfs.size;
+  } catch (_) {
+    return null;
+  }
+};
+
+/** Atualiza cards Alunos B2B (alunos_master) e impacto simulado (CPFs em simulado_respostas). */
+window._refreshDashAlunoStats = async function() {
+  const fmt = n => n.toLocaleString('pt-BR');
+  const elB = document.getElementById('statAlunos');
+  const elS = document.getElementById('statAlunosSimulado');
+  if (!elB && !elS) return;
+  const nB2b = await window._supaAdminCount(
+    'alunos_master',
+    'select=cpf&or=(cadastro_origem.eq.ies,cadastro_origem.is.null)'
+  );
+  if (elB) elB.textContent = nB2b != null ? fmt(nB2b) : '—';
+  const nSim = await window._countDistinctCpfsSimulado();
+  if (elS) elS.textContent = nSim != null ? fmt(nSim) : '—';
+};
+
 // ── Utilitário global: parse array (JSON string ou array nativo) ──
 window.parseArr = function(v) {
   if (Array.isArray(v)) return v;
@@ -885,6 +960,7 @@ window.parseArr = function(v) {
       </div>
       <div class="dash-stats" id="dashStats">
         <div class="dash-stat"><div class="dash-stat-number" id="statAlunos">—</div><div class="dash-stat-label">Alunos ativos B2B</div></div>
+        <div class="dash-stat"><div class="dash-stat-number" id="statAlunosSimulado">—</div><div class="dash-stat-label">Alunos (simulado / impacto)</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statQuestoes">—</div><div class="dash-stat-label">Questões realizadas</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statHoras">—</div><div class="dash-stat-label">Horas de estudo</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statMedia">—</div><div class="dash-stat-label">Instituições cadastradas</div></div>
@@ -1321,7 +1397,7 @@ window.parseArr = function(v) {
             <div class="sim-card-icon">🎓</div>
             <div>
               <div class="sim-card-title">Resultado de Simulado (Banco de Questões)</div>
-              <div class="sim-card-desc">Planilha Remark® com respostas item-a-item — requer simulado fechado no Banco</div>
+              <div class="sim-card-desc">Remark® (Relatório Respostas por Aluno) ou export com CPF + questões — opcional Nome/Email/Turma — simulado fechado no Banco</div>
             </div>
             <div class="sim-card-chevron" id="simChevronBq">▼</div>
           </div>
@@ -1346,12 +1422,12 @@ window.parseArr = function(v) {
               <div class="subsection-title">Arquivo</div>
             </div>
             <div class="field" style="margin-bottom:16px">
-              <label>Planilha Remark® <span class="req">*</span></label>
+              <label>Planilha (.xlsx / .xlsm) <span class="req">*</span></label>
               <div class="upload-zone" id="simUploadBq">
                 <div class="upload-zone-icon">🎓</div>
                 <div class="upload-zone-title">Resultado do simulado</div>
-                <div class="upload-zone-hint">"Relatório das Respostas por Aluno" · Arraste ou clique (.xlsx)</div>
-                <input type="file" accept=".xlsx,.xls" id="simFileBq">
+                <div class="upload-zone-hint">Remark (Respostas por Aluno) ou export com CPF + questões — .xlsx / .xlsm</div>
+                <input type="file" accept=".xlsx,.xls,.xlsm" id="simFileBq">
               </div>
             </div>
             <!-- Questões anuladas — aparece para qualquer tipo de simulado -->
@@ -1368,12 +1444,12 @@ window.parseArr = function(v) {
                 <label style="font-size:0.76rem">Tratamento das anuladas</label>
                 <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
                   <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;cursor:pointer">
-                    <input type="radio" name="bqAnuladaTrat" value="creditar" checked style="accent-color:var(--accent)">
-                    <span><strong>Creditar para todos</strong> — conta como acerto</span>
+                    <input type="radio" name="bqAnuladaTrat" value="excluir" checked style="accent-color:var(--accent)">
+                    <span><strong>Excluir da contagem</strong> — tira do denominador (padrão, alinha ao Remark®)</span>
                   </label>
                   <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;cursor:pointer">
-                    <input type="radio" name="bqAnuladaTrat" value="excluir" style="accent-color:var(--accent)">
-                    <span><strong>Excluir da contagem</strong> — reduz denominador</span>
+                    <input type="radio" name="bqAnuladaTrat" value="creditar" style="accent-color:var(--accent)">
+                    <span><strong>Creditar para todos</strong> — conta como acerto (aumenta a média vs Excel)</span>
                   </label>
                 </div>
               </div>
@@ -1431,7 +1507,7 @@ window.parseArr = function(v) {
               <div class="sim-guide-steps">
                 <div class="sim-guide-step"><span class="sim-guide-num">1</span><span>Cadastre, componha e <strong>feche</strong> o simulado na aba "Banco de Questões"</span></div>
                 <div class="sim-guide-step"><span class="sim-guide-num">2</span><span>Aplique o simulado usando o sistema Remark® (leitura óptica de gabaritos)</span></div>
-                <div class="sim-guide-step"><span class="sim-guide-num">3</span><span>Exporte <strong>"Relatório das Respostas por Aluno"</strong> do Remark® em .xlsx</span></div>
+                <div class="sim-guide-step"><span class="sim-guide-num">3</span><span>Exporte o resultado: <strong>Remark® — Relatório das Respostas por Aluno</strong> ou planilha equivalente (CPF na coluna A + colunas de questão; opcional Nome, Email, Período)</span></div>
                 <div class="sim-guide-step"><span class="sim-guide-num">4</span><span>Selecione a IES + simulado acima e faça o upload da planilha</span></div>
                 <div class="sim-guide-step"><span class="sim-guide-num">5</span><span>Clique em "Processar" — boletins gerados automaticamente na aba Alunos</span></div>
               </div>
@@ -1716,6 +1792,12 @@ window.parseArr = function(v) {
               <option value="">Todas as turmas</option>
               <option value="_sem">Sem turma definida</option>
             </select>
+            <select id="alunoFilterOrigem" title="Origem do cadastro" style="padding:8px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.82rem;outline:none;max-width:200px">
+              <option value="">Todas as origens</option>
+              <option value="ies">B2B (cadastro IES)</option>
+              <option value="simulado">Simulado</option>
+              <option value="sem_nome">Sem nome (pendente)</option>
+            </select>
             <button onclick="window._openAlunoImportModal()" style="padding:8px 16px;border-radius:8px;border:none;background:var(--accent,#dc2626);color:#fff;font-size:0.82rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Importar alunos
@@ -1729,17 +1811,39 @@ window.parseArr = function(v) {
               <thead>
                 <tr style="background:var(--bg-elevated)">
                   <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">Nome</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">CPF</th>
                   <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">E-mail</th>
                   <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">Telefone</th>
                   <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">Instituição</th>
-                  <th style="padding:10px 14px;text-align:center;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border);width:80px">Boletim</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">Turma</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">Origem</th>
+                  <th style="padding:10px 14px;text-align:center;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border);min-width:120px">Ações</th>
                 </tr>
               </thead>
               <tbody id="alunosTableBody">
-                <tr><td colspan="5" style="padding:30px;text-align:center;color:var(--text-muted);font-style:italic">🔍 Insira quem você quer procurar</td></tr>
+                <tr><td colspan="8" style="padding:30px;text-align:center;color:var(--text-muted);font-style:italic">🔍 Insira quem você quer procurar</td></tr>
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- Modal: nome do aluno (CPF cadastrado via simulado sem nome) -->
+      <div id="alunoEditModal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);align-items:center;justify-content:center;flex-direction:row">
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:20px;padding:28px;width:min(100%,440px);margin:20px;position:relative">
+          <button type="button" onclick="window._closeAlunoEditModal()" style="position:absolute;top:14px;right:14px;background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:1.1rem">✕</button>
+          <div style="font-size:1rem;font-weight:700;margin-bottom:4px">Editar aluno</div>
+          <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:18px">CPF sem nome no cadastro — preencha para relatórios e boletins.</div>
+          <div class="field" style="margin-bottom:12px">
+            <label style="font-size:0.75rem;color:var(--text-muted)">CPF</label>
+            <input type="text" id="alunoEditCpf" readonly style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text-soft);font-size:0.88rem;outline:none;box-sizing:border-box" />
+          </div>
+          <div class="field" style="margin-bottom:18px">
+            <label style="font-size:0.75rem;color:var(--text-muted)">Nome completo</label>
+            <input type="text" id="alunoEditNome" placeholder="Nome do aluno" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.92rem;outline:none;box-sizing:border-box" />
+          </div>
+          <div id="alunoEditFeedback" style="font-size:0.78rem;margin-bottom:12px;min-height:1.2em"></div>
+          <button type="button" id="alunoEditSaveBtn" onclick="window._saveAlunoNomeEdit()" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--accent,#dc2626);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Salvar</button>
         </div>
       </div>
 
@@ -2595,6 +2699,7 @@ window._renderGestaoGrid = function() {
             const simTituloEsc = (s.titulo || '').replace(/'/g, "\\'");
             if (hasResult) {
               return '<button onclick="window._openBoletimModal(\'' + slug + '\',\'' + s.id + '\')" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Gerar Boletins">📄 Boletins</button>'
+                   + '<button onclick="window._openBoletimEmailCoordModal(\'' + slug + '\',\'' + s.id + '\')" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Avisar coordenador por e-mail (boletins disponíveis)">📧</button>'
                    + '<button onclick="window._editSimLinks(\'' + slug + '\',\'' + s.id + '\',\'' + simTituloEsc + '\')" style="padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.72rem;cursor:pointer" title="Editar link do gabarito">🔗</button>'
                    + '<button onclick="window._clearSimResult(\'' + slug + '\',\'' + s.id + '\',\'' + simTituloEsc + '\')" style="padding:4px 10px;border-radius:7px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.07);color:#ef4444;font-size:0.72rem;cursor:pointer" title="Apagar resultado — permite novo upload">🗑️</button>';
             } else {
@@ -2652,9 +2757,130 @@ document.addEventListener('DOMContentLoaded', () => {
 // Backward compat: old code may still call populateSimContratados
 function populateSimContratados() { if (typeof window._renderGestaoGrid === 'function') window._renderGestaoGrid(); }
 
+/**
+ * Normaliza CPF para 11 dígitos (apenas dígitos).
+ * @param {string} c
+ * @returns {string}
+ */
+function _normCpfOrfaos(c) {
+  const x = String(c || '').replace(/\D/g, '');
+  if (!x) return '';
+  return x.padStart(11, '0');
+}
+
+/**
+ * CPFs de alunos em uma linha de simulado_respostas (ignora META/RANKING e blocos auxiliares).
+ * @param {object} row
+ * @returns {string[]}
+ */
+function _cpfsFromSimuladoRespostaRowOrfaos(row) {
+  const an = String(row.aluno_nome || '');
+  if (an === '__META__' || an === '__RANKING__') return [];
+  if (an.startsWith('__BATCH_')) {
+    const alunos = row.respostas && row.respostas.alunos;
+    if (!Array.isArray(alunos)) return [];
+    return alunos.map(a => _normCpfOrfaos(a.cpf)).filter(c => c && c !== '00000000000');
+  }
+  return [];
+}
+
+/**
+ * Lista todas as linhas de simulado_respostas de uma IES (paginado via admin-proxy).
+ * @param {string} slug
+ * @returns {Promise<object[]>}
+ */
+async function _fetchSimuladoRespostasAllForIesSlug(slug) {
+  const out = [];
+  let offset = 0;
+  const limit = 500;
+  for (;;) {
+    const rows = await window._supaRestAdmin(
+      'simulado_respostas',
+      `select=simulado_ref,aluno_nome,respostas&ies_slug=eq.${encodeURIComponent(slug)}&limit=${limit}&offset=${offset}`
+    );
+    if (!rows || rows.length === 0) break;
+    out.push(...rows);
+    if (rows.length < limit) break;
+    offset += limit;
+    if (offset > 200000) break;
+  }
+  return out;
+}
+
+/**
+ * CPFs que aparecem só neste simulado_ref na IES (não em outro simulado da mesma IES).
+ * @param {object[]} rows — snapshot antes de apagar o resultado
+ * @param {string} simRef
+ * @returns {string[]}
+ */
+function _orphanCpfsOnlyInSimRef(rows, simRef) {
+  const byRef = new Map();
+  for (const row of rows) {
+    const ref = String(row.simulado_ref || '');
+    const cpfs = _cpfsFromSimuladoRespostaRowOrfaos(row);
+    if (!byRef.has(ref)) byRef.set(ref, new Set());
+    const set = byRef.get(ref);
+    cpfs.forEach(c => set.add(c));
+  }
+  const inTarget = byRef.get(simRef) || new Set();
+  const inOthers = new Set();
+  byRef.forEach((set, ref) => {
+    if (ref === simRef) return;
+    set.forEach(c => inOthers.add(c));
+  });
+  const orphans = [];
+  inTarget.forEach(c => {
+    if (!inOthers.has(c)) orphans.push(c);
+  });
+  return orphans;
+}
+
+/**
+ * Remove de alunos_master registros origem simulado órfãos (IES alinhada ao slug/nome).
+ * @param {string} slug
+ * @param {string[]} cpfs
+ * @returns {Promise<number>}
+ */
+async function _deleteAlunosMasterSimuladoOrfaos(slug, cpfs) {
+  if (!cpfs.length) return 0;
+  const instNome = typeof _resolveInstituicaoNomeForAlunos === 'function'
+    ? String(_resolveInstituicaoNomeForAlunos(slug) || '').trim() : '';
+  const slugTrim = String(slug || '').trim();
+  let deleted = 0;
+  const chunkSize = 15;
+  for (let i = 0; i < cpfs.length; i += chunkSize) {
+    const chunk = cpfs.slice(i, i + chunkSize);
+    const orPart = chunk.map(c => `cpf.eq.${encodeURIComponent(c)}`).join(',');
+    const q = `select=id,cpf,instituicao,cadastro_origem&cadastro_origem=eq.simulado&or=(${orPart})`;
+    let rows;
+    try {
+      rows = await window._supaRestAdmin('alunos_master', q);
+    } catch (e) {
+      console.warn('_deleteAlunosMasterSimuladoOrfaos batch:', e);
+      continue;
+    }
+    for (const row of rows || []) {
+      const inst = String(row.instituicao || '').trim();
+      const match = (instNome && inst === instNome) || inst === slugTrim;
+      if (!match) continue;
+      try {
+        const delResp = await window._supaWrite(`alunos_master?id=eq.${encodeURIComponent(row.id)}`, 'DELETE', null);
+        if (delResp.ok) deleted++;
+      } catch (_) { /* ignore */ }
+    }
+  }
+  return deleted;
+}
+
 // ── Desvincular simulado de uma IES específica ─────────────────────
 window._desvincularSimIES = async function(simId, slug) {
-  if (!confirm('Desvincular este simulado desta IES?\n\nIsso também apagará o resultado de upload vinculado a esta IES. O simulado em si não será excluído.')) return;
+  if (!confirm(
+    'Desvincular este simulado desta IES?\n\n' +
+    'Isso apagará o resultado de upload vinculado a esta IES. ' +
+    'Alunos criados automaticamente só por este simulado (origem simulado) serão removidos do cadastro se não tiverem resultado em outro simulado nesta IES. ' +
+    'Quem também veio de engajamento/import (origem IES) não é apagado.\n\n' +
+    'O simulado em si não será excluído.'
+  )) return;
   const resp = await fetch(
     `${window._SUPA_REST_URL}/simulados_banco?select=id,titulo,instituicoes_destino&id=eq.${simId}`,
     { headers: window._SUPA_REST_HDRS }
@@ -2663,6 +2889,15 @@ window._desvincularSimIES = async function(simId, slug) {
   const arr = await resp.json();
   const sim = arr && arr[0];
   if (!sim) { alert('Simulado não encontrado.'); return; }
+
+  const simRef = `bq_${slug}_${simId.slice(0,8)}`;
+  let orphanCpfs = [];
+  try {
+    const rowsAll = await _fetchSimuladoRespostasAllForIesSlug(slug);
+    orphanCpfs = _orphanCpfsOnlyInSimRef(rowsAll, simRef);
+  } catch (e) {
+    console.warn('Snapshot simulado_respostas (órfãos):', e);
+  }
 
   let destino = sim.instituicoes_destino;
   if (Array.isArray(destino)) { /* ok */ }
@@ -2682,7 +2917,6 @@ window._desvincularSimIES = async function(simId, slug) {
   if (!patchResp.ok) { alert('Erro ao desvincular: ' + await patchResp.text()); return; }
 
   // 2. Apagar simulado_respostas desta IES para este simulado (simRef = bq_{slug}_{simId[:8]})
-  const simRef = `bq_${slug}_${simId.slice(0,8)}`;
   try {
     await fetch(
       `${window._SUPA_REST_URL}/simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}`,
@@ -2698,6 +2932,20 @@ window._desvincularSimIES = async function(simId, slug) {
     );
   } catch(e) { console.warn('Erro ao limpar simulados_envios:', e); }
 
+  // 3b. Remover do alunos_master apenas origem "simulado" órfãos (sem outro resultado nesta IES)
+  let removedOrfaos = 0;
+  try {
+    removedOrfaos = await _deleteAlunosMasterSimuladoOrfaos(slug, orphanCpfs);
+  } catch (e) {
+    console.warn('Remoção alunos origem simulado (órfãos):', e);
+  }
+  try {
+    if (typeof window._refreshDashAlunoStats === 'function') await window._refreshDashAlunoStats();
+  } catch (_) { /* ignore */ }
+  if (removedOrfaos > 0 && window._alunosLoaded && typeof window._loadAlunosMaster === 'function') {
+    try { await window._loadAlunosMaster(); } catch (_) { /* ignore */ }
+  }
+
   // 4. Atualiza cache local imediatamente (para render instantâneo)
   if (Array.isArray(window._allSimsBanco)) {
     const s = window._allSimsBanco.find(x => x.id === simId);
@@ -2708,7 +2956,11 @@ window._desvincularSimIES = async function(simId, slug) {
   }
   try { localStorage.removeItem('_admc_sims'); } catch(e) {}
   if (typeof window._renderGestaoGrid === 'function') window._renderGestaoGrid();
-  showToast(`Simulado "${sim.titulo || simId.slice(0,8)}" desvinculado de ${slug}.`, 'success');
+  showToast(
+    `Simulado "${sim.titulo || simId.slice(0,8)}" desvinculado de ${slug}.` +
+      (removedOrfaos ? ` ${removedOrfaos} cadastro(s) automático(s) (origem simulado) removido(s).` : ''),
+    'success'
+  );
 
   // 5. Re-buscar simulados_banco do Supabase para garantir consistência
   try {
@@ -2819,9 +3071,18 @@ window._clearSimResult = async function(slug, simId, simTitulo) {
     `Simulado: "${simTitulo}"\n` +
     `IES: ${slug}\n\n` +
     `Isso apagará todos os dados de respostas e boletins já processados para esta IES.\n` +
+    `Cadastros automáticos feitos só por este simulado (origem simulado) serão removidos se não houver outro resultado na mesma IES.\n` +
     `O vínculo do simulado com a IES será mantido e você poderá fazer um novo upload.\n\n` +
     `Tem certeza?`;
   if (!confirm(confirmMsg)) return;
+
+  let orphanCpfs = [];
+  try {
+    const rowsAll = await _fetchSimuladoRespostasAllForIesSlug(slug);
+    orphanCpfs = _orphanCpfsOnlyInSimRef(rowsAll, simRef);
+  } catch (e) {
+    console.warn('Snapshot simulado_respostas (órfãos):', e);
+  }
 
   try {
     // 1. Apagar simulado_respostas desta IES para este simulado
@@ -2841,6 +3102,19 @@ window._clearSimResult = async function(slug, simId, simTitulo) {
       }
     );
 
+    let removedOrfaos = 0;
+    try {
+      removedOrfaos = await _deleteAlunosMasterSimuladoOrfaos(slug, orphanCpfs);
+    } catch (e) {
+      console.warn('Remoção alunos origem simulado (órfãos):', e);
+    }
+    try {
+      if (typeof window._refreshDashAlunoStats === 'function') await window._refreshDashAlunoStats();
+    } catch (_) { /* ignore */ }
+    if (removedOrfaos > 0 && window._alunosLoaded && typeof window._loadAlunosMaster === 'function') {
+      try { await window._loadAlunosMaster(); } catch (_) { /* ignore */ }
+    }
+
     // 3. Atualiza cache local
     if (Array.isArray(window._boletimSimRefs)) {
       window._boletimSimRefs = window._boletimSimRefs.filter(r => r.simulado_ref !== simRef);
@@ -2848,7 +3122,11 @@ window._clearSimResult = async function(slug, simId, simTitulo) {
     if (window._uploadedRefs) window._uploadedRefs.delete(simRef);
     if (typeof window._renderGestaoGrid === 'function') window._renderGestaoGrid();
 
-    showToast(`Resultado apagado — você já pode fazer um novo upload para ${slug}.`, 'success');
+    showToast(
+      `Resultado apagado — você já pode fazer um novo upload para ${slug}.` +
+        (removedOrfaos ? ` ${removedOrfaos} cadastro(s) automático(s) removido(s).` : ''),
+      'success'
+    );
   } catch(e) {
     alert('Erro ao apagar resultado: ' + e.message);
   }
@@ -2885,7 +3163,7 @@ window.addEventListener('load', () => { setTimeout(() => { if(typeof window._ren
         (p.alunos||p.data||[]).forEach(a => { if(a.nome) uniq.add(a.nome.trim().toLowerCase()); tQ += a.questoes||0; tM += a.tempo_min||0; });
       });
     });
-    if($("statAlunos")) $("statAlunos").textContent = fmt(uniq.size);
+    if (typeof window._refreshDashAlunoStats === 'function') window._refreshDashAlunoStats();
     if($("statQuestoes")) $("statQuestoes").textContent = fmt(tQ);
     if($("statHoras")) $("statHoras").textContent = fmt(Math.round(tM/60));
     if($("statMedia")) $("statMedia").textContent = document.querySelectorAll('#instGrid .inst-card').length;
@@ -3174,7 +3452,7 @@ window.MedCofParser = (() => {
 
     // CPFs excluídos via Supabase (professores)
     const excCpfs = opts.excCpfs || new Set(); // Set de CPFs excluídos
-    const excNomesSupabase = opts.excNomes || new Set(); // Set norm de nomes excluídos (fallback se sem CPF)
+    const excNomesSupabase = opts.excNomes || new Set(); // nomes normalizados (excluidos_master)
     if(excCpfs.size) log(`Professores no Supabase: ${excCpfs.size} excluídos por CPF`, "warn");
 
     // Alunos_master do Supabase (por CPF → {turma, nome, codigo_aluno, ...})
@@ -3233,10 +3511,11 @@ window.MedCofParser = (() => {
         // Extrair CPF bruto
         const cpfRaw = cols.cpf!=null ? String(cellVal(ws,r,cols.cpf)||"").trim().replace(/\D/g,"") : "";
 
-        // Verificar exclusão por CPF (Supabase) — prioridade
+        // Verificar exclusão por CPF (Supabase)
         if(cpfRaw && excCpfs.has(cpfRaw)) { excPorCpf++; continue; }
-        // Verificar exclusão por nome (Supabase, fallback)
-        if(!cpfRaw && excNomesSupabase.has(norm(nomeStr))) { excPorNome++; continue; }
+        // Nome na lista excluidos_master — SEMPRE checar (planilha B2B tem CPF em toda linha;
+        // antes só aplicava com !cpfRaw, então professores nunca eram excluídos por nome)
+        if(excNomesSupabase.size && excNomesSupabase.has(norm(nomeStr))) { excPorNome++; continue; }
         // Verificar exclusão manual (textarea)
         if(isExcluded(nomeStr,excSet)) continue;
 
@@ -3419,13 +3698,23 @@ window.MedCofParser = (() => {
 
 <!-- ═══════════ SUPABASE: ALUNOS_MASTER & EXCLUIDOS_MASTER ═══════════ -->
 <script>
+// ── Filtro PostgREST: instituicao no banco pode ser slug ou nome da IES ──
+function _queryInstituicaoIES(slug) {
+  const s = String(slug || "").trim();
+  const inst = (window._instData || []).find(i => (i.slug || "") === s);
+  const nomeIES = inst ? String(inst.nome || "").trim() : "";
+  if (!s) return "";
+  if (nomeIES && nomeIES !== s) {
+    return `&or=(instituicao.eq.${encodeURIComponent(s)},instituicao.eq.${encodeURIComponent(nomeIES)})`;
+  }
+  return `&instituicao=eq.${encodeURIComponent(s)}`;
+}
+
 // ── Busca professores excluídos por IES no Supabase ──
 window._fetchExcluidosMaster = async function(instituicao) {
   try {
-    const resp = await window._supaWrite(
-      `excluidos_master?select=cpf,nome,email&instituicao=eq.${encodeURIComponent(instituicao)}&limit=1000`,
-      "GET", null
-    );
+    let q = "excluidos_master?select=cpf,nome,email&limit=1000" + _queryInstituicaoIES(instituicao);
+    const resp = await window._supaWrite(q, "GET", null);
     if (!resp.ok) return { cpfs: new Set(), nomes: new Set(), rows: [] };
     const rows = await resp.json();
     return {
@@ -3439,10 +3728,8 @@ window._fetchExcluidosMaster = async function(instituicao) {
 // ── Busca alunos_master por IES (para lookup de turma por CPF) ──
 window._fetchAlunosMasterByCpf = async function(instituicao) {
   try {
-    const resp = await window._supaWrite(
-      `alunos_master?select=cpf,turma,nome,codigo_aluno&instituicao=eq.${encodeURIComponent(instituicao)}&limit=5000`,
-      "GET", null
-    );
+    let q = "alunos_master?select=cpf,turma,nome,codigo_aluno&limit=5000" + _queryInstituicaoIES(instituicao);
+    const resp = await window._supaWrite(q, "GET", null);
     if (!resp.ok) return {};
     const rows = await resp.json();
     const map = {};
@@ -3466,6 +3753,10 @@ function _normTurmaNr(t) {
 // ── Upsert alunos no alunos_master após upload de engajamento ──
 window._upsertAlunosMaster = async function(instituicao, periods, logFn) {
   const log = logFn || console.log;
+  const instKey =
+    typeof _resolveInstituicaoNomeForAlunos === "function"
+      ? _resolveInstituicaoNomeForAlunos(instituicao) || instituicao
+      : instituicao;
   // Coletar alunos únicos por CPF (última ocorrência ganha turma)
   const byNome = {}; // fallback para alunos sem CPF
   const byCpf = {};
@@ -3475,10 +3766,11 @@ window._upsertAlunosMaster = async function(instituicao, periods, logFn) {
       const turma = _normTurmaNr(al.turma);
       if (cpf) {
         if (!byCpf[cpf]) {
-          // Se turma veio do próprio alunos_master (herdada), não precisa regravar
           const existingMaster = (window._masterByCpf || {})[cpf];
           const turmaIsInherited = al._turmaFromMaster && existingMaster?.turma && turma === _normTurmaNr(existingMaster.turma);
-          byCpf[cpf] = { cpf, nome: al.nome, email: al._email||null, contato: al._contato||null, codigo_aluno: al._codigo_aluno||null, instituicao, turma: turmaIsInherited ? undefined : turma };
+          // Valor explícito de turma (batch PostgREST exige chaves iguais; herdada = repetir valor do master)
+          const turmaVal = turmaIsInherited ? _normTurmaNr(existingMaster.turma) : turma;
+          byCpf[cpf] = { cpf, nome: al.nome, email: al._email||null, contato: al._contato||null, codigo_aluno: al._codigo_aluno||null, instituicao: instKey, turma: turmaVal };
         } else if (turma && !byCpf[cpf].turma) {
           byCpf[cpf].turma = turma;
         }
@@ -3488,25 +3780,39 @@ window._upsertAlunosMaster = async function(instituicao, periods, logFn) {
       }
     });
   });
-  // Remover turma undefined (herdada) para não sobrescrever com null
-  Object.values(byCpf).forEach(r => { if (r.turma === undefined) delete r.turma; });
   const toUpsert = Object.values(byCpf);
   if (!toUpsert.length) {
     log("⚠️ Nenhum aluno com CPF para salvar no alunos_master. Verifique se a planilha tem coluna CPF.", "warn");
     return;
   }
+  // PostgREST exige o mesmo conjunto de chaves em cada objeto do array (PGRST102)
+  const ts = new Date().toISOString();
+  const payload = toUpsert.map(r => ({
+    cpf: r.cpf,
+    nome: r.nome || "",
+    email: r.email != null ? r.email : null,
+    contato: r.contato != null ? r.contato : null,
+    codigo_aluno: r.codigo_aluno != null ? r.codigo_aluno : null,
+    instituicao: r.instituicao,
+    turma: r.turma != null ? r.turma : null,
+    cadastro_origem: "ies",
+    updated_at: ts
+  }));
+  const chunkSize = 200;
+  let okTotal = 0;
   try {
-    const resp = await window._supaWrite(
-      `alunos_master?on_conflict=cpf,instituicao`,
-      "POST",
-      toUpsert.map(a => ({ ...a, updated_at: new Date().toISOString() }))
-    );
-    if (resp.ok) {
-      log(`✅ alunos_master: ${toUpsert.length} aluno(s) salvos/atualizados`, "ok");
-    } else {
-      const err = await resp.json();
-      log(`⚠️ alunos_master: ${JSON.stringify(err)}`, "warn");
+    for (let i = 0; i < payload.length; i += chunkSize) {
+      const batch = payload.slice(i, i + chunkSize);
+      const resp = await window._supaWrite(`alunos_master?on_conflict=cpf,instituicao`, "POST", batch);
+      if (resp.ok) okTotal += batch.length;
+      else {
+        const errTxt = await resp.text().catch(() => "");
+        let errObj = errTxt;
+        try { errObj = JSON.parse(errTxt); } catch (_) {}
+        log(`⚠️ alunos_master: ${JSON.stringify(errObj)}`, "warn");
+      }
     }
+    if (okTotal) log(`✅ alunos_master: ${okTotal} aluno(s) salvos/atualizados`, "ok");
   } catch(e) { log("⚠️ alunos_master: "+e.message, "warn"); }
 };
 
@@ -4482,7 +4788,8 @@ window._loadExclusionFile = async function(file) {
       ]);
       const excCpfs = excResult.cpfs;
       const excNomes = excResult.nomes;
-      if(excCpfs.size) log(`🚫 ${excCpfs.size} professor(es) serão ignorados automaticamente`, "warn");
+      if(excCpfs.size) log(`🚫 ${excCpfs.size} exclusão(ões) por CPF (excluidos_master)`, "warn");
+      if(excNomes.size) log(`🚫 ${excNomes.size} exclusão(ões) por nome (excluidos_master)`, "warn");
       const masterCount = Object.keys(masterByCpf).length;
       if(masterCount) log(`👥 ${masterCount} aluno(s) no alunos_master — turmas serão preenchidas automaticamente`, "ok");
 
@@ -6059,6 +6366,7 @@ window._loadAlunosMaster = async function() {
   // Eventos de busca
   iesSel?.addEventListener('change', window._onAlunosFilterChange);
   document.getElementById('alunoFilterTurma')?.addEventListener('change', window._onAlunosFilterChange);
+  document.getElementById('alunoFilterOrigem')?.addEventListener('change', window._onAlunosFilterChange);
   let _st;
   document.getElementById('alunoSearch')?.addEventListener('input', () => {
     clearTimeout(_st);
@@ -6066,7 +6374,7 @@ window._loadAlunosMaster = async function() {
   });
   // Estado inicial
   const tbody = document.getElementById('alunosTableBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:30px;text-align:center;color:var(--text-muted);font-style:italic">🔍 Insira quem você quer procurar</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--text-muted);font-style:italic">🔍 Insira quem você quer procurar</td></tr>';
   const counter = document.getElementById('alunosCount');
   if (counter) counter.textContent = '';
 };
@@ -6075,52 +6383,100 @@ window._loadAlunosMaster = async function() {
 window._onAlunosFilterChange = async function() {
   const term = (document.getElementById('alunoSearch')?.value || '').trim();
   const iesFilter = document.getElementById('alunoFilterIES')?.value || '';
-  const turmaFilter = document.getElementById('alunoFilterTurma')?.value || '';
+  const turmaSel = document.getElementById('alunoFilterTurma');
+  const prevTurma = turmaSel?.value || '';
   const tbody = document.getElementById('alunosTableBody');
   const counter = document.getElementById('alunosCount');
 
   // Sem IES e sem termo suficiente: mostrar hint
   if (!iesFilter && term.length < 2) {
-    if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:30px;text-align:center;color:var(--text-muted);font-style:italic">🔍 Insira quem você quer procurar</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--text-muted);font-style:italic">🔍 Insira quem você quer procurar</td></tr>';
     if (counter) counter.textContent = '';
     window._allAlunos = [];
+    if (turmaSel) {
+      while (turmaSel.options.length > 2) turmaSel.remove(2);
+      turmaSel.value = '';
+    }
     return;
   }
 
-  if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:30px;text-align:center;color:var(--text-muted)">🔍 Buscando...</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--text-muted)">🔍 Buscando...</td></tr>';
 
   try {
-    let query = 'select=*&order=nome';
-    // Filtro por IES (exact match — usa valor real vindo do dropdown populado pelo banco)
-    if (iesFilter) query += `&instituicao=eq.${encodeURIComponent(iesFilter)}`;
-    // Busca textual por nome, email, telefone, cpf
-    if (term) {
-      const t = encodeURIComponent(term);
-      query += `&or=(nome.ilike.*${t}*,email.ilike.*${t}*,telefone.ilike.*${t}*,cpf.ilike.*${t}*)`;
+    const slugForIes = iesFilter && window._alunoNomeToSlug ? window._alunoNomeToSlug[iesFilter] : '';
+    const dualInst = !!(iesFilter && slugForIes && slugForIes !== iesFilter);
+
+    /**
+     * Monta query PostgREST para alunos_master: IES pode estar salva como nome ou slug (import antigo).
+     */
+    function _alunosQuery(useCpf) {
+      let q = 'select=*&order=nome';
+      const t = term ? encodeURIComponent(term) : '';
+      const cpfPart = useCpf ? `,cpf.ilike.*${t}*` : '';
+      const searchInner = term
+        ? `or(nome.ilike.*${t}*,email.ilike.*${t}*,contato.ilike.*${t}*${cpfPart})`
+        : '';
+      const searchTop = term
+        ? `or=(nome.ilike.*${t}*,email.ilike.*${t}*,contato.ilike.*${t}*${cpfPart})`
+        : '';
+      if (iesFilter && term) {
+        if (dualInst) {
+          q += `&and=(or(instituicao.eq.${encodeURIComponent(iesFilter)},instituicao.eq.${encodeURIComponent(slugForIes)}),${searchInner})`;
+        } else {
+          q += `&instituicao=eq.${encodeURIComponent(iesFilter)}&${searchTop}`;
+        }
+      } else if (iesFilter) {
+        q += dualInst
+          ? `&or=(instituicao.eq.${encodeURIComponent(iesFilter)},instituicao.eq.${encodeURIComponent(slugForIes)})`
+          : `&instituicao=eq.${encodeURIComponent(iesFilter)}`;
+      } else if (term) {
+        q += `&${searchTop}`;
+      }
+      if (!iesFilter) q += '&limit=100';
+      return q;
     }
-    // Sem IES selecionada: limitar para não sobrecarregar
-    if (!iesFilter) query += '&limit=100';
 
     let data;
     try {
-      data = await _supaRestAdmin('alunos_master', query);
+      data = await _supaRestAdmin('alunos_master', _alunosQuery(true));
     } catch(e1) {
-      // Fallback sem cpf no filtro (coluna pode não existir)
       if (term) {
-        const t = encodeURIComponent(term);
-        let q2 = 'select=*&order=nome';
-        if (iesFilter) q2 += `&instituicao=eq.${encodeURIComponent(iesFilter)}`;
-        q2 += `&or=(nome.ilike.*${t}*,email.ilike.*${t}*,telefone.ilike.*${t}*)`;
-        if (!iesFilter) q2 += '&limit=100';
-        data = await _supaRestAdmin('alunos_master', q2);
+        data = await _supaRestAdmin('alunos_master', _alunosQuery(false));
       } else {
         throw e1;
       }
     }
     let results = data || [];
 
-    // Filtro de turma (client-side, se coluna existir nos dados)
-    if (turmaFilter === '_sem') results = results.filter(a => !a.turma);
+    // Opções do filtro turma = turmas distintas no resultado bruto (antes de filtrar por turma)
+    if (turmaSel) {
+      const turmasUniq = [...new Set(results.map(a => String(a.turma || '').trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+      while (turmaSel.options.length > 2) turmaSel.remove(2);
+      turmasUniq.forEach(t => {
+        const o = document.createElement('option');
+        o.value = t;
+        o.textContent = t;
+        turmaSel.appendChild(o);
+      });
+      if (prevTurma === '_sem' || prevTurma === '' || turmasUniq.includes(prevTurma)) turmaSel.value = prevTurma;
+      else turmaSel.value = '';
+    }
+
+    const turmaFilter = turmaSel?.value || '';
+    if (turmaFilter === '_sem') results = results.filter(a => !String(a.turma || '').trim());
+    else if (turmaFilter) results = results.filter(a => String(a.turma || '').trim() === turmaFilter);
+
+    const origemF = document.getElementById('alunoFilterOrigem')?.value || '';
+    if (origemF === 'ies') {
+      results = results.filter(
+        a => a.cadastro_origem === 'ies' || a.cadastro_origem == null || String(a.cadastro_origem || '') === ''
+      );
+    } else if (origemF === 'simulado') {
+      results = results.filter(a => a.cadastro_origem === 'simulado');
+    } else if (origemF === 'sem_nome') {
+      results = results.filter(a => !String(a.nome || '').trim());
+    }
 
     window._allAlunos = results;
     // Garante que boletim availability está carregado antes de renderizar
@@ -6129,7 +6485,7 @@ window._onAlunosFilterChange = async function() {
     }
     window._renderAlunosMaster();
   } catch(e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="padding:30px;text-align:center;color:var(--accent)">Erro: ${e.message}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--accent)">Erro: ${e.message}</td></tr>`;
   }
 };
 
@@ -6175,15 +6531,22 @@ window._loadBoletimAvailability = async function() {
     }
     if (activeSims && activeSims.length > 0) {
       const validRefs = new Set();
+      const allSlugs = (window._instData || []).map(i => i.slug).filter(Boolean);
       activeSims.forEach(s => {
         let dest = s.instituicoes_destino;
         if (!Array.isArray(dest)) { try { dest = JSON.parse(dest||'[]'); } catch(e) { dest = []; } }
-        dest.forEach(slug => validRefs.add(`bq_${slug}_${s.id.slice(0,8)}`));
+        const slugs = dest.length ? dest : allSlugs;
+        slugs.forEach(slug => {
+          validRefs.add(`bq_${slug}_${s.id.slice(0,8)}`);
+          validRefs.add(`bq_${slug}_tendencias_${s.id.slice(0,8)}`);
+        });
       });
-      window._boletimSimRefs = window._boletimSimRefs.filter(r => {
-        if (!r.simulado_ref.startsWith('bq_')) return true; // tendências e outros formatos — manter
-        return validRefs.has(r.simulado_ref);
-      });
+      if (validRefs.size > 0) {
+        window._boletimSimRefs = window._boletimSimRefs.filter(r => {
+          if (!r.simulado_ref.startsWith('bq_')) return true;
+          return validRefs.has(r.simulado_ref);
+        });
+      }
     }
 
     metaData.forEach(r => window._boletimIESSet.add(r.ies_slug));
@@ -6206,28 +6569,118 @@ window._renderAlunosMaster = function() {
   const iesFilter = document.getElementById('alunoFilterIES')?.value || '';
   const hasLimit = !iesFilter && filtered.length === 100;
   counter.textContent = filtered.length + (hasLimit ? '+ resultados' : ' aluno(s)');
-  if (!filtered.length) { tbody.innerHTML = '<tr><td colspan="5" style="padding:30px;text-align:center;color:var(--text-muted)">Nenhum aluno encontrado.</td></tr>'; return; }
+  if (!filtered.length) { tbody.innerHTML = '<tr><td colspan="8" style="padding:30px;text-align:center;color:var(--text-muted)">Nenhum aluno encontrado.</td></tr>'; return; }
   const show = filtered.slice(0, 300);
   const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   // Verificar quais IES têm boletim disponível (dados em simulado_respostas)
   const iesComBoletim = window._boletimIESSet || new Set();
+  const _fmtCpfCell = (c) => {
+    const d = String(c || '').replace(/\D/g, '');
+    if (d.length !== 11) return esc(c || '—');
+    return esc(`${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`);
+  };
   tbody.innerHTML = show.map(a => {
     const instRaw = a.instituicao || '';
     const instSlug = (window._alunoNomeToSlug || {})[instRaw] || (window._alunoNomeToSlug || {})[instRaw.toLowerCase()] || instRaw.toLowerCase().replace(/\s+/g, '-');
     const temBoletim = iesComBoletim.has(instSlug) || iesComBoletim.has(instRaw) || iesComBoletim.has(instRaw.toLowerCase());
-    // Para _gerarBoletimIndividual, passa o slug que bate com simulado_respostas.ies_slug
     const instParam = iesComBoletim.has(instSlug) ? instSlug : instRaw;
+    const nomeVis = String(a.nome || '').trim();
+    const nomeBoletim = nomeVis || ('CPF ' + String(a.cpf || ''));
+    const nomeCell = nomeVis
+      ? esc(nomeVis)
+      : '<span style="color:var(--text-muted);font-style:italic">— pendente</span>';
+    const origemBadge =
+      a.cadastro_origem === 'simulado'
+        ? '<span style="font-size:0.68rem;padding:2px 8px;border-radius:6px;background:rgba(59,130,246,0.15);color:#93c5fd">Simulado</span>'
+        : '<span style="font-size:0.68rem;padding:2px 8px;border-radius:6px;background:rgba(34,197,94,0.12);color:#86efac">B2B</span>';
     const boletimBtn = temBoletim
-      ? `<button onclick="window._gerarBoletimIndividual('${esc(a.nome).replace(/'/g,"\\'")}','${esc(instParam)}','${esc(a.cpf||'').replace(/'/g,"\\'")}')" style="padding:4px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap" title="Gerar boletim PDF">📄</button>`
+      ? `<button type="button" onclick="window._gerarBoletimIndividual('${esc(nomeBoletim).replace(/'/g, "\\'")}','${esc(instParam)}','${esc(a.cpf || '').replace(/'/g, "\\'")}')" style="padding:4px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap" title="Gerar boletim PDF">📄</button>`
       : `<span style="color:var(--text-muted);font-size:0.7rem">—</span>`;
+    const emailBoletimBtn = temBoletim && a.email
+      ? `<button type="button" onclick="window._openEnviarBoletimAlunoModal(${JSON.stringify(nomeBoletim)},${JSON.stringify(instParam)},${JSON.stringify(instSlug)},${JSON.stringify(a.cpf || '')},${JSON.stringify(a.email)})" style="padding:4px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap" title="Enviar boletim por e-mail — confirme o simulado">📧</button>`
+      : (temBoletim ? `<span style="font-size:0.65rem;color:var(--text-muted)" title="Cadastre e-mail do aluno">—</span>` : '');
+    const editBtn =
+      a.id != null
+        ? `<button type="button" onclick="window._openAlunoEditModal(${a.id})" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.68rem;font-weight:600;cursor:pointer" title="Editar nome">✎</button>`
+        : '';
     return `<tr style="border-bottom:1px solid var(--border-subtle)">
-    <td style="padding:10px 14px;font-weight:600;font-size:0.83rem">${esc(a.nome)}</td>
+    <td style="padding:10px 14px;font-weight:600;font-size:0.83rem">${nomeCell}</td>
+    <td style="padding:10px 14px;font-size:0.76rem;color:var(--text-muted);font-variant-numeric:tabular-nums">${_fmtCpfCell(a.cpf)}</td>
     <td style="padding:10px 14px;font-size:0.78rem;color:var(--text-muted)">${a.email ? '<a href="mailto:'+esc(a.email)+'" style="color:var(--text-soft);text-decoration:none;display:inline-flex;align-items:center;gap:4px" title="Enviar e-mail">✉️ '+esc(a.email)+'</a>' : '—'}</td>
-    <td style="padding:10px 14px;font-size:0.78rem;color:var(--text-muted)">${a.telefone ? '<a href="tel:'+esc(a.telefone)+'" style="color:var(--text-soft);text-decoration:none">'+esc(a.telefone)+'</a>' : '—'}</td>
+    <td style="padding:10px 14px;font-size:0.78rem;color:var(--text-muted)">${(a.contato || a.telefone) ? '<a href="tel:'+esc(a.contato || a.telefone)+'" style="color:var(--text-soft);text-decoration:none">'+esc(a.contato || a.telefone)+'</a>' : '—'}</td>
     <td style="padding:10px 14px;font-size:0.82rem;font-weight:600;color:var(--text-soft)">${esc(a.instituicao)}</td>
-    <td style="padding:10px 14px;text-align:center">${boletimBtn}</td>
+    <td style="padding:10px 14px;font-size:0.78rem;color:var(--text-muted)">${String(a.turma || '').trim() ? esc(String(a.turma).trim()) : '<span style="color:var(--text-muted);opacity:0.7">—</span>'}</td>
+    <td style="padding:10px 14px">${origemBadge}</td>
+    <td style="padding:10px 14px;text-align:center"><span style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:center">${boletimBtn}${emailBoletimBtn}${editBtn}</span></td>
   </tr>`;
-  }).join('') + (filtered.length > 300 ? '<tr><td colspan="5" style="padding:14px;text-align:center;color:var(--text-muted);font-size:0.75rem">Mostrando 300 de ' + filtered.length + ' — use filtros para refinar.</td></tr>' : '');
+  }).join('') + (filtered.length > 300 ? '<tr><td colspan="8" style="padding:14px;text-align:center;color:var(--text-muted);font-size:0.75rem">Mostrando 300 de ' + filtered.length + ' — use filtros para refinar.</td></tr>' : '');
+};
+
+window._alunoEditRowId = null;
+
+/**
+ * Abre modal para editar nome do aluno (alunos_master).
+ * @param {number|string} rowId
+ */
+window._openAlunoEditModal = function(rowId) {
+  const a = (window._allAlunos || []).find(x => String(x.id) === String(rowId));
+  if (!a) return;
+  window._alunoEditRowId = a.id;
+  const cpfEl = document.getElementById('alunoEditCpf');
+  const nomeEl = document.getElementById('alunoEditNome');
+  const fb = document.getElementById('alunoEditFeedback');
+  if (cpfEl) cpfEl.value = String(a.cpf || '').replace(/\D/g, '').length === 11
+    ? String(a.cpf || '').replace(/\D/g, '').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+    : (a.cpf || '');
+  if (nomeEl) nomeEl.value = String(a.nome || '').trim();
+  if (fb) fb.textContent = '';
+  const m = document.getElementById('alunoEditModal');
+  if (m) m.style.display = 'flex';
+};
+
+window._closeAlunoEditModal = function() {
+  window._alunoEditRowId = null;
+  const m = document.getElementById('alunoEditModal');
+  if (m) m.style.display = 'none';
+};
+
+/**
+ * PATCH nome em alunos_master e atualiza a lista.
+ */
+window._saveAlunoNomeEdit = async function() {
+  const id = window._alunoEditRowId;
+  const nomeEl = document.getElementById('alunoEditNome');
+  const fb = document.getElementById('alunoEditFeedback');
+  const btn = document.getElementById('alunoEditSaveBtn');
+  if (id == null || !nomeEl) return;
+  const nomeVal = String(nomeEl.value || '').trim();
+  if (!nomeVal) {
+    if (fb) { fb.style.color = 'var(--accent)'; fb.textContent = 'Informe o nome.'; }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+  if (fb) fb.textContent = '';
+  try {
+    const resp = await window._supaWrite(
+      `alunos_master?id=eq.${encodeURIComponent(id)}`,
+      'PATCH',
+      { nome: nomeVal, updated_at: new Date().toISOString() }
+    );
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      if (fb) { fb.style.color = 'var(--accent)'; fb.textContent = (t || 'Erro ao salvar').slice(0, 200); }
+      return;
+    }
+    const ix = (window._allAlunos || []).findIndex(x => String(x.id) === String(id));
+    if (ix >= 0) window._allAlunos[ix].nome = nomeVal;
+    window._closeAlunoEditModal();
+    window._renderAlunosMaster();
+    if (typeof window._refreshDashAlunoStats === 'function') window._refreshDashAlunoStats();
+  } catch (e) {
+    if (fb) { fb.style.color = 'var(--accent)'; fb.textContent = e.message || 'Erro'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar'; }
+  }
 };
 
 async function openUserModal(email, nome, role, inst, ativo, iesResponsavel) {
@@ -6701,12 +7154,16 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
   };
 
   // ── GERAÇÃO DO PDF INSTITUCIONAL ───────────────────────────
-  window._simGeneratePDF = async function(slug, simId) {
+  /** @param {{ blobsOnly?: boolean }} [opts] — blobsOnly: retorna { pdfBlob, xlsxBlob, baseName, simTitle, name } sem download */
+  window._simGeneratePDF = async function(slug, simId, opts) {
+    opts = opts || {};
     const ds = window.INSTITUTION_DATASETS || {};
     const inst = ds[slug] || {};
     const instData = (window._instData || []).find(i => i.slug === slug);
     const name = inst.institutionName || instData?.nome || slug.toUpperCase();
-    const corHex = ($("simPdfCorHex")?.value||'').trim() || localStorage.getItem('simPdfCor_'+slug) || instData?.theme_hex || '#B01B1B';
+    const corHex = opts.blobsOnly
+      ? String(localStorage.getItem('simPdfCor_' + slug) || instData?.theme_hex || '#B01B1B').trim()
+      : (($("simPdfCorHex")?.value||'').trim() || localStorage.getItem('simPdfCor_'+slug) || instData?.theme_hex || '#B01B1B');
     if(!/^#[0-9a-fA-F]{6}$/.test(corHex)) { alert('Cor hexadecimal inválida.'); return; }
     localStorage.setItem('simPdfCor_'+slug, corHex);
 
@@ -6950,11 +7407,21 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     });
     footer();
 
-    // Save PDF
     const baseName = `Relatorio_${name.replace(/[^a-zA-Z0-9]/g, '_')}_${(simTitle || 'simulado').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}`;
-    doc.save(baseName + '.pdf');
 
-    // ── Gerar Excel junto ──
+    if (opts.blobsOnly) {
+      const pdfBlob = doc.output('blob');
+      let xlsxBlob = null;
+      try {
+        xlsxBlob = await window._gerarRelatorioExcel({
+          alunos, questions, areaStats, bins, name, simTitle, totalAlunos, mediaIES, profCount, quaseCount, urgCount, baseName,
+          returnBlob: true
+        });
+      } catch (exErr) { console.warn('Excel não gerado:', exErr); }
+      return { pdfBlob, xlsxBlob, baseName, simTitle, name };
+    }
+
+    doc.save(baseName + '.pdf');
     try {
       await window._gerarRelatorioExcel({ alunos, questions, areaStats, bins, name, simTitle, totalAlunos, mediaIES, profCount, quaseCount, urgCount, baseName });
     } catch(exErr) { console.warn('Excel não gerado:', exErr); }
@@ -6962,23 +7429,37 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     $("simPdfModal").style.display = 'none';
   };
 
-  // ── GERAÇÃO DO EXCEL INSTITUCIONAL ─────────────────────────────────────────
-  window._gerarRelatorioExcel = async function({ alunos, questions, areaStats, bins, name, simTitle, totalAlunos, mediaIES, profCount, quaseCount, urgCount, baseName }) {
-    // Garante SheetJS
-    if (typeof XLSX === 'undefined') {
-      await new Promise((res, rej) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        s.onload = res; s.onerror = rej; document.head.appendChild(s);
-      });
-    }
+  // ── Paleta alinhada ao modelo Relatorio_*_Formatado.xlsx (ExcelJS) ──
+  const _REL_XL = {
+    headerBg: 'FF1A1A1A',
+    headerFont: 'FFFFFFFF',
+    accentSection: 'FFC46A6A',
+    accentFont: 'FFFFFFFF',
+    labelRow: 'FFF5F5F5',
+    stripeA: 'FFF9F9F9',
+    stripeB: 'FFFFFFFF',
+    green: 'FFD5F5E3',
+    yellow: 'FFFEF9E7',
+    red: 'FFFADBD8',
+    nameCol: 'FFEAF7EE',
+    thinBorder: { top: { style: 'thin', color: { argb: 'FFE0E0E0' } }, left: { style: 'thin', color: { argb: 'FFE0E0E0' } }, bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } }, right: { style: 'thin', color: { argb: 'FFE0E0E0' } } }
+  };
 
-    const wb = XLSX.utils.book_new();
+  async function _ensureExcelJSRel() {
+    if (typeof ExcelJS !== 'undefined') return;
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+      s.onload = res;
+      s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  // ── GERAÇÃO DO EXCEL INSTITUCIONAL (ExcelJS — formatação tipo planilha “Formatado”) ──
+  window._gerarRelatorioExcel = async function({ alunos, questions, areaStats, bins, name, simTitle, totalAlunos, mediaIES, profCount, quaseCount, urgCount, baseName, returnBlob }) {
+    await _ensureExcelJSRel();
     const dt = new Date().toLocaleDateString('pt-BR');
-
-    // ──────────────────────────────────────────────────────────
-    // ABA 1: RESUMO
-    // ──────────────────────────────────────────────────────────
     const scores = alunos.map(a => a.nota || 0);
     const sorted = [...scores].sort((a, b) => a - b);
     const p = pct => sorted[Math.floor(sorted.length * pct / 100)] || 0;
@@ -6987,14 +7468,50 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     const maiorNota = Math.max(...scores), menorNota = Math.min(...scores);
     const taxaProf = (profCount / totalAlunos * 100);
 
-    const resumoData = [
-      ['RELATÓRIO DE SIMULADO — ANÁLISE ESTATÍSTICA'],
-      [''],
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'MedCof';
+    const alunosSorted = [...alunos].sort((a, b) => (b.nota||0) - (a.nota||0));
+
+    // ── ABA Resumo ──
+    const ws1 = wb.addWorksheet('Resumo', { views: [{ showGridLines: true }] });
+    ws1.columns = [{ width: 36 }, { width: 64 }];
+    ws1.mergeCells(1, 1, 1, 2);
+    const cTitle = ws1.getCell(1, 1);
+    cTitle.value = 'RELATÓRIO DE SIMULADO — ANÁLISE ESTATÍSTICA';
+    cTitle.font = { bold: true, size: 16, name: 'Arial', color: { argb: _REL_XL.headerFont } };
+    cTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.headerBg } };
+    cTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws1.getRow(1).height = 28;
+
+    const pairRows = [
       ['Instituição', name],
       ['Simulado', simTitle || '—'],
-      ['Data do relatório', dt],
-      [''],
-      ['MÉTRICAS GERAIS', ''],
+      ['Data do relatório', dt]
+    ];
+    let r = 3;
+    pairRows.forEach(([lab, val]) => {
+      ws1.getCell(r, 1).value = lab;
+      ws1.getCell(r, 2).value = val;
+      [1, 2].forEach(col => {
+        const c = ws1.getCell(r, col);
+        c.font = { bold: col === 1, size: 11, name: 'Arial', color: { argb: 'FF1A1A1A' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.labelRow } };
+        c.alignment = { horizontal: col === 2 ? 'right' : 'left', vertical: 'middle' };
+        c.border = _REL_XL.thinBorder;
+      });
+      r++;
+    });
+
+    r++;
+    ws1.mergeCells(r, 1, r, 2);
+    const secM = ws1.getCell(r, 1);
+    secM.value = 'MÉTRICAS GERAIS';
+    secM.font = { bold: true, size: 12, name: 'Arial', color: { argb: _REL_XL.accentFont } };
+    secM.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.accentSection } };
+    secM.alignment = { horizontal: 'left', vertical: 'middle' };
+    r++;
+
+    const metricPairs = [
       ['Total de alunos avaliados', totalAlunos],
       ['Média institucional (%)', +mediaIES.toFixed(2)],
       ['Mediana (%)', +mediana.toFixed(2)],
@@ -7003,26 +7520,67 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       ['Menor nota (%)', +menorNota.toFixed(2)],
       ['P25 — 1º Quartil (%)', +p(25).toFixed(2)],
       ['P75 — 3º Quartil (%)', +p(75).toFixed(2)],
-      ['Coeficiente de variação (%)', +(stddev/mediaIES*100).toFixed(2)],
-      [''],
-      ['PROFICIÊNCIA', ''],
-      ['Proficientes (nota ≥ 60%)', profCount],
-      ['Taxa de proficiência (%)', +taxaProf.toFixed(2)],
-      ['Quase proficientes (49–59%)', quaseCount],
-      ['Atenção urgente (< 49%)', urgCount],
-      [''],
-      ['INSTRUMENTO', ''],
-      ['Total de questões', questions.length],
-      ['Grandes áreas cobertas', areaStats.length],
+      ['Coeficiente de variação (%)', +(stddev/mediaIES*100).toFixed(2)]
     ];
-    const ws1 = XLSX.utils.aoa_to_sheet(resumoData);
-    ws1['!cols'] = [{ wch: 36 }, { wch: 22 }];
-    XLSX.utils.book_append_sheet(wb, ws1, 'Resumo');
+    metricPairs.forEach((row, idx) => {
+      const bg = idx % 2 === 0 ? _REL_XL.stripeA : _REL_XL.stripeB;
+      ws1.getCell(r, 1).value = row[0];
+      ws1.getCell(r, 2).value = row[1];
+      [1, 2].forEach(col => {
+        const c = ws1.getCell(r, col);
+        c.font = { bold: col === 2, size: 11, name: 'Arial', color: { argb: 'FF1A1A1A' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c.alignment = { horizontal: col === 2 ? 'right' : 'left', vertical: 'middle' };
+        c.border = _REL_XL.thinBorder;
+      });
+      r++;
+    });
 
-    // ──────────────────────────────────────────────────────────
-    // ABA 2: RANKING DE ALUNOS
-    // ──────────────────────────────────────────────────────────
-    const alunosSorted = [...alunos].sort((a, b) => (b.nota||0) - (a.nota||0));
+    r++;
+    ws1.mergeCells(r, 1, r, 2);
+    const secP = ws1.getCell(r, 1);
+    secP.value = 'PROFICIÊNCIA';
+    secP.font = { bold: true, size: 12, name: 'Arial', color: { argb: _REL_XL.accentFont } };
+    secP.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.accentSection } };
+    r++;
+
+    [['Proficientes (nota ≥ 60%)', profCount], ['Taxa de proficiência (%)', +taxaProf.toFixed(2)], ['Quase proficientes (49–59%)', quaseCount], ['Atenção urgente (< 49%)', urgCount]].forEach((row, idx) => {
+      const bg = idx % 2 === 0 ? _REL_XL.stripeA : _REL_XL.stripeB;
+      ws1.getCell(r, 1).value = row[0];
+      ws1.getCell(r, 2).value = row[1];
+      [1, 2].forEach(col => {
+        const c = ws1.getCell(r, col);
+        c.font = { bold: col === 2, size: 11, name: 'Arial' };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c.alignment = { horizontal: col === 2 ? 'right' : 'left', vertical: 'middle' };
+        c.border = _REL_XL.thinBorder;
+      });
+      r++;
+    });
+
+    r++;
+    ws1.mergeCells(r, 1, r, 2);
+    const secI = ws1.getCell(r, 1);
+    secI.value = 'INSTRUMENTO';
+    secI.font = { bold: true, size: 12, name: 'Arial', color: { argb: _REL_XL.accentFont } };
+    secI.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.accentSection } };
+    r++;
+    [['Total de questões', questions.length], ['Grandes áreas cobertas', areaStats.length]].forEach((row, idx) => {
+      const bg = idx % 2 === 0 ? _REL_XL.stripeA : _REL_XL.stripeB;
+      ws1.getCell(r, 1).value = row[0];
+      ws1.getCell(r, 2).value = row[1];
+      [1, 2].forEach(col => {
+        const c = ws1.getCell(r, col);
+        c.font = { bold: col === 2, size: 11, name: 'Arial' };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c.alignment = { horizontal: col === 2 ? 'right' : 'left', vertical: 'middle' };
+        c.border = _REL_XL.thinBorder;
+      });
+      r++;
+    });
+
+    // ── Ranking ──
+    const ws2 = wb.addWorksheet('Ranking Alunos');
     const rankHeader = ['Posição', 'Nome', 'Turma', 'Nota (%)', 'Faixa', 'Z-Score', 'Percentil Aprox.'];
     const rankRows = alunosSorted.map((a, i) => {
       const nota = a.nota || 0;
@@ -7031,14 +7589,20 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       const perc = +(sorted.filter(s => s <= nota).length / sorted.length * 100).toFixed(1);
       return [i + 1, a.nome || '', a.turma || '', +nota.toFixed(2), faixa, zscore, perc];
     });
-    const ws2 = XLSX.utils.aoa_to_sheet([rankHeader, ...rankRows]);
-    ws2['!cols'] = [{ wch: 9 }, { wch: 36 }, { wch: 16 }, { wch: 10 }, { wch: 18 }, { wch: 10 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, ws2, 'Ranking Alunos');
+    [rankHeader, ...rankRows].forEach((rowData, ri) => {
+      const row = ws2.getRow(ri + 1);
+      rowData.forEach((val, ci) => {
+        const c = row.getCell(ci + 1);
+        c.value = val;
+        c.font = { bold: ri === 0 || (ri > 0 && (ci === 0 || ci === 3)), size: 11, name: 'Arial', color: { argb: ri === 0 ? _REL_XL.headerFont : 'FF1A1A1A' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ri === 0 ? _REL_XL.headerBg : _REL_XL.green } };
+        c.alignment = { vertical: 'middle', horizontal: ci === 0 || ci === 3 ? 'center' : 'left' };
+        c.border = _REL_XL.thinBorder;
+      });
+    });
+    ws2.columns = [{ width: 10 }, { width: 38 }, { width: 16 }, { width: 11 }, { width: 20 }, { width: 11 }, { width: 14 }];
 
-    // ──────────────────────────────────────────────────────────
-    // ABA 3: ANÁLISE POR QUESTÃO
-    // ──────────────────────────────────────────────────────────
-    // Para cada questão: % acerto, distribuição de respostas, índice de dificuldade, discriminação
+    // ── Análise por questão ──
     const allResps = alunos.map(a => (a.resps || '').split(''));
     const qHeader = ['Nº Questão', 'Grande Área', 'Tema', 'Gabarito', 'Anulada', '% Acerto', 'Dificuldade', 'Resp A (%)', 'Resp B (%)', 'Resp C (%)', 'Resp D (%)', 'Resp E (%)', 'Branco/Inválido (%)'];
     const qRows = questions.map((q, i) => {
@@ -7052,31 +7616,50 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       const countE = respsQ.filter(r => r === 'E').length;
       const countOther = respsQ.filter(r => !['A','B','C','D','E'].includes(r)).length;
       const acertos = q.gab ? respsQ.filter(r => r === q.gab).length : 0;
-      const pctAcerto = anulada ? null : +(acertos / n * 100).toFixed(2);
-      const dif = pctAcerto == null ? '—' : pctAcerto >= 70 ? 'Fácil' : pctAcerto >= 40 ? 'Médio' : 'Difícil';
-      return [
-        q.q || i + 1, q.area || '—', q.tema || '—', q.gab || '—', anulada ? 'Sim' : 'Não',
-        pctAcerto ?? '—', dif,
-        +(countA/n*100).toFixed(2), +(countB/n*100).toFixed(2), +(countC/n*100).toFixed(2),
-        +(countD/n*100).toFixed(2), +(countE/n*100).toFixed(2), +(countOther/n*100).toFixed(2)
-      ];
+      const pctNum = anulada ? null : (acertos / n * 100);
+      const pctAcertoDisp = pctNum == null ? '—' : +pctNum.toFixed(2);
+      const dif = pctNum == null ? '—' : pctNum >= 70 ? 'Fácil' : pctNum >= 40 ? 'Médio' : 'Difícil';
+      return {
+        cells: [
+          q.q != null ? q.q : i + 1, q.area || '—', q.tema || '—', q.gab || '—', anulada ? 'Sim' : 'Não',
+          pctAcertoDisp, dif,
+          +(countA/n*100).toFixed(2), +(countB/n*100).toFixed(2), +(countC/n*100).toFixed(2),
+          +(countD/n*100).toFixed(2), +(countE/n*100).toFixed(2), +(countOther/n*100).toFixed(2)
+        ],
+        pctNum
+      };
     });
-    const ws3 = XLSX.utils.aoa_to_sheet([qHeader, ...qRows]);
-    ws3['!cols'] = [{ wch: 12 }, { wch: 28 }, { wch: 36 }, { wch: 10 }, { wch: 9 }, { wch: 10 }, { wch: 12 },
-                   { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 16 }];
-    XLSX.utils.book_append_sheet(wb, ws3, 'Análise por Questão');
+    const ws3 = wb.addWorksheet('Análise por Questão');
+    const qAll = [qHeader, ...qRows.map(x => x.cells)];
+    qAll.forEach((rowData, ri) => {
+      const row = ws3.getRow(ri + 1);
+      const stripe = ri > 0 && (ri - 1) % 2 === 0 ? _REL_XL.stripeA : _REL_XL.stripeB;
+      rowData.forEach((val, ci) => {
+        const c = row.getCell(ci + 1);
+        c.value = val;
+        c.font = { bold: ri === 0 || (ri > 0 && ci === 5), size: 10, name: 'Arial', color: { argb: ri === 0 ? _REL_XL.headerFont : 'FF1A1A1A' } };
+        let bg = ri === 0 ? _REL_XL.headerBg : stripe;
+        if (ri > 0 && ci === 5 && qRows[ri - 1].pctNum != null) {
+          const pct = qRows[ri - 1].pctNum;
+          bg = pct >= 60 ? _REL_XL.green : pct >= 40 ? _REL_XL.yellow : _REL_XL.red;
+        }
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c.alignment = { vertical: 'middle', wrapText: true, horizontal: ci >= 6 ? 'center' : 'left' };
+        c.border = _REL_XL.thinBorder;
+      });
+    });
+    ws3.columns = [{ width: 12 }, { width: 28 }, { width: 36 }, { width: 10 }, { width: 9 }, { width: 11 }, { width: 12 },
+      { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 16 }];
 
-    // ──────────────────────────────────────────────────────────
-    // ABA 4: DESEMPENHO POR ÁREA
-    // ──────────────────────────────────────────────────────────
+    // ── Desempenho por área ──
     const areaHeader = ['Grande Área', 'Nº Questões', 'Média IES (%)', 'Acima de 60%', 'Abaixo de 40%', 'Desvio Padrão (%)'];
-    const areaRows = areaStats.map(a => {
+    const areaRowsRaw = areaStats.map(a => {
       const qsArea = questions.filter(q => q.area === a.label);
       const nQ = qsArea.length;
       const indices = qsArea.map(q => questions.indexOf(q));
       const notasArea = alunos.map(al => {
         const respsAl = (al.resps || '').split('');
-        const hits = indices.filter(i => respsAl[i] === questions[i]?.gab).length;
+        const hits = indices.filter(ii => respsAl[ii] === questions[ii]?.gab).length;
         return nQ > 0 ? hits / nQ * 100 : 0;
       });
       const mediaA = notasArea.reduce((s, v) => s + v, 0) / (notasArea.length || 1);
@@ -7085,57 +7668,143 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       const ab40 = notasArea.filter(v => v < 40).length;
       return [a.label, nQ, +mediaA.toFixed(2), ac60, ab40, +stdA.toFixed(2)];
     }).sort((a, b) => b[2] - a[2]);
-    const ws4 = XLSX.utils.aoa_to_sheet([areaHeader, ...areaRows]);
-    ws4['!cols'] = [{ wch: 30 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 18 }];
-    XLSX.utils.book_append_sheet(wb, ws4, 'Desempenho por Área');
+    const ws4 = wb.addWorksheet('Desempenho por Área');
+    [areaHeader, ...areaRowsRaw].forEach((rowData, ri) => {
+      const row = ws4.getRow(ri + 1);
+      let rowBg = _REL_XL.headerBg;
+      if (ri > 0) {
+        const rank = ri - 1;
+        const n = areaRowsRaw.length;
+        rowBg = rank === 0 ? _REL_XL.green : rank <= Math.max(1, Math.ceil(n / 3)) ? _REL_XL.yellow : _REL_XL.red;
+      }
+      rowData.forEach((val, ci) => {
+        const c = row.getCell(ci + 1);
+        c.value = val;
+        c.font = { bold: true, size: 11, name: 'Arial', color: { argb: ri === 0 ? _REL_XL.headerFont : 'FF1A1A1A' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+        c.alignment = { vertical: 'middle', horizontal: ci >= 1 ? 'center' : 'left' };
+        c.border = _REL_XL.thinBorder;
+      });
+    });
+    ws4.columns = [{ width: 30 }, { width: 14 }, { width: 16 }, { width: 14 }, { width: 16 }, { width: 18 }];
 
-    // ──────────────────────────────────────────────────────────
-    // ABA 5: DISTRIBUIÇÃO DE NOTAS
-    // ──────────────────────────────────────────────────────────
+    // ── Distribuição ──
     const faixasLabels = ['0–9%','10–19%','20–29%','30–39%','40–49%','50–59%','60–69%','70–79%','80–89%','90–100%'];
     const distHeader = ['Faixa de Nota', 'Nº Alunos', '% da Turma', 'Proficiência'];
-    const distRows = faixasLabels.map((f, i) => [
-      f, bins[i], +(bins[i] / totalAlunos * 100).toFixed(2), i >= 6 ? 'Proficiente' : i >= 5 ? 'Limítrofe' : 'Abaixo'
-    ]);
-    distRows.push(['TOTAL', totalAlunos, 100, '']);
-    const ws5 = XLSX.utils.aoa_to_sheet([distHeader, ...distRows]);
-    ws5['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, ws5, 'Distribuição de Notas');
+    const distRows = faixasLabels.map((f, i) => ({
+      cells: [f, bins[i], +(bins[i] / totalAlunos * 100).toFixed(2), i >= 6 ? 'Proficiente' : i >= 5 ? 'Limítrofe' : 'Abaixo'],
+      idx: i
+    }));
+    distRows.push({ cells: ['TOTAL', totalAlunos, 100, ''], idx: -1 });
+    const ws5 = wb.addWorksheet('Distribuição de Notas');
+    [distHeader, ...distRows.map(d => d.cells)].forEach((rowData, ri) => {
+      const row = ws5.getRow(ri + 1);
+      const isTotalRow = ri === 11;
+      rowData.forEach((val, ci) => {
+        const c = row.getCell(ci + 1);
+        c.value = val;
+        const boldProf = ri >= 1 && ri <= 10 && ci === 3;
+        c.font = { bold: ri === 0 || isTotalRow || boldProf, size: 11, name: 'Arial', color: { argb: ri === 0 ? _REL_XL.headerFont : 'FF1A1A1A' } };
+        let bg = _REL_XL.headerBg;
+        if (ri > 0 && ri <= 10) {
+          const idxFaixa = distRows[ri - 1].idx;
+          if (idxFaixa < 5) bg = _REL_XL.red;
+          else if (idxFaixa === 5) bg = _REL_XL.yellow;
+          else if (idxFaixa <= 9) bg = _REL_XL.green;
+        } else if (isTotalRow) bg = 'FFE8E8E8';
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        c.alignment = { vertical: 'middle', horizontal: ci >= 1 && ci <= 2 ? 'center' : 'left' };
+        c.border = _REL_XL.thinBorder;
+      });
+    });
+    ws5.columns = [{ width: 14 }, { width: 12 }, { width: 14 }, { width: 14 }];
 
-    // ──────────────────────────────────────────────────────────
-    // ABA 6: MATRIZ DE RESPOSTAS
-    // ──────────────────────────────────────────────────────────
-    const matrixHeader = ['Nome', 'Turma', 'Nota (%)', ...questions.map((q, i) => `Q${q.q || i+1}`)];
+    // ── Matriz ──
+    const matrixHeader = ['Nome', 'Turma', 'Nota (%)', ...questions.map((q, i) => 'Q' + (q.q != null ? q.q : i + 1))];
     const gabRow = ['GABARITO', '', '', ...questions.map(q => q.gab || '—')];
     const matrixRows = alunosSorted.map(a => {
       const respsAl = (a.resps || '').split('');
-      const qCols = questions.map((q, i) => {
+      return [a.nome || '', a.turma || '', +(a.nota || 0).toFixed(2), ...questions.map((q, i) => {
         const r = respsAl[i] || '-';
         if (q.anulada) return '*';
         return r;
-      });
-      return [a.nome || '', a.turma || '', +(a.nota || 0).toFixed(2), ...qCols];
+      })];
     });
-    const ws6 = XLSX.utils.aoa_to_sheet([matrixHeader, gabRow, ...matrixRows]);
-    ws6['!cols'] = [{ wch: 36 }, { wch: 14 }, { wch: 10 }, ...questions.map(() => ({ wch: 5 }))];
-    XLSX.utils.book_append_sheet(wb, ws6, 'Matriz de Respostas');
+    const ws6 = wb.addWorksheet('Matriz de Respostas');
+    [matrixHeader, gabRow, ...matrixRows].forEach((rowData, ri) => {
+      const row = ws6.getRow(ri + 1);
+      rowData.forEach((val, ci) => {
+        const c = row.getCell(ci + 1);
+        c.value = val;
+        if (ri === 0) {
+          c.font = { bold: true, size: 10, name: 'Arial', color: { argb: _REL_XL.headerFont } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.headerBg } };
+        } else if (ri === 1) {
+          c.font = { bold: true, size: 10, name: 'Arial', color: { argb: _REL_XL.accentFont } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.accentSection } };
+        } else {
+          const q = questions[ci - 3];
+          let bg = _REL_XL.nameCol;
+          if (ci >= 3 && q) {
+            const resp = String(val);
+            if (q.anulada) bg = _REL_XL.stripeB;
+            else if (resp === (q.gab || '')) bg = _REL_XL.green;
+            else bg = _REL_XL.red;
+          }
+          c.font = { bold: ci === 2, size: 10, name: 'Arial' };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        }
+        c.alignment = { vertical: 'middle', horizontal: ci >= 3 ? 'center' : 'left' };
+        c.border = _REL_XL.thinBorder;
+      });
+    });
+    ws6.columns = [{ width: 36 }, { width: 14 }, { width: 10 }, ...questions.map(() => ({ width: 6 }))];
 
-    // ──────────────────────────────────────────────────────────
-    // ABA 7: ALUNOS × ÁREAS (pivot)
-    // ──────────────────────────────────────────────────────────
+    // ── Pivot áreas ──
     const areaNames = areaStats.map(a => a.label);
     const pivotHeader = ['Nome', 'Turma', 'Nota Total (%)', ...areaNames];
     const pivotRows = alunosSorted.map(a => {
       const areaCols = areaNames.map(ar => +(a.areas?.[ar] ?? 0).toFixed(2));
       return [a.nome || '', a.turma || '', +(a.nota || 0).toFixed(2), ...areaCols];
     });
-    const ws7 = XLSX.utils.aoa_to_sheet([pivotHeader, ...pivotRows]);
-    ws7['!cols'] = [{ wch: 36 }, { wch: 14 }, { wch: 14 }, ...areaNames.map(() => ({ wch: 18 }))];
-    XLSX.utils.book_append_sheet(wb, ws7, 'Alunos × Áreas');
+    const ws7 = wb.addWorksheet('Alunos × Áreas');
+    [pivotHeader, ...pivotRows].forEach((rowData, ri) => {
+      const row = ws7.getRow(ri + 1);
+      rowData.forEach((val, ci) => {
+        const c = row.getCell(ci + 1);
+        c.value = val;
+        if (ri === 0) {
+          c.font = { bold: true, size: 10, name: 'Arial', color: { argb: _REL_XL.headerFont } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _REL_XL.headerBg } };
+        } else {
+          let bg = _REL_XL.nameCol;
+          if (ci >= 3) {
+            const v = Number(val);
+            bg = v >= 60 ? _REL_XL.green : v >= 40 ? _REL_XL.yellow : _REL_XL.red;
+          }
+          c.font = { bold: ci === 2, size: 10, name: 'Arial' };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        }
+        c.alignment = { vertical: 'middle', horizontal: ci >= 2 ? 'center' : 'left' };
+        c.border = _REL_XL.thinBorder;
+      });
+    });
+    ws7.columns = [{ width: 36 }, { width: 14 }, { width: 14 }, ...areaNames.map(() => ({ width: 18 }))];
 
-    // Download
     const xlsxName = (baseName || 'Relatorio') + '.xlsx';
-    XLSX.writeFile(wb, xlsxName);
+    const buf = await wb.xlsx.writeBuffer();
+    if (returnBlob) {
+      return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    }
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = xlsxName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   // Refresh sim grid when deploys happen
@@ -7190,6 +7859,18 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
   setupSimUpload("simUploadBq","simFileBq", f=>{simBQFile=f; updateSimBtn("BQ");});
 
   $("simBQSelect").addEventListener("change",()=>{ updateSimBtn("BQ"); _showSimTipoHint(); });
+  /** Alinha radios de anuladas ao cadastro do simulado (ou excluir). */
+  function _syncBqAnuladaTratFromSim() {
+    const simId = $("simBQSelect")?.value;
+    if (!simId) return;
+    const sim = (window._allSimsBanco || []).find(s => s.id === simId);
+    const t = sim && (sim.questoes_anuladas_tratamento === "creditar" || sim.questoes_anuladas_tratamento === "excluir")
+      ? sim.questoes_anuladas_tratamento
+      : "excluir";
+    const rad = document.querySelector(`input[name="bqAnuladaTrat"][value="${t}"]`);
+    if (rad) rad.checked = true;
+    _updateAnuladasPreview();
+  }
   $("bqAnuladas").addEventListener("input", _updateAnuladasPreview);
   document.querySelectorAll('input[name="bqAnuladaTrat"]').forEach(r => r.addEventListener("change", _updateAnuladasPreview));
   function _updateAnuladasPreview() {
@@ -7199,7 +7880,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     if (!val) { prev.style.display = 'none'; return; }
     const nums = val.split(/[\s,;]+/).map(v => parseInt(v)).filter(n => !isNaN(n) && n > 0);
     if (!nums.length) { prev.style.display = 'none'; return; }
-    const trat = document.querySelector('input[name="bqAnuladaTrat"]:checked')?.value || 'creditar';
+    const trat = document.querySelector('input[name="bqAnuladaTrat"]:checked')?.value || 'excluir';
     const label = trat === 'creditar' ? 'creditadas para todos os alunos' : 'excluídas do denominador';
     prev.style.display = 'block';
     prev.innerHTML = `⚠️ <strong>${nums.length} questão(ões) anulada(s):</strong> ${nums.map(n=>`Q${n}`).join(', ')} — serão <strong>${label}</strong>`;
@@ -7231,6 +7912,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     hint.style.display = 'block';
     hint.innerHTML = `${icon} Tipo: <strong>${tipo}</strong> — resultado será exibido em <strong>${dest}</strong> no painel do coordenador`;
     if (rankPanel) rankPanel.style.display = isTendencias ? 'block' : 'none';
+    _syncBqAnuladaTratFromSim();
   }
 
   // ── Logging ─────────────────────────────────────────────────
@@ -7239,6 +7921,269 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     const div=document.createElement("div");
     div.className="log-line"+(type==="ok"?" log-ok":type==="warn"?" log-warn":type==="err"?" log-err":"");
     div.textContent=msg; area.appendChild(div); area.scrollTop=area.scrollHeight;
+  }
+
+  // ── Review & Confirm Modal ────────────────────────────────────
+  /**
+   * Exibe modal de revisão com várias camadas de confirmação antes de gravar.
+   * Retorna Promise<{ confirmed: boolean, notaSource: 'planilha'|'calculada' }>
+   */
+  function _showUploadReviewAndConfirm({ studentsData, colNotaPlanilha, anuladaTrat, anuladasCount, totalQuestoes, simTitulo, slug }) {
+    return new Promise((resolve) => {
+      // ── Compute stats ──
+      const temPlanilha = studentsData.some(a => a.notaPlanilha != null);
+      const temCalculada = studentsData.length > 0;
+
+      const mediaCalc = temCalculada
+        ? Math.round(studentsData.reduce((s, a) => s + a.notaCalculada, 0) / studentsData.length * 10) / 10
+        : null;
+      const mediaPlan = temPlanilha
+        ? Math.round(studentsData.filter(a => a.notaPlanilha != null).reduce((s, a) => s + a.notaPlanilha, 0) / studentsData.filter(a => a.notaPlanilha != null).length * 10) / 10
+        : null;
+
+      // Turmas
+      const turmaMap = new Map();
+      studentsData.forEach(a => {
+        const t = a.turma || '(sem turma)';
+        if (!turmaMap.has(t)) turmaMap.set(t, []);
+        turmaMap.get(t).push(a);
+      });
+      const turmaStats = [...turmaMap.entries()].map(([label, arr]) => ({
+        label,
+        n: arr.length,
+        mediaCalc: Math.round(arr.reduce((s, a) => s + a.notaCalculada, 0) / arr.length * 10) / 10,
+        mediaPlan: temPlanilha ? Math.round(arr.filter(a => a.notaPlanilha != null).reduce((s, a) => s + a.notaPlanilha, 0) / (arr.filter(a => a.notaPlanilha != null).length || 1) * 10) / 10 : null
+      })).sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+
+      // Divergências
+      const divergencias = temPlanilha ? studentsData.filter(a => a.notaPlanilha != null && Math.abs(a.notaPlanilha - a.notaCalculada) > 0.5) : [];
+      const diffMedia = temPlanilha && mediaPlan != null && mediaCalc != null ? Math.abs(mediaPlan - mediaCalc) : 0;
+
+      // ── Build modal HTML ──
+      const overlay = document.createElement('div');
+      overlay.id = '_uploadReviewOverlay';
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease';
+
+      const fmtP = v => v != null ? v.toFixed(1) + '%' : '—';
+      const _fc = v => v >= 60 ? '#16a34a' : v >= 50 ? '#eab308' : '#dc2626';
+
+      let notaSourceHTML = '';
+      if (temPlanilha) {
+        notaSourceHTML = `
+          <div style="background:rgba(22,163,74,0.08);border:1.5px solid rgba(22,163,74,0.3);border-radius:12px;padding:16px 20px;margin-bottom:16px">
+            <div style="font-weight:700;color:#16a34a;font-size:0.95rem;margin-bottom:8px">📊 Coluna de nota detectada na planilha</div>
+            <div style="font-size:0.82rem;color:var(--text);line-height:1.6">
+              Recomendamos usar a <strong>nota da planilha</strong> como fonte de verdade, pois ela já reflete o critério aplicado no Remark/Excel.
+              ${diffMedia > 0.5 ? `<br><span style="color:#d97706;font-weight:600">⚠️ Divergência detectada: Média planilha = ${fmtP(mediaPlan)} vs Média calculada = ${fmtP(mediaCalc)} (${diffMedia.toFixed(1)}pp)</span>` : ''}
+            </div>
+            <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 14px;border-radius:8px;border:1.5px solid rgba(22,163,74,0.4);background:rgba(22,163,74,0.1);font-size:0.82rem;font-weight:600">
+                <input type="radio" name="_reviewNotaSource" value="planilha" checked style="accent-color:#16a34a"> Usar nota da planilha (recomendado)
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 14px;border-radius:8px;border:1.5px solid var(--border-subtle);font-size:0.82rem;font-weight:500">
+                <input type="radio" name="_reviewNotaSource" value="calculada"> Usar nota calculada (${anuladaTrat === 'creditar' ? 'anuladas creditadas' : 'anuladas excluídas'})
+              </label>
+            </div>
+          </div>`;
+      } else {
+        notaSourceHTML = `
+          <div style="background:rgba(234,179,8,0.08);border:1.5px solid rgba(234,179,8,0.3);border-radius:12px;padding:16px 20px;margin-bottom:16px">
+            <div style="font-weight:700;color:#d97706;font-size:0.95rem;margin-bottom:8px">⚠️ Nenhuma coluna de nota na planilha</div>
+            <div style="font-size:0.82rem;color:var(--text);line-height:1.6">
+              As notas foram <strong>calculadas automaticamente</strong> a partir das respostas com tratamento de anuladas: <strong>${anuladaTrat === 'creditar' ? 'creditadas para todos' : 'excluídas do denominador'}</strong>.
+              <br>Média IES calculada: <strong style="color:${_fc(mediaCalc)}">${fmtP(mediaCalc)}</strong>
+              <br><br><span style="color:var(--text-muted)">Confira se o tratamento de anuladas está correto e se a média confere com sua planilha original.</span>
+            </div>
+          </div>`;
+      }
+
+      // Turma table
+      let turmaHTML = '';
+      if (turmaStats.length > 0) {
+        const turmaRows = turmaStats.map(t => `
+          <tr style="border-bottom:1px solid var(--border-subtle)">
+            <td style="padding:8px 12px;font-size:0.82rem;font-weight:600">${t.label}</td>
+            <td style="padding:8px 12px;font-size:0.82rem;text-align:center">${t.n}</td>
+            <td style="padding:8px 12px;font-size:0.82rem;text-align:center;color:${_fc(t.mediaCalc)};font-weight:600">${fmtP(t.mediaCalc)}</td>
+            ${temPlanilha ? `<td style="padding:8px 12px;font-size:0.82rem;text-align:center;color:${_fc(t.mediaPlan)};font-weight:600">${fmtP(t.mediaPlan)}</td>` : ''}
+          </tr>
+        `).join('');
+        turmaHTML = `
+          <div style="margin-bottom:16px">
+            <div style="font-weight:700;font-size:0.85rem;margin-bottom:8px;color:var(--text)">Resumo por turma/período</div>
+            <div style="border:1px solid var(--border-subtle);border-radius:10px;overflow:auto;max-height:220px">
+              <table style="width:100%;border-collapse:collapse">
+                <thead><tr style="background:var(--bg-elevated);border-bottom:1.5px solid var(--border-subtle)">
+                  <th style="padding:8px 12px;text-align:left;font-size:0.7rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Turma</th>
+                  <th style="padding:8px 12px;text-align:center;font-size:0.7rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Alunos</th>
+                  <th style="padding:8px 12px;text-align:center;font-size:0.7rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Média calc.</th>
+                  ${temPlanilha ? '<th style="padding:8px 12px;text-align:center;font-size:0.7rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Média plan.</th>' : ''}
+                </tr></thead>
+                <tbody>${turmaRows}</tbody>
+              </table>
+            </div>
+          </div>`;
+      }
+
+      // Divergências table (top 10)
+      let divHTML = '';
+      if (divergencias.length > 0) {
+        const sorted = [...divergencias].sort((a, b) => Math.abs(b.notaPlanilha - b.notaCalculada) - Math.abs(a.notaPlanilha - a.notaCalculada));
+        const top = sorted.slice(0, 15);
+        const divRows = top.map(a => {
+          const diff = a.notaPlanilha - a.notaCalculada;
+          return `<tr style="border-bottom:1px solid var(--border-subtle)">
+            <td style="padding:6px 10px;font-size:0.78rem">${a.nome}</td>
+            <td style="padding:6px 10px;font-size:0.78rem;text-align:center">${fmtP(a.notaPlanilha)}</td>
+            <td style="padding:6px 10px;font-size:0.78rem;text-align:center">${fmtP(a.notaCalculada)}</td>
+            <td style="padding:6px 10px;font-size:0.78rem;text-align:center;color:${diff > 0 ? '#16a34a' : '#dc2626'};font-weight:600">${diff > 0 ? '+' : ''}${diff.toFixed(1)}pp</td>
+          </tr>`;
+        }).join('');
+        divHTML = `
+          <details style="margin-bottom:16px">
+            <summary style="cursor:pointer;font-weight:700;font-size:0.85rem;color:#d97706;margin-bottom:8px">
+              ⚠️ ${divergencias.length} aluno(s) com divergência > 0.5pp entre planilha e calculada
+            </summary>
+            <div style="border:1px solid var(--border-subtle);border-radius:10px;overflow:auto;max-height:250px">
+              <table style="width:100%;border-collapse:collapse">
+                <thead><tr style="background:var(--bg-elevated);border-bottom:1.5px solid var(--border-subtle)">
+                  <th style="padding:6px 10px;text-align:left;font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Aluno</th>
+                  <th style="padding:6px 10px;text-align:center;font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Planilha</th>
+                  <th style="padding:6px 10px;text-align:center;font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Calculada</th>
+                  <th style="padding:6px 10px;text-align:center;font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Diff</th>
+                </tr></thead>
+                <tbody>${divRows}</tbody>
+              </table>
+            </div>
+            ${sorted.length > 15 ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px">… e mais ${sorted.length - 15} aluno(s)</div>` : ''}
+          </details>`;
+      }
+
+      const modal = document.createElement('div');
+      modal.style.cssText = 'background:var(--bg-card);border-radius:20px;max-width:720px;width:95%;max-height:90vh;overflow-y:auto;padding:28px 32px;box-shadow:0 20px 60px rgba(0,0,0,0.4);position:relative';
+      modal.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <div>
+            <h2 style="margin:0;font-size:1.15rem;color:var(--text)">Revisão do Upload</h2>
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px">${simTitulo} · ${slug.toUpperCase().replace(/-/g, ' ')}</div>
+          </div>
+          <button id="_reviewClose" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-muted);padding:4px 8px" title="Cancelar">✕</button>
+        </div>
+
+        <!-- Step 1: Resumo geral -->
+        <div id="_reviewStep1">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px">
+            <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Alunos</div>
+              <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${studentsData.length}</div>
+            </div>
+            <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Questões</div>
+              <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${totalQuestoes}${anuladasCount > 0 ? ` <span style="font-size:0.7rem;color:#d97706">(${anuladasCount} anul.)</span>` : ''}</div>
+            </div>
+            <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Média IES (calc.)</div>
+              <div style="font-size:1.3rem;font-weight:800;color:${mediaCalc != null ? _fc(mediaCalc) : 'var(--text)'}">${fmtP(mediaCalc)}</div>
+            </div>
+            ${temPlanilha ? `<div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Média IES (plan.)</div>
+              <div style="font-size:1.3rem;font-weight:800;color:${mediaPlan != null ? _fc(mediaPlan) : 'var(--text)'}">${fmtP(mediaPlan)}</div>
+            </div>` : ''}
+            <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Anuladas</div>
+              <div style="font-size:1.3rem;font-weight:800;color:${anuladasCount > 0 ? '#d97706' : 'var(--text)'}">${anuladasCount > 0 ? anuladasCount + ' (' + (anuladaTrat === 'creditar' ? 'credit.' : 'excl.') + ')' : '0'}</div>
+            </div>
+            <div style="background:var(--bg-elevated);border-radius:10px;padding:12px 16px;text-align:center">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Turmas</div>
+              <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${turmaMap.size}</div>
+            </div>
+          </div>
+
+          ${notaSourceHTML}
+          ${divHTML}
+          ${turmaHTML}
+
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--border-subtle)">
+            <button id="_reviewCancelBtn" style="padding:10px 20px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-elevated);color:var(--text);font-weight:600;cursor:pointer;font-size:0.85rem">Cancelar upload</button>
+            <button id="_reviewNextBtn" style="padding:10px 24px;border-radius:10px;border:none;background:var(--accent,#3b82f6);color:#fff;font-weight:700;cursor:pointer;font-size:0.85rem">Confirmar fonte de notas →</button>
+          </div>
+        </div>
+
+        <!-- Step 2: Confirmação final -->
+        <div id="_reviewStep2" style="display:none">
+          <div style="background:rgba(234,179,8,0.08);border:1.5px solid rgba(234,179,8,0.3);border-radius:12px;padding:20px;margin-bottom:20px">
+            <div style="font-weight:700;color:#d97706;font-size:0.95rem;margin-bottom:10px">Confirmação final</div>
+            <div style="font-size:0.82rem;color:var(--text);line-height:1.7">
+              <div id="_reviewFinalSummary"></div>
+              <br>
+              <strong>Esta ação irá gravar os resultados definitivamente.</strong>
+              <br>Isso afetará boletins, ranking e análises de toda a instituição.
+            </div>
+          </div>
+          <div style="margin-bottom:16px">
+            <label style="font-size:0.82rem;font-weight:600;color:var(--text);display:block;margin-bottom:6px">
+              Para confirmar, digite o slug da IES: <strong>${slug}</strong>
+            </label>
+            <input type="text" id="_reviewConfirmSlug" placeholder="${slug}" style="width:100%;padding:10px 14px;border-radius:8px;border:1.5px solid var(--border-subtle);background:var(--bg-elevated);color:var(--text);font-size:0.9rem;font-family:monospace" autocomplete="off" />
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;padding-top:16px;border-top:1px solid var(--border-subtle)">
+            <button id="_reviewBackBtn" style="padding:10px 20px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-elevated);color:var(--text);font-weight:600;cursor:pointer;font-size:0.85rem">← Voltar</button>
+            <button id="_reviewFinalBtn" disabled style="padding:10px 24px;border-radius:10px;border:none;background:#6b7280;color:#fff;font-weight:700;cursor:not-allowed;font-size:0.85rem">Gravar resultado definitivamente</button>
+          </div>
+        </div>
+      `;
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      // ── Event handlers ──
+      const closeModal = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+
+      modal.querySelector('#_reviewClose').addEventListener('click', () => closeModal({ confirmed: false }));
+      modal.querySelector('#_reviewCancelBtn').addEventListener('click', () => closeModal({ confirmed: false }));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal({ confirmed: false }); });
+
+      // Step 1 → Step 2
+      modal.querySelector('#_reviewNextBtn').addEventListener('click', () => {
+        const source = (modal.querySelector('input[name="_reviewNotaSource"]:checked')?.value) || (temPlanilha ? 'planilha' : 'calculada');
+        const chosenMedia = source === 'planilha' && mediaPlan != null ? mediaPlan : mediaCalc;
+
+        modal.querySelector('#_reviewFinalSummary').innerHTML = `
+          ✅ <strong>${studentsData.length}</strong> alunos serão gravados<br>
+          ✅ Fonte de nota: <strong>${source === 'planilha' ? 'coluna da planilha (Remark/Excel)' : 'calculada (' + (anuladaTrat === 'creditar' ? 'anuladas creditadas' : 'anuladas excluídas') + ')'}</strong><br>
+          ✅ Média IES final: <strong style="color:${_fc(chosenMedia)}">${fmtP(chosenMedia)}</strong><br>
+          ✅ Turmas: ${turmaStats.map(t => t.label + ' (' + t.n + ')').join(', ')}
+          ${anuladasCount > 0 ? '<br>✅ Questões anuladas: <strong>' + anuladasCount + '</strong> — tratamento: <strong>' + (anuladaTrat === 'creditar' ? 'creditadas' : 'excluídas') + '</strong>' : ''}
+        `;
+
+        modal.querySelector('#_reviewStep1').style.display = 'none';
+        modal.querySelector('#_reviewStep2').style.display = 'block';
+
+        // Enable final button only when slug matches
+        const slugInput = modal.querySelector('#_reviewConfirmSlug');
+        const finalBtn = modal.querySelector('#_reviewFinalBtn');
+        slugInput.addEventListener('input', () => {
+          const match = slugInput.value.trim().toLowerCase() === slug.toLowerCase();
+          finalBtn.disabled = !match;
+          finalBtn.style.background = match ? '#16a34a' : '#6b7280';
+          finalBtn.style.cursor = match ? 'pointer' : 'not-allowed';
+        });
+
+        finalBtn.addEventListener('click', () => {
+          if (finalBtn.disabled) return;
+          closeModal({ confirmed: true, notaSource: source });
+        });
+      });
+
+      // Step 2 → Step 1
+      modal.querySelector('#_reviewBackBtn').addEventListener('click', () => {
+        modal.querySelector('#_reviewStep1').style.display = 'block';
+        modal.querySelector('#_reviewStep2').style.display = 'none';
+      });
+    });
   }
 
   // ── Rank parsing ─────────────────────────────────────────────
@@ -7263,6 +8208,124 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
   function findSheet(wb, hint) {
     for(const n of wb.SheetNames) if(n.toLowerCase().includes(hint.toLowerCase())) return wb.Sheets[n];
     return wb.Sheets[wb.SheetNames[0]];
+  }
+
+  /**
+   * Escolhe aba para import BQ: prioriza "Respostas por Aluno" / Remark; senão primeira aba.
+   * @returns {{ sheet: object, name: string, matchedHint: string|null }}
+   */
+  function pickBQSheet(wb) {
+    const ordered = [
+      'respostas por aluno',
+      'relatório das respostas',
+      'relatorio das respostas',
+      'respostas',
+      'por aluno'
+    ];
+    const names = wb.SheetNames || [];
+    for (const hint of ordered) {
+      for (const n of names) {
+        if (String(n).toLowerCase().includes(hint)) {
+          return { sheet: wb.Sheets[n], name: n, matchedHint: hint };
+        }
+      }
+    }
+    const first = names[0];
+    return { sheet: wb.Sheets[first], name: first, matchedHint: null };
+  }
+
+  function _isCpfHeaderCell(v) {
+    const s = String(v || "").trim().replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+    return /^cpf$/i.test(s) || /^cpf\s+do\s+aluno$/i.test(s);
+  }
+
+  /**
+   * Índice da linha de cabeçalho (coluna A = CPF). Remark puro ou export enriquecido (MedCof).
+   */
+  function findBQHeaderRow(rows, maxScan) {
+    const lim = Math.min(rows.length, maxScan || 40);
+    for (let i = 0; i < lim; i++) {
+      if (_isCpfHeaderCell(rows[i][0])) return i;
+    }
+    return -1;
+  }
+
+  /**
+   * Extrai índice de questão de uma célula de cabeçalho (vários exports).
+   */
+  function parseQuestaoHeaderLabel(lbl) {
+    const s = String(lbl || "").trim();
+    let m = s.match(/^QUEST[ÃA]O\s*(\d+)$/i);
+    if (m) return parseInt(m[1], 10) - 1;
+    m = s.match(/^QUESTAO\s*(\d+)$/i);
+    if (m) return parseInt(m[1], 10) - 1;
+    m = s.match(/^Questão\s*(\d+)$/iu) || s.match(/^Questao\s*(\d+)$/i);
+    if (m) return parseInt(m[1], 10) - 1;
+    m = s.match(/^Q\.?\s*(\d+)$/i);
+    if (m) return parseInt(m[1], 10) - 1;
+    m = s.match(/^QUEST[ÃA]O[-–—]\s*(\d+)$/i);
+    if (m) return parseInt(m[1], 10) - 1;
+    return null;
+  }
+
+  /**
+   * CPF na coluna A: aceita formatado, número Excel e só dígitos.
+   * @returns {string|null} 11 dígitos ou null
+   */
+  function _bqCpfFromCell(raw) {
+    if (raw === undefined || raw === null || raw === "") return null;
+    let d = "";
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      d = String(Math.round(raw)).replace(/\D/g, "");
+    } else {
+      d = String(raw).replace(/\D/g, "");
+    }
+    if (!d) return null;
+    if (d.length > 11) d = d.slice(-11);
+    if (d.length < 10) return null;
+    return d.length === 11 ? d : d.padStart(11, "0");
+  }
+
+  /**
+   * Lê % acertos / nota já calculada pelo Remark (0–100 ou 0–1).
+   * @returns {number|null}
+   */
+  function _parsePercentNotaPlanilha(v) {
+    if (v === undefined || v === null || v === "") return null;
+    if (typeof v === "number" && Number.isFinite(v)) {
+      if (v > 0 && v <= 1) return Math.round(v * 10000) / 100;
+      if (v >= 0 && v <= 100) return Math.round(v * 100) / 100;
+      return null;
+    }
+    const s = String(v)
+      .trim()
+      .replace(/%/g, "")
+      .trim()
+      .replace(",", ".");
+    const n = parseFloat(s);
+    if (!Number.isFinite(n)) return null;
+    if (n >= 0 && n <= 1) return Math.round(n * 10000) / 100;
+    if (n >= 0 && n <= 100) return Math.round(n * 100) / 100;
+    return null;
+  }
+
+  /**
+   * Coluna com nota/% já ajustada (Remark pós-anulação) — não confundir com colunas de questão.
+   */
+  function findBqColNotaPlanilha(hdr, skipColIdx) {
+    const skip = new Set(skipColIdx.filter(i => i >= 0));
+    for (let c = 0; c < hdr.length; c++) {
+      if (skip.has(c)) continue;
+      if (parseQuestaoHeaderLabel(hdr[c]) !== null) continue;
+      const lbl = String(hdr[c] || "")
+        .trim()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+      const low = lbl.toLowerCase();
+      if (/^%?\s*acertos?$/.test(low) || /^acertos?\s*%$/.test(low)) return c;
+      if (/^(nota|pontuacao|score|resultado|percentual)$/.test(low)) return c;
+    }
+    return -1;
   }
 
   function wsToRows(ws) { return XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:false}); }
@@ -7750,7 +8813,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       if (!slug)   throw new Error("Selecione uma instituição.");
       if (!simId)  throw new Error("Selecione um simulado.");
       const _bqFile = simBQFile || window._bqFileRef;
-      if (!_bqFile) throw new Error("Selecione a planilha Remark®.");
+      if (!_bqFile) throw new Error("Selecione a planilha (Remark ou export .xlsx/.xlsm).");
       if (!simBQFile) simBQFile = _bqFile; // sync back
 
       simLog(logId, "⏳ Validando simulado no banco de questões...");
@@ -7811,35 +8874,60 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       }));
       simLog(logId, `✅ ${questoesMeta.length} questões carregadas com gabarito e área`, "ok");
 
-      // ── 6. Ler planilha Remark®
-      simLog(logId, "📂 Lendo planilha Remark®...");
-      const wb   = await readExcelFile(_bqFile);
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      simLog(logId, `📊 Aba: "${wb.SheetNames[0]}"`);
-      const rows = wsToRows(ws);
+      // ── 6. Ler workbook (Remark® clássico ou export enriquecido — mesma pipeline)
+      simLog(logId, "📂 Lendo planilha (Remark® ou export com Nome/Email/Período)...");
+      const wb = await readExcelFile(_bqFile);
+      const picked = pickBQSheet(wb);
+      simLog(logId, `📊 Aba: "${picked.name}"` + (picked.matchedHint ? ` — correspondencia: "${picked.matchedHint}"` : " — primeira aba do arquivo"), "ok");
+      const rows = wsToRows(picked.sheet);
       if (!rows.length) throw new Error("Planilha vazia.");
 
-      // ── 7. Detectar linha de cabeçalho (cpf em col A)
-      let hRow = -1;
-      for (let i = 0; i < Math.min(rows.length, 20); i++) {
-        if (/^cpf$/i.test(String(rows[i][0] || "").trim())) { hRow = i; break; }
-      }
+      // ── 7. Linha de cabeçalho: coluna A = CPF (vários layouts de export)
+      const hRow = findBQHeaderRow(rows, 45);
       if (hRow < 0) throw new Error(
-        'Cabeçalho "cpf" não encontrado. Verifique se a planilha é o ' +
-        '"Relatório das Respostas por Aluno" do Remark®.');
+        'Cabeçalho com "CPF" na coluna A não encontrado nas primeiras linhas. ' +
+        'Use o Relatório Remark® "Respostas por Aluno" ou export compatível (linha com CPF + colunas de questões).');
 
       const hdr = rows[hRow];
-      simLog(logId, `📋 Cabeçalho na linha ${hRow + 1}: ${hdr.filter(Boolean).slice(0, 6).join(" | ")}`);
+      simLog(logId, `📋 Cabeçalho na linha ${hRow + 1}: ${hdr.filter(Boolean).slice(0, 8).join(" | ")}`);
 
-      // ── 8. Detectar colunas de questões (QUESTÃO1…QUESTÃO100)
+      // ── 8. Colunas de questões (QUESTÃO1, QUESTAO1, Questão 1, …)
       const questCols = []; // [{colIdx, position}]
       for (let c = 0; c < hdr.length; c++) {
-        const lbl = String(hdr[c] || "").trim();
-        const m   = lbl.match(/^QUEST[ÃA]O\s*(\d+)$/i);
-        if (m) questCols.push({ colIdx: c, position: parseInt(m[1]) - 1 });
+        const pos = parseQuestaoHeaderLabel(hdr[c]);
+        if (pos !== null) questCols.push({ colIdx: c, position: pos });
       }
       questCols.sort((a, b) => a.position - b.position);
       simLog(logId, `📋 ${questCols.length} colunas de questões detectadas`);
+
+      let colNome = -1, colEmail = -1, colPeriodo = -1;
+      for (let c = 0; c < hdr.length; c++) {
+        const lbl = String(hdr[c] || "").trim();
+        if (!lbl) continue;
+        const low = lbl.toLowerCase();
+        if (/^e-?mail$/i.test(lbl) || low === "email") colEmail = c;
+        else if (/per[ií]odo/.test(lbl) || /^turma$/i.test(lbl)) colPeriodo = c;
+        else if (/nome/i.test(lbl) && !/cpf/i.test(lbl) && colNome < 0) colNome = c;
+      }
+      const bqPlanilhaEnriquecida = colNome >= 0 || colEmail >= 0 || colPeriodo >= 0;
+      simLog(
+        logId,
+        `📌 Formato: ${bqPlanilhaEnriquecida ? "export enriquecido — Nome/Email/Período quando houver; auto-cadastro se CPF novo" : "Remark® clássico — CPF + colunas de questão; nomes só do alunos_master"}`,
+        "ok"
+      );
+      if (bqPlanilhaEnriquecida) {
+        simLog(logId, `📋 Colunas extras: ${colNome >= 0 ? "Nome" : "—"} | ${colEmail >= 0 ? "Email" : "—"} | ${colPeriodo >= 0 ? "Período/Turma" : "—"}`, "ok");
+      }
+
+      const _skipForNotaCol = [0, colNome, colEmail, colPeriodo, ...questCols.map(q => q.colIdx)].filter(i => i >= 0);
+      const colNotaPlanilha = findBqColNotaPlanilha(hdr, _skipForNotaCol);
+      if (colNotaPlanilha >= 0) {
+        simLog(
+          logId,
+          `📊 Coluna de desempenho detectada: "${String(hdr[colNotaPlanilha] || "").trim()}" — a nota de cada aluno e a média da IES usarão o valor da planilha (Remark já pós-anulação).`,
+          "ok"
+        );
+      }
 
       // ── 9. Verificar contagem de questões
       if (questCols.length !== compFinal.length) {
@@ -7916,33 +9004,145 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         simLog(logId, "⚠️ Erro ao buscar alunos: " + e.message, "warn");
       }
 
-      // ── 11. Processar questões anuladas (com validação de range)
+      // ── 10b. CPF ausente no master → auto-cadastro (nome, email, turma, IES) a partir da planilha
+      const instNomeParaAluno =
+        typeof _resolveInstituicaoNomeForAlunos === "function"
+          ? (_resolveInstituicaoNomeForAlunos(slug) || String(slug).replace(/-/g, " ").toUpperCase())
+          : String(slug).replace(/-/g, " ").toUpperCase();
+      const cpfKeysAntesLookup = new Set(Object.keys(cpfToAluno));
+      let bqJaExistiam = 0;
+      const bqNovosMap = new Map();
+      for (let ri = hRow + 1; ri < rows.length; ri++) {
+        const row = rows[ri];
+        const cpfNorm = _bqCpfFromCell(row[0]);
+        if (!cpfNorm) continue;
+        const nomeX = colNome >= 0 ? String(row[colNome] || "").trim() : "";
+        const emailX = colEmail >= 0 ? String(row[colEmail] || "").trim() : "";
+        const turmaX = colPeriodo >= 0 ? _normTurmaNr(row[colPeriodo]) : null;
+        if (cpfKeysAntesLookup.has(cpfNorm)) {
+          bqJaExistiam++;
+        } else if (!bqNovosMap.has(cpfNorm)) {
+          bqNovosMap.set(cpfNorm, {
+            cpf: cpfNorm,
+            nome: nomeX,
+            email: emailX || null,
+            turma: turmaX
+          });
+        }
+      }
+      let bqCadastradosNovos = 0;
+      const cpfStubSemNomeOk = new Set();
+      if (bqNovosMap.size > 0) {
+        simLog(logId, `📝 ${bqNovosMap.size} CPF(s) não encontrado(s) no master — gravando alunos_master (origem simulado; nome opcional)...`, "ok");
+        const tsIns = new Date().toISOString();
+        const arrNovos = [...bqNovosMap.values()];
+        const chunkAl = 200;
+        for (let ci = 0; ci < arrNovos.length; ci += chunkAl) {
+          const slice = arrNovos.slice(ci, ci + chunkAl);
+          const batch = slice.map(r => ({
+            cpf: r.cpf,
+            nome: r.nome || "",
+            email: r.email,
+            instituicao: instNomeParaAluno,
+            turma: r.turma != null ? r.turma : null,
+            cadastro_origem: "simulado",
+            updated_at: tsIns
+          }));
+          try {
+            const resp = await window._supaWrite(`alunos_master?on_conflict=cpf,instituicao`, "POST", batch);
+            if (resp.ok) {
+              bqCadastradosNovos += slice.length;
+              slice.forEach(r => {
+                cpfToAluno[r.cpf] = { nome: r.nome || "", turma: r.turma || "" };
+                if (!String(r.nome || "").trim()) cpfStubSemNomeOk.add(r.cpf);
+              });
+            } else {
+              const errTxt = await resp.text().catch(() => "");
+              simLog(logId, `⚠️ alunos_master (lote): HTTP ${resp.status} — ${errTxt.slice(0, 220)}`, "warn");
+            }
+          } catch (eUps) {
+            simLog(logId, `⚠️ alunos_master: ${eUps.message}`, "warn");
+          }
+        }
+      }
+      const bqSemNomeStub = [...bqNovosMap.values()].filter(r => !String(r.nome || "").trim()).length;
+      simLog(
+        logId,
+        `📊 Cadastro alunos_master (esta importação): ${bqJaExistiam} já existiam | ${bqCadastradosNovos} cadastrado(s)/atualizado(s) a partir do simulado` +
+          (bqSemNomeStub > 0 ? ` | ${bqSemNomeStub} só CPF (atribua o nome em Gestão de alunos)` : ""),
+        "ok"
+      );
+      if (bqNovosMap.size > 0 && bqCadastradosNovos < bqNovosMap.size) {
+        simLog(logId, `⚠️ Auto-cadastro parcial: ${bqNovosMap.size - bqCadastradosNovos} de ${bqNovosMap.size} não gravaram — verifique o log acima.`, "warn");
+      }
+
+      // ── 11. Processar questões anuladas (campo manual + cadastro do simulado no BQ)
       const _anuladasRaw = ($("bqAnuladas")?.value || "").trim();
       const _totalQ = questCols.length;
-      const _parsedAnuladas = _anuladasRaw.split(/[\s,;]+/).map(v => parseInt(v) - 1).filter(n => !isNaN(n) && n >= 0);
-      // Filtrar índices fora do range e avisar
+      const _parsedAnuladas = _anuladasRaw.split(/[\s,;]+/).map(v => parseInt(v, 10) - 1).filter(n => !isNaN(n) && n >= 0);
       const _foraRange = _parsedAnuladas.filter(n => n >= _totalQ);
-      const anuladasIdx = new Set(_parsedAnuladas.filter(n => n < _totalQ)); // 0-based, dentro do range
-      const anuladaTrat = document.querySelector('input[name="bqAnuladaTrat"]:checked')?.value || 'creditar';
+      const anuladasIdx = new Set(_parsedAnuladas.filter(n => n < _totalQ));
+      const _paAnul = window.parseArr || function (v) {
+        if (Array.isArray(v)) return v;
+        try { return JSON.parse(v || "[]"); } catch (e) { return []; }
+      };
+      const qAnulSim = _paAnul(sim.questoes_anuladas);
+      let mergedAnulFromDb = 0;
+      if (Array.isArray(qAnulSim) && qAnulSim.length && compFinal.length) {
+        qAnulSim.forEach(qid => {
+          const idx = compFinal.findIndex(x => String(x) === String(qid));
+          if (idx >= 0 && idx < _totalQ) {
+            if (!anuladasIdx.has(idx)) mergedAnulFromDb++;
+            anuladasIdx.add(idx);
+          }
+        });
+        if (mergedAnulFromDb > 0) {
+          simLog(
+            logId,
+            `📋 ${mergedAnulFromDb} questão(ões) anulada(s) aplicada(s) a partir do cadastro do simulado no Banco de Questões (evita divergência com o Remark).`,
+            "ok"
+          );
+        }
+      }
+      let anuladaTrat = document.querySelector('input[name="bqAnuladaTrat"]:checked')?.value || "excluir";
+      if (!_anuladasRaw && (sim.questoes_anuladas_tratamento === "creditar" || sim.questoes_anuladas_tratamento === "excluir")) {
+        anuladaTrat = sim.questoes_anuladas_tratamento;
+        const rad = document.querySelector(`input[name="bqAnuladaTrat"][value="${anuladaTrat}"]`);
+        if (rad) rad.checked = true;
+      }
       const totalAnuladas = anuladasIdx.size;
       if (_foraRange.length > 0) {
-        simLog(logId, `⚠️ Índices de anuladas ignorados (fora do range 1-${_totalQ}): ${_foraRange.map(n=>n+1).join(', ')}`, "warn");
+        simLog(logId, `⚠️ Índices de anuladas ignorados (fora do range 1-${_totalQ}): ${_foraRange.map(n => n + 1).join(", ")}`, "warn");
       }
       if (totalAnuladas > 0) {
-        simLog(logId, `⚠️ ${totalAnuladas} questão(ões) anulada(s): [${[...anuladasIdx].map(n=>n+1).join(', ')}] — tratamento: ${anuladaTrat === 'creditar' ? 'creditar para todos' : 'excluir do denominador'}`, "warn");
+        simLog(
+          logId,
+          `⚠️ ${totalAnuladas} questão(ões) anulada(s): [${[...anuladasIdx].map(n => n + 1).join(", ")}] — tratamento: ${anuladaTrat === "creditar" ? "creditar para todos" : "excluir do denominador"}`,
+          "warn"
+        );
+      }
+      if (colNotaPlanilha >= 0 && totalAnuladas > 0) {
+        simLog(
+          logId,
+          `ℹ️ Há coluna de %/nota na planilha: a nota de cada aluno (e a média IES) segue essa coluna quando preenchida. O tratamento de anuladas acima só altera linhas sem valor válido na coluna — para bater com o Excel, use o mesmo critério do Remark na planilha.`,
+          "ok"
+        );
       }
 
       // ── 12. Processar linhas de alunos
       simLog(logId, "👤 Processando alunos...");
       const studentsData = [];
       let semNome = 0;
+      let _bqLinhasIgnoradas = 0;
       for (let i = hRow + 1; i < rows.length; i++) {
         const row = rows[i];
-        const cpf = String(row[0] || "").trim();
-        if (!/^\d{5,13}$/.test(cpf)) continue; // pula gabarito, média, linhas vazias
-
-        // Normalizar CPF (remover pontos/traços/espaços) para match
-        const cpfNorm = cpf.replace(/\D/g, '').trim().padStart(11,'0');
+        const cpfNorm = _bqCpfFromCell(row[0]);
+        if (!cpfNorm) {
+          const raw0 = row[0];
+          if (raw0 !== undefined && raw0 !== null && String(raw0).trim() !== "") _bqLinhasIgnoradas++;
+          continue;
+        }
+        const cpf = cpfNorm;
         const alunoInfo = cpfToAluno[cpfNorm] || cpfToAluno[cpf] || null;
         const nome  = alunoInfo?.nome  || '';
         const turma = alunoInfo?.turma || '';
@@ -7986,7 +9186,13 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
           respostas.push({ q: qm.q, area: qm.area, tema: qm.tema, gab: qm.gab, resp: resp || '—', correct, anulada: false, dificuldade: qm.dificuldade });
         }
 
-        const notaPct = totalValidas > 0 ? Math.round((totalCorrect / totalValidas) * 10000) / 100 : 0;
+        const notaCalculada = totalValidas > 0 ? Math.round((totalCorrect / totalValidas) * 10000) / 100 : 0;
+        let notaPlanilha = null;
+        if (colNotaPlanilha >= 0) {
+          notaPlanilha = _parsePercentNotaPlanilha(row[colNotaPlanilha]);
+        }
+        // Default: usa planilha se disponível, senão calculada
+        let notaPct = notaPlanilha != null ? notaPlanilha : notaCalculada;
         const notaPorArea = {};
         for (const [area, total] of Object.entries(areaTotal)) {
           notaPorArea[area] = Math.round(((areaCorrect[area] || 0) / total) * 10000) / 100;
@@ -7998,11 +9204,20 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
           turma: turma || '',
           respostas,
           notaPct,
+          notaCalculada,
+          notaPlanilha,
           notaPorArea
         });
       }
 
       if (!studentsData.length) throw new Error("Nenhum aluno encontrado na planilha. Verifique o formato.");
+      if (_bqLinhasIgnoradas > 0) {
+        simLog(
+          logId,
+          `ℹ️ ${_bqLinhasIgnoradas} linha(s) com valor na coluna A que não é CPF válido (totais, médias, texto) — ignoradas. Se faltarem alunos, confira se o CPF está sem formatação estranha ou em outra coluna.`,
+          "ok"
+        );
+      }
       simLog(logId,
         `👥 ${studentsData.length} aluno(s) processado(s)` +
         (semNome > 0 ? ` (${semNome} sem nome — identificados por CPF)` : ''), "ok");
@@ -8121,8 +9336,12 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         simLog(logId, `🚫 ${totalAnuladas} questão(ões) anulada(s) registrada(s) no simulado.`, "ok");
       }
 
-      // ── 14. Salvar CPFs faltantes em alunos_faltantes_simulado ─────
-      const faltantes = studentsData.filter(a => a.nome.startsWith('CPF: '));
+      // ── 14. Salvar CPFs faltantes em alunos_faltantes_simulado (só se não entrou stub em alunos_master)
+      const _normCpfFalt = (c) => String(c || "").replace(/\D/g, "").padStart(11, "0");
+      const faltantes = studentsData.filter(a => {
+        if (!String(a.nome || "").startsWith("CPF: ")) return false;
+        return !cpfStubSemNomeOk.has(_normCpfFalt(a.cpf));
+      });
       if (faltantes.length > 0) {
         simLog(logId, `⚠️ ${faltantes.length} aluno(s) sem nome — salvando na tabela de pendentes...`, "warn");
         const faltantesRows = faltantes.map(a => ({
@@ -8226,7 +9445,6 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
       // ── Reset dos campos do formulário para próximo upload ──
       try {
-        // Reset arquivo
         simBQFile = null;
         window._bqFileRef = null;
         const _uploadZone = $("simUploadBq");
@@ -8235,29 +9453,32 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
           const _zt = _uploadZone.querySelector(".upload-zone-title");
           const _zh = _uploadZone.querySelector(".upload-zone-hint");
           if (_zt) _zt.textContent = "Resultado do simulado";
-          if (_zh) _zh.textContent = '"Relatório das Respostas por Aluno" · Arraste ou clique (.xlsx)';
+          if (_zh) _zh.textContent = "Remark (Respostas por Aluno) ou export com CPF + questões — .xlsx / .xlsm";
         }
         const _fileInput = $("simFileBq");
         if (_fileInput) _fileInput.value = "";
-        // Reset simulado selecionado
         const _simSel = $("simBQSelect");
         if (_simSel) _simSel.value = "";
-        // Reset questões anuladas
         const _anulInput = $("bqAnuladas");
         if (_anulInput) _anulInput.value = "";
         const _anulPrev = $("bqAnuladasPreview");
         if (_anulPrev) { _anulPrev.style.display = "none"; _anulPrev.textContent = ""; }
-        // Reset radio para "creditar" (default)
-        const _radCreditar = document.querySelector('input[name="bqAnuladaTrat"][value="creditar"]');
-        if (_radCreditar) _radCreditar.checked = true;
-        // Reset links gabarito e boletins
+        const _radExcluir = document.querySelector('input[name="bqAnuladaTrat"][value="excluir"]');
+        if (_radExcluir) _radExcluir.checked = true;
+        ["bqRankNac", "bqRankNacTotal", "bqRankReg", "bqRankRegTotal", "bqMediaGeral"].forEach(id => {
+          const el = $(id);
+          if (el) el.value = "";
+        });
         const _gabInput = $("bqLinkGabarito");
         if (_gabInput) _gabInput.value = "";
         const _bolInput = $("bqLinkBoletins");
         if (_bolInput) _bolInput.value = "";
-        // Desabilitar botão até próxima seleção
-        $("btnSimBQ").disabled = true;
-      } catch(_resetErr) { console.warn("Reset form:", _resetErr); }
+        const _logBq = $("simLogBQ");
+        if (_logBq) { _logBq.innerHTML = ""; _logBq.style.display = "none"; }
+        if (typeof _showSimTipoHint === "function") _showSimTipoHint();
+        if (typeof _updateAnuladasPreview === "function") _updateAnuladasPreview();
+        updateSimBtn("BQ");
+      } catch (_resetErr) { console.warn("Reset form:", _resetErr); }
 
       setTimeout(() => {
         const toast = document.createElement('div');
@@ -8278,7 +9499,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       simLog(logId, "❌ " + e.message, "err");
       console.error(e);
     } finally {
-      $("btnSimBQ").disabled = false;
+      if (typeof updateSimBtn === "function") updateSimBtn("BQ");
+      else if ($("btnSimBQ")) $("btnSimBQ").disabled = false;
     }
   });
 
@@ -8448,6 +9670,27 @@ CREATE POLICY bq_q_auth ON simulados_questoes FOR ALL TO authenticated USING (tr
 -- ALTER TABLE simulados_questoes ADD COLUMN IF NOT EXISTS codigo_questao text DEFAULT '';
 -- ALTER TABLE simulados_banco    ADD COLUMN IF NOT EXISTS questoes_por_area_map jsonb DEFAULT '{}'::jsonb;
 -- ALTER TABLE alunos_master      ADD COLUMN IF NOT EXISTS cpf text DEFAULT '';
+-- Origem do cadastro: 'ies' = B2B (cadastro IES / engajamento); 'simulado' = primeiro contato pelo upload do simulado.
+-- ALTER TABLE alunos_master ADD COLUMN IF NOT EXISTS cadastro_origem text;
+-- Backfill em dados antigos (sem logs persistidos no banco): scripts/backfill-cadastro-origem.sql
+-- UPDATE alunos_master SET cadastro_origem = 'ies' WHERE cadastro_origem IS NULL;
+-- (Recomendado) Não sobrescrever cadastro_origem nem nome com upsert vindo do simulado quando já é B2B:
+-- CREATE OR REPLACE FUNCTION alunos_master_preserve_on_simulado_upsert() RETURNS TRIGGER AS $$
+-- BEGIN
+--   IF TG_OP = 'UPDATE' THEN
+--     IF COALESCE(OLD.cadastro_origem, 'ies') <> 'simulado' THEN
+--       NEW.cadastro_origem := OLD.cadastro_origem;
+--     END IF;
+--     IF LENGTH(TRIM(COALESCE(NEW.nome, ''))) = 0 AND LENGTH(TRIM(COALESCE(OLD.nome, ''))) > 0 THEN
+--       NEW.nome := OLD.nome;
+--     END IF;
+--   END IF;
+--   RETURN NEW;
+-- END;
+-- $$ LANGUAGE plpgsql;
+-- DROP TRIGGER IF EXISTS trg_alunos_master_sim_upsert ON alunos_master;
+-- CREATE TRIGGER trg_alunos_master_sim_upsert BEFORE UPDATE ON alunos_master
+--   FOR EACH ROW EXECUTE FUNCTION alunos_master_preserve_on_simulado_upsert();
 
 -- ── MIGRAÇÃO GESTÃO DE SIMULADOS (Sprint A) ─────────────────────────
 -- Campos operacionais em simulados_banco:
@@ -10127,7 +11370,7 @@ window.bqOpenComposePanel = function(simId) {
   const allQs = _qs.filter(q => q.simulado_id === simId);
   const existing = parseArr(sim.composicao_final);
   const anuladasSet = new Set(Array.isArray(sim.questoes_anuladas) ? sim.questoes_anuladas : []);
-  const anuladasTrat = sim.questoes_anuladas_tratamento || 'creditar';
+  const anuladasTrat = sim.questoes_anuladas_tratamento || 'excluir';
   const qpaMap = (sim.questoes_por_area_map && typeof sim.questoes_por_area_map === 'object' && !Array.isArray(sim.questoes_por_area_map))
     ? sim.questoes_por_area_map : {};
   const qpaDefault = sim.questoes_por_area || 5;
@@ -11586,11 +12829,254 @@ window._saveEnvio = async function() {
   </div>
 </div>
 
+<!-- ═══════════ MODAL: ENVIAR BOLETIM AO ALUNO (escolhe simulado) ═══════════ -->
+<div id="enviarBoletimAlunoModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.6);align-items:center;justify-content:center">
+  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:28px;width:min(92%,480px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="font-size:1.05rem;font-weight:700;margin:0">📧 Enviar boletim por e-mail</h3>
+      <button type="button" onclick="document.getElementById('enviarBoletimAlunoModal').style.display='none'" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
+    </div>
+    <p style="font-size:0.8rem;color:var(--text-muted);margin:0 0 14px;line-height:1.45">Confirme o <strong>simulado</strong> e o e-mail do destinatário antes de enviar o PDF (SendGrid).</p>
+    <div class="field" style="margin-bottom:12px">
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Simulado *</label>
+      <select id="enviarBoletimAlunoSim" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.85rem;outline:none"></select>
+    </div>
+    <div class="field" style="margin-bottom:16px">
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">E-mail do aluno *</label>
+      <input type="email" id="enviarBoletimAlunoEmail" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none;box-sizing:border-box" />
+    </div>
+    <div style="display:flex;gap:10px">
+      <button type="button" onclick="document.getElementById('enviarBoletimAlunoModal').style.display='none'" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
+      <button type="button" onclick="window._submitEnviarBoletimAluno()" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Enviar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ MODAL: AVISAR COORDENADOR (sem anexo) ═══════════ -->
+<div id="boletimCoordModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.6);align-items:center;justify-content:center">
+  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:28px;width:min(92%,480px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 id="boletimCoordModalTitle" style="font-size:1.02rem;font-weight:700;margin:0;line-height:1.3">Avisar coordenação</h3>
+      <button type="button" onclick="document.getElementById('boletimCoordModal').style.display='none'" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
+    </div>
+    <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 10px;line-height:1.45">Serão gerados e anexados: <strong>relatório PDF</strong>, <strong>planilha Excel</strong> e <strong>ZIP com os boletins individuais</strong>. Pode levar alguns minutos.</p>
+    <p style="font-size:0.74rem;color:var(--text-muted);margin:0 0 14px;line-height:1.5;border-left:3px solid rgba(79,70,229,0.45);padding:8px 0 8px 12px;background:rgba(79,70,229,0.06);border-radius:0 8px 8px 0"><strong style="color:var(--text-soft)">Observação:</strong> turmas muito grandes podem estourar o limite de tamanho do corpo da requisição na função (Netlify); nesse caso o usuário vê o erro e a dica no aviso. Se isso for frequente, o caminho seria armazenar os arquivos no storage e enviar só os links (evolução futura, fora do escopo atual).</p>
+    <div class="field" style="margin-bottom:12px">
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Coordenador</label>
+      <select id="boletimCoordEmailSelect" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.85rem;outline:none;display:none"></select>
+    </div>
+    <div class="field" style="margin-bottom:16px">
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">E-mail *</label>
+      <input type="email" id="boletimCoordEmailManual" placeholder="coordenador@instituicao.edu.br" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none;box-sizing:border-box" />
+    </div>
+    <div style="display:flex;gap:10px">
+      <button type="button" onclick="document.getElementById('boletimCoordModal').style.display='none'" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
+      <button type="button" onclick="window._submitBoletimCoordEmail()" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Enviar aviso</button>
+    </div>
+  </div>
+</div>
+
 
 <script>
 // ══════════════════════════════════════════════════════════════════════
 // ═══════════ MOTOR DE BOLETINS — Cálculos + PDF + ZIP ═══════════════
 // ══════════════════════════════════════════════════════════════════════
+
+/**
+ * Coordenadores ativos da IES (usuarios_autorizados) — slug ou nome da instituição.
+ * @param {string} slug
+ * @returns {Promise<{email:string,nome:string}[]>}
+ */
+window._fetchCoordenadoresForIes = async function(slug) {
+  const s = String(slug || '').trim();
+  if (!s) return [];
+  const inst = (window._instData || []).find(i => (i.slug || '') === s);
+  const nomeIes = inst ? String(inst.nome || '').toLowerCase().trim() : '';
+  const slugLow = s.toLowerCase();
+  let rows = [];
+  try {
+    rows = await window._supaRestAdmin('usuarios_autorizados', 'select=email,nome,role,instituicao,instituicoes_responsavel,ativo');
+  } catch (e) {
+    console.warn('usuarios_autorizados:', e);
+    return [];
+  }
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(u => {
+    if (u.ativo === false) return false;
+    if ((u.role || 'coordenador') !== 'coordenador') return false;
+    const instU = String(u.instituicao || '').toLowerCase().trim();
+    if (instU === slugLow) return true;
+    if (nomeIes && instU === nomeIes) return true;
+    let arr = u.instituicoes_responsavel;
+    if (typeof arr === 'string') {
+      try { arr = JSON.parse(arr || '[]'); } catch (_) { arr = []; }
+    }
+    if (Array.isArray(arr) && arr.some(x => String(x).toLowerCase() === slugLow)) return true;
+    return false;
+  }).map(u => ({ email: u.email, nome: u.nome || '' }));
+};
+
+window._openEnviarBoletimAlunoModal = function(nome, instParam, iesSlug, cpf, email) {
+  const refs = (window._boletimSimRefs || []).filter(r => r.ies_slug === iesSlug);
+  if (!refs.length) {
+    showToast('Nenhum simulado com resultado para esta IES.', 'warn');
+    return;
+  }
+  window._enviarBoletimAlunoPending = { nome, instituicao: instParam, cpf, iesSlug };
+  const sel = document.getElementById('enviarBoletimAlunoSim');
+  sel.innerHTML = '';
+  refs.forEach(r => {
+    const o = document.createElement('option');
+    o.value = r.simulado_ref;
+    o.textContent = (r.titulo || r.simulado_ref || '') + (r.count != null ? ' (' + r.count + ' alunos)' : '');
+    sel.appendChild(o);
+  });
+  document.getElementById('enviarBoletimAlunoEmail').value = email || '';
+  const modal = document.getElementById('enviarBoletimAlunoModal');
+  modal.style.display = 'flex';
+  modal.onclick = function(ev) { if (ev.target === modal) modal.style.display = 'none'; };
+};
+
+window._submitEnviarBoletimAluno = async function() {
+  const p = window._enviarBoletimAlunoPending;
+  if (!p) return;
+  const simRef = document.getElementById('enviarBoletimAlunoSim').value;
+  const email = document.getElementById('enviarBoletimAlunoEmail').value.trim();
+  document.getElementById('enviarBoletimAlunoModal').style.display = 'none';
+  await window._enviarBoletimEmail(p.nome, p.instituicao, p.cpf, email, simRef);
+};
+
+window._openBoletimEmailCoordModal = async function(slug, simId) {
+  const simRef = 'bq_' + slug + '_' + simId.slice(0, 8);
+  const ref = (window._boletimSimRefs || []).find(r => r.ies_slug === slug && r.simulado_ref === simRef);
+  let titulo = ref && ref.titulo;
+  if (!titulo && Array.isArray(window._allSimsBanco)) {
+    const sb = window._allSimsBanco.find(x => x.id === simId);
+    if (sb && sb.titulo) titulo = sb.titulo;
+  }
+  titulo = titulo || 'Simulado';
+  const inst = (window._instData || []).find(i => i.slug === slug);
+  const nomeIes = inst ? (inst.nome || slug.toUpperCase()) : slug.toUpperCase();
+  const sel = document.getElementById('boletimCoordEmailSelect');
+  const manual = document.getElementById('boletimCoordEmailManual');
+  let coords = [];
+  try {
+    coords = await window._fetchCoordenadoresForIes(slug);
+  } catch (e) {
+    console.warn(e);
+  }
+  if (coords.length) {
+    sel.style.display = 'block';
+    sel.innerHTML = coords.map(c => {
+      const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      return '<option value="' + esc(c.email) + '" data-nome="' + esc(c.nome) + '">' + esc((c.nome || c.email) + ' · ' + c.email) + '</option>';
+    }).join('');
+    manual.value = coords[0].email;
+    sel.onchange = function() {
+      const opt = sel.options[sel.selectedIndex];
+      manual.value = opt ? opt.value : '';
+    };
+  } else {
+    sel.style.display = 'none';
+    sel.innerHTML = '';
+    manual.value = '';
+    manual.placeholder = 'Nenhum coordenador na lista — digite o e-mail';
+  }
+  window._boletimCoordPending = { slug, simId, titulo, nomeIes, simRef };
+  document.getElementById('boletimCoordModalTitle').textContent = 'Avisar coordenação — ' + titulo;
+  const modal = document.getElementById('boletimCoordModal');
+  modal.style.display = 'flex';
+  modal.onclick = function(ev) { if (ev.target === modal) modal.style.display = 'none'; };
+};
+
+window._buildBoletinsZipBlob = async function(slug, simRef) {
+  const records = await _supaRest('simulado_respostas', `select=*&simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}`);
+  if (!records?.length) throw new Error('Nenhum dado encontrado para montar os boletins.');
+  const { allAlunosData, questionsMeta } = window._expandBoletimData(records);
+  const inst = (window._instData || []).find(i => i.slug === slug);
+  const iesInfo = { nome: inst?.nome || slug.toUpperCase(), themeHex: inst?.theme_hex || '#1B6D85', logoUrl: inst?.logo_url || '' };
+  const zip = new JSZip();
+  for (let i = 0; i < allAlunosData.length; i++) {
+    const a = allAlunosData[i];
+    const blob = await window._gerarBoletimPDF(a, allAlunosData, questionsMeta, iesInfo);
+    const safeName = a.aluno_nome.replace(/[^a-zA-ZÀ-ÿ0-9 ]/g, '_').trim();
+    zip.file(safeName + '.pdf', blob);
+    if (i % 5 === 0) await new Promise(r => setTimeout(r, 10));
+  }
+  return zip.generateAsync({ type: 'blob' });
+};
+
+window._submitBoletimCoordEmail = async function() {
+  const p = window._boletimCoordPending;
+  if (!p) return;
+  const manual = document.getElementById('boletimCoordEmailManual');
+  const sel = document.getElementById('boletimCoordEmailSelect');
+  let to = (manual.value || '').trim();
+  if (!to && sel && sel.style.display !== 'none') to = (sel.value || '').trim();
+  if (!to || !to.includes('@')) {
+    showToast('Informe um e-mail válido.', 'warn');
+    return;
+  }
+  let nomeDest = 'Coordenação';
+  if (sel && sel.style.display !== 'none' && sel.selectedIndex >= 0) {
+    const opt = sel.options[sel.selectedIndex];
+    const dn = opt && opt.getAttribute('data-nome');
+    if (dn) nomeDest = dn.trim() || nomeDest;
+  }
+  document.getElementById('boletimCoordModal').style.display = 'none';
+  try {
+    showToast('Gerando PDF, Excel e ZIP… aguarde.', 'info');
+    const token = await window._getAdminToken();
+    if (!token) {
+      showToast('Faça login novamente.', 'error');
+      return;
+    }
+    const pack = await window._simGeneratePDF(p.slug, p.simId, { blobsOnly: true });
+    if (!pack || !pack.pdfBlob) {
+      showToast('Não foi possível gerar o relatório. Há resultado cadastrado para este simulado?', 'error');
+      return;
+    }
+    const zipBlob = await window._buildBoletinsZipBlob(p.slug, p.simRef);
+    const b64pdf = await window._blobToBase64(pack.pdfBlob);
+    const b64xlsx = pack.xlsxBlob ? await window._blobToBase64(pack.xlsxBlob) : null;
+    const b64zip = await window._blobToBase64(zipBlob);
+    const base = pack.baseName || 'Relatorio';
+    const nomeIESFile = String(p.nomeIes || 'IES').replace(/[^a-zA-Z0-9]/g, '_');
+    const zipName = 'Boletins_' + nomeIESFile + '_' + String(p.simRef).replace(/[^a-zA-Z0-9._-]/g, '_') + '.zip';
+    const attachments = [
+      { filename: base + '.pdf', content_base64: b64pdf, type: 'application/pdf' },
+      ...(b64xlsx ? [{ filename: base + '.xlsx', content_base64: b64xlsx, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }] : []),
+      { filename: zipName, content_base64: b64zip, type: 'application/zip' }
+    ];
+    const linkPainel = new URL('admin.html', location.href).href;
+    const res = await fetch(location.origin + '/.netlify/functions/send-boletim-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supabase_access_token: token,
+        to: to.toLowerCase(),
+        nome_aluno: nomeDest,
+        titulo_simulado: p.titulo,
+        nome_ies: p.nomeIes,
+        link_boletim: linkPainel,
+        notificacao_coordenador: true,
+        attachments
+      })
+    });
+    let j = {};
+    try { j = await res.json(); } catch (_) {}
+    if (!res.ok) {
+      const msg = j.error || (j.details && (typeof j.details === 'string' ? j.details : JSON.stringify(j.details))) || 'Erro HTTP ' + res.status;
+      const limiteReq = res.status === 413 || /payload|too large|body|limite/i.test(String(msg));
+      showToast(msg + (limiteReq ? ' — Limite da requisição: turmas muito grandes podem exceder o permitido; tente turmas menores ou envio em partes.' : ''), 'error');
+      return;
+    }
+    showToast('E-mail com PDF, Excel e ZIP enviado ao coordenador.', 'success');
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+    console.error(e);
+  }
+};
 
 // ── Modal de boletins ──
 window._openBoletimModal = function(preSlug, preSimId) {
@@ -12201,7 +13687,7 @@ window._expandBoletimData = function(records) {
     const respostas = questions.map((q, i) => {
       const resp = resps[i] || '-';
       const anulada = q.anulada === true || resp === '*';
-      const trat = anuladasInfo?.tratamento || 'creditar';
+      const trat = anuladasInfo?.tratamento || (anuladasInfo && Array.isArray(anuladasInfo.indices) && anuladasInfo.indices.length ? 'creditar' : 'excluir');
       let correct;
       if (anulada && trat === 'creditar') correct = true;
       else if (anulada && trat === 'excluir') correct = null; // null = não conta
@@ -12221,18 +13707,43 @@ window._expandBoletimData = function(records) {
   return { allAlunosData, questionsMeta: questions, anuladasInfo };
 };
 
-// ── Gerar boletim individual (click no botão 📄 da tabela) ──
-window._gerarBoletimIndividual = async function(nome, instituicao, cpf) {
+/**
+ * @param {Blob} blob
+ * @returns {Promise<string>}
+ */
+window._blobToBase64 = function(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || '');
+      const i = s.indexOf(',');
+      resolve(i >= 0 ? s.slice(i + 1) : s);
+    };
+    r.onerror = () => reject(new Error('Leitura do arquivo falhou'));
+    r.readAsDataURL(blob);
+  });
+};
+
+/**
+ * Monta o PDF do boletim individual (download e e-mail).
+ * @param {string} nome
+ * @param {string} instituicao
+ * @param {string} cpf
+ * @param {{ afterSimSelected?: () => void, beforePdf?: () => void, simRef?: string }} [opts]
+ * @returns {Promise<{ok:true,blob:Blob,tituloSimulado:string,nomeIes:string}|{ok:false,error:string}>}
+ */
+window._prepareBoletimIndividualPdf = async function(nome, instituicao, cpf, opts) {
+  opts = opts || {};
+  const afterSimSelected = opts.afterSimSelected;
+  const beforePdf = opts.beforePdf;
+  const simRefFixed = opts.simRef ? String(opts.simRef).trim() : '';
   try {
-    showToast('Buscando simulados...', 'info');
     const inst = (window._instData||[]).find(i => (i.nome||'').toLowerCase() === instituicao.toLowerCase() || i.slug === instituicao.toLowerCase());
     const slug = inst?.slug || instituicao.toLowerCase().replace(/\s+/g,'-');
 
-    // Buscar TODOS os simulados disponíveis para esta IES
     let allRefs = await _supaRest('simulado_respostas', `select=simulado_ref,respostas&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__META__`);
-    if(!allRefs?.length) { showToast('Nenhum simulado com respostas cadastradas para esta IES', 'error'); return; }
+    if(!allRefs?.length) return { ok: false, error: 'Nenhum simulado com respostas cadastradas para esta IES' };
 
-    // Filtrar apenas simulados que ainda existem em simulados_banco
     let activeSims = window._allSimsBanco;
     if (!activeSims || activeSims.length === 0) {
       try { activeSims = await _supaRest('simulados_banco', 'select=id,instituicoes_destino'); } catch(e) { activeSims = []; }
@@ -12249,13 +13760,17 @@ window._gerarBoletimIndividual = async function(nome, instituicao, cpf) {
         return validRefs.has(r.simulado_ref);
       });
     }
-    if(!allRefs.length) { showToast('Nenhum simulado ativo encontrado para esta IES', 'error'); return; }
+    if(!allRefs.length) return { ok: false, error: 'Nenhum simulado ativo encontrado para esta IES' };
 
     let simRef;
-    if (allRefs.length === 1) {
+    if (simRefFixed) {
+      if (!allRefs.some(r => r.simulado_ref === simRefFixed)) {
+        return { ok: false, error: 'Simulado não encontrado para esta IES ou inativo.' };
+      }
+      simRef = simRefFixed;
+    } else if (allRefs.length === 1) {
       simRef = allRefs[0].simulado_ref;
     } else {
-      // Múltiplos simulados — perguntar qual
       simRef = await new Promise((resolve) => {
         const ov = document.createElement('div');
         ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center';
@@ -12274,29 +13789,24 @@ window._gerarBoletimIndividual = async function(nome, instituicao, cpf) {
         ov.onclick = (e) => { if(e.target === ov) { ov.remove(); resolve(null); } };
         document.body.appendChild(ov);
       });
-      if (!simRef) return;
+      if (!simRef) return { ok: false, error: '' };
     }
 
-    showToast('Gerando boletim...', 'info');
+    if (afterSimSelected) afterSimSelected();
+
     const records = await _supaRest('simulado_respostas', `select=*&simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}`);
-    if(!records?.length) { showToast('Dados não encontrados', 'error'); return; }
+    if(!records?.length) return { ok: false, error: 'Dados não encontrados' };
 
     const { allAlunosData, questionsMeta } = window._expandBoletimData(records);
 
-    // 0) Match por CPF (mais confiável)
     const normCpf = s => (s||'').replace(/\D/g,'');
     const cpfNorm = normCpf(cpf);
     let alunoData = cpfNorm ? allAlunosData.find(a => normCpf(a.aluno_cpf) === cpfNorm) : null;
 
     if(!alunoData) {
-      // Normalização: remove acentos, espaços duplos, lowercase
       const norm = s => (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
       const nomeNorm = norm(nome);
-
-      // 1) Match exato normalizado
       alunoData = allAlunosData.find(a => norm(a.aluno_nome) === nomeNorm);
-
-      // 2) Match por palavras: todas as palavras do nome buscado aparecem no nome do simulado
       if(!alunoData) {
         const nomeWords = nomeNorm.split(' ');
         alunoData = allAlunosData.find(a => {
@@ -12304,8 +13814,6 @@ window._gerarBoletimIndividual = async function(nome, instituicao, cpf) {
           return nomeWords.every(w => aNorm.includes(w));
         });
       }
-
-      // 3) Match por maior interseção de palavras (≥ 70% das palavras em comum)
       if(!alunoData && allAlunosData.length > 0) {
         const nomeWords = new Set(nomeNorm.split(' ').filter(w => w.length > 2));
         let best = null, bestScore = 0;
@@ -12320,21 +13828,96 @@ window._gerarBoletimIndividual = async function(nome, instituicao, cpf) {
     }
 
     if(!alunoData) {
-      showToast('Este aluno não realizou o simulado ou não consta nos dados cadastrados.', 'error');
       console.warn('Busca:', nome, 'CPF:', cpf, '| Disponíveis:', allAlunosData.map(a=>a.aluno_nome));
-      return;
+      return { ok: false, error: 'Este aluno não realizou o simulado ou não consta nos dados cadastrados.' };
     }
 
     const iesInfo = { nome: inst?.nome || slug.toUpperCase(), themeHex: inst?.theme_hex || '#1B6D85', logoUrl: inst?.logo_url || '' };
+    if (beforePdf) beforePdf();
     const blob = await window._gerarBoletimPDF(alunoData, allAlunosData, questionsMeta, iesInfo);
 
-    const url = URL.createObjectURL(blob);
+    const metaRef = allRefs.find(r => r.simulado_ref === simRef);
+    const tituloSimulado = metaRef?.respostas?.titulo || simRef.replace(/_/g,' ');
+    const nomeIes = iesInfo.nome;
+    return { ok: true, blob, tituloSimulado, nomeIes };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+};
+
+// ── Gerar boletim individual (click no botão 📄 da tabela) ──
+window._gerarBoletimIndividual = async function(nome, instituicao, cpf) {
+  try {
+    showToast('Buscando simulados...', 'info');
+    const prep = await window._prepareBoletimIndividualPdf(nome, instituicao, cpf, {
+      afterSimSelected: () => showToast('Gerando boletim...', 'info')
+    });
+    if (!prep.ok) {
+      if (prep.error) showToast(prep.error, 'error');
+      return;
+    }
+    const url = URL.createObjectURL(prep.blob);
     const a = document.createElement('a');
     a.href = url; a.download = `Boletim_${nome.replace(/[^a-zA-ZÀ-ÿ0-9 ]/g,'_')}.pdf`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast('Boletim gerado!', 'success');
   } catch(e) {
+    showToast('Erro: ' + e.message, 'error');
+    console.error(e);
+  }
+};
+
+/**
+ * Envia boletim por e-mail (SendGrid via send-boletim-email). Requer variáveis no Netlify: sendgrid_key, sendgrid_from_email.
+ * @param {string} [simRefEscolhido] — quando informado (ex.: modal Alunos), usa esse simulado em vez de perguntar
+ */
+window._enviarBoletimEmail = async function(nome, instituicao, cpf, emailDestino, simRefEscolhido) {
+  const to = String(emailDestino || '').trim();
+  if (!to || !to.includes('@')) {
+    showToast('Cadastre um e-mail válido para o aluno (aba Alunos).', 'warn');
+    return;
+  }
+  try {
+    showToast('Gerando PDF e enviando e-mail...', 'info');
+    const prep = await window._prepareBoletimIndividualPdf(nome, instituicao, cpf, {
+      simRef: simRefEscolhido || undefined
+    });
+    if (!prep.ok) {
+      if (prep.error) showToast(prep.error, 'error');
+      return;
+    }
+    const token = await window._getAdminToken();
+    if (!token) {
+      showToast('Faça login novamente.', 'error');
+      return;
+    }
+    const b64 = await window._blobToBase64(prep.blob);
+    const safeFile = `Boletim_${nome.replace(/[^a-zA-ZÀ-ÿ0-9 ]/g,'_').trim()}.pdf`;
+    const res = await fetch(`${location.origin}/.netlify/functions/send-boletim-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supabase_access_token: token,
+        to: to.toLowerCase(),
+        nome_aluno: nome,
+        titulo_simulado: prep.tituloSimulado,
+        nome_ies: prep.nomeIes,
+        link_boletim: '#',
+        pdf_base64: b64,
+        pdf_filename: safeFile
+      })
+    });
+    let j = {};
+    try { j = await res.json(); } catch (_) {}
+    if (!res.ok) {
+      const msg = j.error || (j.details && (typeof j.details === 'string' ? j.details : JSON.stringify(j.details))) || `Erro HTTP ${res.status}`;
+      const limiteReq = res.status === 413 || /payload|too large|body|limite/i.test(String(msg));
+      showToast(msg + (limiteReq ? ' — Limite da requisição: tente novamente ou contate o suporte se o anexo for muito grande.' : ''), 'error');
+      return;
+    }
+    showToast('E-mail enviado com sucesso!', 'success');
+  } catch (e) {
     showToast('Erro: ' + e.message, 'error');
     console.error(e);
   }
@@ -12518,10 +14101,29 @@ function _renderAlunoImportPreview(rows) {
   document.getElementById('alunoImportBtn').style.opacity = rows.length === 0 ? '0.5' : '1';
 }
 
+/**
+ * alunos_master.instituicao segue o mesmo formato do filtro da aba (nome da IES), não o slug.
+ * O select de importação usa slug no value — converte para nome antes do insert.
+ */
+function _resolveInstituicaoNomeForAlunos(slugOrNome) {
+  const raw = String(slugOrNome || '').trim();
+  if (!raw) return '';
+  const list = window._instData || [];
+  const bySlug = list.find(i => (i.slug || '') === raw);
+  if (bySlug) return String(bySlug.nome || bySlug.slug || '').trim() || bySlug.slug.toUpperCase();
+  const low = raw.toLowerCase();
+  const bySlugI = list.find(i => (i.slug || '').toLowerCase() === low);
+  if (bySlugI) return String(bySlugI.nome || bySlugI.slug || '').trim() || bySlugI.slug.toUpperCase();
+  const byNome = list.find(i => (i.nome || '').trim().toLowerCase() === low);
+  if (byNome) return String(byNome.nome || byNome.slug || '').trim();
+  return raw;
+}
+
 window._executeAlunoImport = async function() {
   const rows = window._alunoImportRows;
   if (!rows.length) return;
   const iesOverride = document.getElementById('alunoImportIES').value;
+  const instFromSelect = _resolveInstituicaoNomeForAlunos(iesOverride);
   const btn = document.getElementById('alunoImportBtn');
   const resultEl = document.getElementById('alunoImportResult');
   btn.disabled = true;
@@ -12539,11 +14141,14 @@ window._executeAlunoImport = async function() {
     for (const r of rows) {
       const email = r.email.toLowerCase().trim();
       if (existingEmails.has(email)) { dupes++; continue; }
+      const instCell = String(r.instituicao || '').trim();
+      const instituicao = instFromSelect || _resolveInstituicaoNomeForAlunos(instCell) || instCell;
       toInsert.push({
         nome: r.nome || '',
         email: email,
-        telefone: r.telefone || '',
-        instituicao: iesOverride || r.instituicao || '',
+        contato: r.telefone || '',
+        instituicao,
+        cadastro_origem: 'ies'
       });
       existingEmails.add(email); // avoid self-duplicates in batch
     }
@@ -12552,8 +14157,19 @@ window._executeAlunoImport = async function() {
       // Insert in batches of 500 (via REST)
       for (let i = 0; i < toInsert.length; i += 500) {
         const batch = toInsert.slice(i, i + 500);
-        try { await _supaWrite('alunos_master', 'POST', batch); added += batch.length; }
-        catch(e) { errors += batch.length; console.error('Import error:', e); }
+        try {
+          const resp = await _supaWrite('alunos_master', 'POST', batch);
+          if (!resp.ok) {
+            const errTxt = await resp.text();
+            errors += batch.length;
+            console.error('Import error:', resp.status, errTxt);
+          } else {
+            added += batch.length;
+          }
+        } catch (e) {
+          errors += batch.length;
+          console.error('Import error:', e);
+        }
       }
     }
 

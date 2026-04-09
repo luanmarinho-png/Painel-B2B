@@ -10,7 +10,8 @@ const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Expose-Headers': 'Content-Range'
 };
 
 // Tabelas permitidas (whitelist — impede acesso a tabelas arbitrárias)
@@ -67,7 +68,7 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'JSON inválido' }) };
     }
 
-    const { table, method, query, body, prefer } = payload;
+    const { table, method, query, body, prefer, range } = payload;
 
     if (!table) {
       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Campo table obrigatório' }) };
@@ -98,6 +99,10 @@ exports.handler = async (event) => {
       // GET padrão — sem Prefer especial
     } else {
       headers['Prefer'] = 'return=representation';
+    }
+
+    if (range && httpMethod === 'GET') {
+      headers['Range'] = range;
     }
 
     const fetchOpts = { method: httpMethod, headers };

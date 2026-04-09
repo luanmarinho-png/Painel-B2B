@@ -1285,23 +1285,92 @@ async function _simFetch(query) {
 // Cache de dados já carregados na sessão
 const _simCache = {};
 
-// ── Busca os simRefs válidos para uma IES cruzando com simulados_banco ──
-// Retorna Set de refs como "bq_{slug}_{id8}" que realmente existem no banco de simulados
-async function _validSimRefs(slug) {
-  if (_simCache['_validRefs_' + slug]) return _simCache['_validRefs_' + slug];
+/**
+ * Normaliza tipo do simulados_banco → 'tendencias' | 'personalizado' (única fonte para os cards).
+ */
+function _normalizeSimTipo(raw) {
+  const t = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (t === "tendencias" || t === "tendencia") return "tendencias";
+  return "personalizado";
+}
+
+/**
+ * Contexto do simulados_banco para uma IES: refs válidos + tipo (tendências vs personalizado) por id8.
+ * Inclui simulados com instituicoes_destino vazio (todas as IES).
+ */
+async function _simBancoContextForSlug(slug) {
+  const ck = "_simCtx_" + slug;
+  if (_simCache[ck]) return _simCache[ck];
+  const out = { validRefs: new Set(), tipoById8: new Map() };
   try {
-    const resp = await fetch(`${_SIM_SUPA}/simulados_banco?instituicoes_destino=cs.["${slug}"]&select=id`, {
+    const resp = await fetch(`${_SIM_SUPA}/simulados_banco?select=id,tipo,instituicoes_destino`, {
       headers: { apikey: _SIM_KEY, Authorization: `Bearer ${_SIM_KEY}` }
     });
     const sims = resp.ok ? await resp.json() : [];
-    const refs = new Set(sims.map(s => `bq_${slug}_${s.id.slice(0, 8)}`));
-    // Também aceitar refs de tendências
-    sims.forEach(s => refs.add(`bq_${slug}_tendencias_${s.id.slice(0, 8)}`));
-    _simCache['_validRefs_' + slug] = refs;
-    return refs;
+    sims.forEach((s) => {
+      let dest = s.instituicoes_destino;
+      if (!Array.isArray(dest)) {
+        try {
+          dest = JSON.parse(dest || "[]");
+        } catch {
+          dest = [];
+        }
+      }
+      if (dest.length && !dest.includes(slug)) return;
+      const id8 = String(s.id || "").slice(0, 8).toLowerCase();
+      if (!id8) return;
+      out.tipoById8.set(id8, _normalizeSimTipo(s.tipo));
+      out.validRefs.add(`bq_${slug}_${id8}`);
+      out.validRefs.add(`bq_${slug}_tendencias_${id8}`);
+    });
+    _simCache[ck] = out;
+    return out;
   } catch {
-    return null; // fallback: não filtrar se falhar
+    return null;
   }
+}
+
+async function _validSimRefs(slug) {
+  const ctx = await _simBancoContextForSlug(slug);
+  return ctx ? ctx.validRefs : null;
+}
+
+/**
+ * Extrai id8 (UUID) do fim de simulado_ref (bq_*_* ou bq_*_tendencias_*).
+ */
+function _refExtractId8(ref) {
+  const s = String(ref || "");
+  const m1 = s.match(/_tendencias_([a-f0-9]{8})$/i);
+  if (m1) return m1[1].toLowerCase();
+  const m2 = s.match(/_([a-f0-9]{8})$/i);
+  return m2 ? m2[1].toLowerCase() : null;
+}
+
+/**
+ * Tendências vs personalizado: somente pelo tipo cadastrado em simulados_banco (qualquer ciclo).
+ */
+function _refIsTendencias(ref, tipoById8) {
+  if (!ref || !tipoById8 || !tipoById8.size) return false;
+  const id8 = _refExtractId8(ref);
+  if (!id8) return false;
+  return (tipoById8.get(id8) || "") === "tendencias";
+}
+
+/** Remove __RANKING__ duplicado por mesmo simulado_ref (re-upload). */
+function _dedupeSimuladoRankings(rankings) {
+  const seen = new Set();
+  const out = [];
+  for (const r of rankings) {
+    const ref = r.simulado_ref || "";
+    if (!ref || seen.has(ref)) continue;
+    seen.add(ref);
+    out.push(r);
+  }
+  return out;
 }
 
 
@@ -1378,28 +1447,51 @@ async function _simRoute(root, slug) {
 
 // ── HUB: 2 cards (Tendências / Personalizado) ──────────────────
 async function _renderSimuladoHub(root, slug) {
-  // Fetch __RANKING__ rows + validar contra simulados_banco (elimina fantasmas)
-  const [allRankings, validRefs] = await Promise.all([
+  const [allRankings, simCtx] = await Promise.all([
     _simFetch(`ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&select=simulado_ref,respostas&order=created_at.desc`),
-    _validSimRefs(slug)
+    _simBancoContextForSlug(slug)
   ]);
-  // Filtrar: só mostra simulados que existem em simulados_banco
-  const rankings = validRefs
-    ? allRankings.filter(r => validRefs.has(r.simulado_ref))
+  const validRefs = simCtx ? simCtx.validRefs : null;
+  const tipoById8 = simCtx ? simCtx.tipoById8 : new Map();
+  const rankingsRaw = validRefs
+    ? allRankings.filter((r) => validRefs.has(r.simulado_ref))
     : allRankings;
+  const rankings = _dedupeSimuladoRankings(rankingsRaw);
 
   let tendCount = 0, persCount = 0, tendLast = null, persLast = null, tendMedia = null, persMedia = null;
-  rankings.forEach(r => {
-    const ref = r.simulado_ref || '';
+  let tendSum = 0, tendN = 0, persSum = 0, persN = 0;
+  rankings.forEach((r) => {
+    const ref = r.simulado_ref || "";
     const d = r.respostas || {};
-    if (ref.includes('_tendencias_')) {
+    const m = d.media_ies;
+    const isT = _refIsTendencias(ref, tipoById8);
+    if (isT) {
       tendCount++;
-      if (!tendLast) { tendLast = d.simulado_titulo || ref; tendMedia = d.media_ies; }
+      if (!tendLast) {
+        tendLast = d.simulado_titulo || ref;
+        tendMedia = m;
+      }
+      if (m != null && Number.isFinite(Number(m))) {
+        tendSum += Number(m);
+        tendN++;
+      }
     } else {
       persCount++;
-      if (!persLast) { persLast = d.simulado_titulo || ref; persMedia = d.media_ies; }
+      if (!persLast) {
+        persLast = d.simulado_titulo || ref;
+        persMedia = m;
+      }
+      if (m != null && Number.isFinite(Number(m))) {
+        persSum += Number(m);
+        persN++;
+      }
     }
   });
+  const avgTendJoint = tendN ? tendSum / tendN : null;
+  const avgPersJoint = persN ? persSum / persN : null;
+  const showJointChart = tendCount > 0 && persCount > 0;
+  const maxJoint = Math.max(avgTendJoint || 0, avgPersJoint || 0, 1);
+  const barH = (pct) => (pct != null && Number.isFinite(pct) ? Math.round((pct / maxJoint) * 100) : 8);
 
   const fmt = (v) => v != null ? `${Number(v).toFixed(1)}%` : '—';
   const hubCard = (href, icon, title, sub, count, media, last, color, disabled) => `
@@ -1435,29 +1527,59 @@ async function _renderSimuladoHub(root, slug) {
         ${hubCard('#tendencias','📊','Tendências','ENAMED e simulados nacionais',tendCount,tendMedia,tendLast,'#16a34a',tendCount===0)}
         ${hubCard('#personalizado','🎯','Personalizado','Simulados do banco de questões',persCount,persMedia,persLast,'#3b82f6',persCount===0)}
       </div>
-    </section>`;
+    </section>
+    ${
+      showJointChart
+        ? `
+    <section class="section-shell" style="margin-top:28px">
+      <div style="max-width:800px;margin:0 auto;padding:26px 24px;border-radius:16px;border:1px solid var(--border-subtle);background:var(--bg-card);box-shadow:0 4px 24px rgba(0,0,0,0.06)">
+        <div style="font-size:0.68rem;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted)">Análise conjunta</div>
+        <h2 style="margin:6px 0 8px;font-size:1.05rem;font-weight:800;color:var(--text)">Média da IES por tipo de simulado</h2>
+        <p style="margin:0 0 22px;font-size:0.78rem;color:var(--text-muted);line-height:1.5">Média aritmética das médias da instituição em todos os resultados processados em cada categoria. Exibido apenas quando há pelo menos um simulado em <strong>Tendências</strong> e um em <strong>Personalizado</strong>.</p>
+        <div style="display:flex;align-items:flex-end;justify-content:center;gap:clamp(16px,6vw,48px);min-height:160px;padding:8px 0 0">
+          <div style="flex:1;max-width:200px;display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div style="font-size:1.35rem;font-weight:800;color:#16a34a">${avgTendJoint != null ? avgTendJoint.toFixed(1) + "%" : "—"}</div>
+            <div style="width:100%;max-width:100px;height:${barH(avgTendJoint)}px;min-height:8px;border-radius:10px 10px 0 0;background:linear-gradient(180deg,#22c55e,#15803d)"></div>
+            <div style="font-size:0.76rem;font-weight:700;color:var(--text)">Tendências</div>
+            <div style="font-size:0.68rem;color:var(--text-muted)">${tendN} resultado(s)</div>
+          </div>
+          <div style="width:1px;align-self:stretch;height:120px;background:var(--border-subtle);margin-bottom:8px;opacity:0.7"></div>
+          <div style="flex:1;max-width:200px;display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div style="font-size:1.35rem;font-weight:800;color:#2563eb">${avgPersJoint != null ? avgPersJoint.toFixed(1) + "%" : "—"}</div>
+            <div style="width:100%;max-width:100px;height:${barH(avgPersJoint)}px;min-height:8px;border-radius:10px 10px 0 0;background:linear-gradient(180deg,#60a5fa,#1d4ed8)"></div>
+            <div style="font-size:0.76rem;font-weight:700;color:var(--text)">Personalizado</div>
+            <div style="font-size:0.68rem;color:var(--text-muted)">${persN} resultado(s)</div>
+          </div>
+        </div>
+      </div>
+    </section>`
+        : ""
+    }`;
 }
 
 // ── GRID: lista de simulados de um tipo ─────────────────────────
 async function _renderSimuladoGrid(root, slug, tipo) {
-  // Fetch __RANKING__ rows + validar contra simulados_banco (elimina fantasmas)
-  const [allRankings, validRefs] = await Promise.all([
+  const [allRankings, simCtx] = await Promise.all([
     _simFetch(`ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&select=simulado_ref,respostas,created_at&order=created_at.desc`),
-    _validSimRefs(slug)
+    _simBancoContextForSlug(slug)
   ]);
-  const rankings = validRefs
-    ? allRankings.filter(r => validRefs.has(r.simulado_ref))
+  const validRefs = simCtx ? simCtx.validRefs : null;
+  const tipoById8 = simCtx ? simCtx.tipoById8 : new Map();
+  const rankingsRaw = validRefs
+    ? allRankings.filter((r) => validRefs.has(r.simulado_ref))
     : allRankings;
+  const rankings = _dedupeSimuladoRankings(rankingsRaw);
 
-  const isTend = tipo === 'tendencias';
-  const filtered = rankings.filter(r => {
-    const ref = r.simulado_ref || '';
-    return isTend ? ref.includes('_tendencias_') : !ref.includes('_tendencias_');
+  const wantTend = tipo === "tendencias";
+  const filtered = rankings.filter((r) => {
+    const ref = r.simulado_ref || "";
+    const isT = _refIsTendencias(ref, tipoById8);
+    return wantTend ? isT : !isT;
   });
 
-  const tipoLabel = isTend ? 'Tendências' : 'Personalizado';
-  const tipoIcon = isTend ? '📊' : '🎯';
-  const tipoColor = isTend ? '#16a34a' : '#3b82f6';
+  const tipoLabel = wantTend ? "Tendências" : "Personalizado";
+  const tipoIcon = wantTend ? "📊" : "🎯";
+  const tipoColor = wantTend ? "#16a34a" : "#3b82f6";
   const backSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>';
 
   if (filtered.length === 0) {
@@ -1489,8 +1611,8 @@ async function _renderSimuladoGrid(root, slug, tipo) {
           <div class="sim-card-title">${titulo}</div>
           <div class="sim-card-metrics">
             <div class="sim-card-metric"><div class="sim-card-metric-label">Média IES</div><div class="sim-card-metric-value" style="color:${mc}">${media != null ? media.toFixed(1) + '%' : '—'}</div></div>
-            ${isTend && mediaGeral != null ? `<div class="sim-card-metric"><div class="sim-card-metric-label">Média geral</div><div class="sim-card-metric-value" style="color:var(--text-muted)">${mediaGeral.toFixed(1)}%</div></div>` : ''}
-            ${isTend && rankNac != null ? `<div class="sim-card-metric"><div class="sim-card-metric-label">Ranking</div><div class="sim-card-metric-value">${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span></div></div>` : ''}
+            ${wantTend && mediaGeral != null ? `<div class="sim-card-metric"><div class="sim-card-metric-label">Média geral</div><div class="sim-card-metric-value" style="color:var(--text-muted)">${mediaGeral.toFixed(1)}%</div></div>` : ''}
+            ${wantTend && rankNac != null ? `<div class="sim-card-metric"><div class="sim-card-metric-label">Ranking</div><div class="sim-card-metric-value">${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span></div></div>` : ''}
           </div>
         </div>
       </a>`;
@@ -1501,7 +1623,7 @@ async function _renderSimuladoGrid(root, slug, tipo) {
     <section class="hero-card hero-strong" style="margin-bottom:24px">
       <div class="hero-kicker" style="color:${tipoColor}">${tipoIcon} ${tipoLabel}</div>
       <h1>Simulados ${tipoLabel.toLowerCase()}</h1>
-      <p class="hero-sub">${isTend ? 'Resultados dos simulados ENAMED com ranking nacional e regional.' : 'Resultados dos simulados do banco de questões com análise por área e tema.'}</p>
+      <p class="hero-sub">${wantTend ? 'Resultados dos simulados ENAMED com ranking nacional e regional.' : 'Resultados dos simulados do banco de questões com análise por área e tema.'}</p>
     </section>
     <section class="section-shell"><div class="sim-grid">${cards}</div></section>`;
 }
@@ -1512,7 +1634,9 @@ let _simDetailVersion = 0;
 // ── DETALHE: análise completa de um simulado ──────────────────
 async function _renderSimuladoDetail(root, slug, ref) {
   const myVersion = ++_simDetailVersion;
-  const isTend = ref.includes('_tendencias_');
+  const simCtx = await _simBancoContextForSlug(slug);
+  const tipoById8 = simCtx ? simCtx.tipoById8 : new Map();
+  const isTend = _refIsTendencias(ref, tipoById8);
   const tipoLabel = isTend ? 'Tendências' : 'Personalizado';
   const tipoColor = isTend ? 'var(--green)' : 'var(--accent)';
   const backHash = isTend ? '#tendencias' : '#personalizado';
@@ -1649,6 +1773,11 @@ async function _renderSimuladoDetail(root, slug, ref) {
 
   // ── Render ──
   const fmtPct = (v) => v != null ? Number(v).toFixed(1) + '%' : '—';
+  const anuladasTratHint = anuladasInfo && anuladasInfo.tratamento
+    ? (anuladasInfo.tratamento === 'creditar'
+      ? 'Anuladas no upload: <strong>creditadas</strong> (contam como acerto — média tende a ficar acima do Excel com “excluir”).'
+      : 'Anuladas no upload: <strong>excluídas do denominador</strong> (alinha ao Remark®).')
+    : '';
 
   // ── OVERVIEW ──
   let overviewMetrics = `
@@ -1656,6 +1785,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
       <div class="sim-metric-label">Média IES</div>
       <div class="sim-metric-value" style="color:${mediaIES != null ? _faixaColor(mediaIES) : 'var(--text)'}">${fmtPct(mediaIES)}</div>
       ${mediaIES != null ? `<div style="font-size:0.62rem;font-weight:700;color:${_faixaColor(mediaIES)};margin-top:4px">${_faixaLabel(mediaIES)}</div>` : ''}
+      ${anuladasCount > 0 && anuladasTratHint ? `<div style="font-size:0.58rem;color:var(--text-muted);margin-top:8px;line-height:1.4;max-width:280px">${anuladasTratHint}</div>` : ''}
     </div>
     ${mediaGeral != null ? `<div class="sim-metric-card"><div class="sim-metric-label">Média Geral</div><div class="sim-metric-value" style="color:var(--text-muted)">${fmtPct(mediaGeral)}</div></div>` : ''}
     <div class="sim-metric-card"><div class="sim-metric-label">Alunos</div><div class="sim-metric-value">${totalAlunos}</div></div>
@@ -1806,18 +1936,41 @@ async function _renderSimuladoDetail(root, slug, ref) {
     </section>`;
   }
 
-  // Engagement correlation: build lookup from ACCUMULATED_DASHBOARD
-  // Normaliza nome removendo acentos para match robusto
+  // Q/dia: prioriza engajamento acumulado (aba Engajamento — histórico completo por aluno).
+  // Recorte do período (painel Período) só preenche alunos que não existem no acumulado.
   const _normNome = (n) => (n || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const _engMap = {};
   try {
     if (typeof ACCUMULATED_DASHBOARD !== 'undefined' && ACCUMULATED_DASHBOARD.ranking) {
-      ACCUMULATED_DASHBOARD.ranking.forEach(s => {
+      ACCUMULATED_DASHBOARD.ranking.forEach((s) => {
         const key = _normNome(s.nome);
-        if (key) _engMap[key] = { questoes: s.questoes || 0, tempo: s.tempo_min || 0, flashcards: s.flashcards || 0, questoesDia: s.questoesDia || 0 };
+        if (!key) return;
+        _engMap[key] = {
+          questoes: s.questoes || 0,
+          tempo_min: s.tempo_min || 0,
+          flashcards: s.flashcards || 0,
+          questoesDia: s.questoesDia || 0
+        };
       });
     }
-  } catch(_e) {}
+  } catch (_e) {}
+  try {
+    const pi = typeof periodState !== 'undefined' ? periodState.currentIndex : 0;
+    const periods = typeof PERIODS !== 'undefined' ? PERIODS : [];
+    const period = periods[pi] || periods[0];
+    const days = Math.max(period?.meta?.days || 1, 1);
+    (period?.data || []).forEach((row) => {
+      const key = _normNome(row.nome);
+      if (!key || _engMap[key]) return;
+      const qd = (Number(row.questoes) || 0) / days;
+      _engMap[key] = {
+        questoes: row.questoes || 0,
+        tempo_min: row.tempo_min || 0,
+        flashcards: row.flashcards || 0,
+        questoesDia: qd
+      };
+    });
+  } catch (_e) {}
 
   // ── RANKING ALUNOS com correlação Engajamento x Nota ──
   let rankingHTML = '';
@@ -1826,7 +1979,10 @@ async function _renderSimuladoDetail(root, slug, ref) {
     const _engBadge = (nome) => {
       const key = _normNome(nome);
       const eng = _engMap[key];
-      if (!eng) return '<span style="font-size:0.68rem;color:var(--text-muted)">—</span>';
+      if (!eng) {
+        const _tip = 'Sem histórico de engajamento na plataforma — participação apenas neste simulado (não integra o cadastro B2B com uso do app).';
+        return `<span style="font-size:0.68rem;color:var(--text-muted);display:inline-flex;flex-direction:column;align-items:center;gap:1px;line-height:1.15;max-width:120px;cursor:help" title="${_tip}"><span>—</span><span style="font-size:0.58rem;font-weight:600;opacity:0.9">só simulado</span></span>`;
+      }
       const qDia = eng.questoesDia || 0;
       if (qDia >= 20) return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#16a34a;background:rgba(22,163,74,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#16a34a"></span>${qDia.toFixed(0)} q/dia</span>`;
       if (qDia >= 10) return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#d97706;background:rgba(217,119,6,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#d97706"></span>${qDia.toFixed(0)} q/dia</span>`;
@@ -1866,15 +2022,29 @@ async function _renderSimuladoDetail(root, slug, ref) {
       }
     } catch(_e) {}
 
+    let _rankingPeriodHint = "";
+    try {
+      const hasAcc = typeof ACCUMULATED_DASHBOARD !== "undefined" && ACCUMULATED_DASHBOARD.ranking && ACCUMULATED_DASHBOARD.ranking.length > 0;
+      if (hasAcc) {
+        _rankingPeriodHint = ` <span style="font-size:0.72rem;font-weight:500;color:var(--text-muted)">(Q/dia · engajamento acumulado)</span>`;
+      } else {
+        const pi = typeof periodState !== "undefined" ? periodState.currentIndex : 0;
+        const p = PERIODS?.[pi] || PERIODS?.[0];
+        if (p?.meta?.label) {
+          _rankingPeriodHint = ` <span style="font-size:0.72rem;font-weight:500;color:var(--text-muted)">(Q/dia · ${p.meta.label})</span>`;
+        }
+      }
+    } catch (_e) {}
+
     rankingHTML = `
     <section class="section-shell" style="margin-top:24px">
-      <h2 class="section-title">Ranking de alunos</h2>
+      <h2 class="section-title">Ranking de alunos${_rankingPeriodHint}</h2>
       <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:16px;overflow:auto">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr style="background:var(--bg-elevated);border-bottom:1.5px solid var(--border-subtle)">
             <th style="padding:10px 14px;text-align:center;font-size:0.65rem;text-transform:uppercase;font-weight:700;color:var(--text-muted);width:50px">#</th>
             <th style="padding:10px 14px;text-align:left;font-size:0.65rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Aluno</th>
-            <th style="padding:10px 14px;text-align:center;font-size:0.65rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Engajamento</th>
+            <th style="padding:10px 14px;text-align:center;font-size:0.65rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Q/dia</th>
             <th style="padding:10px 14px;text-align:right;font-size:0.65rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Nota</th>
           </tr></thead>
           <tbody>${alunoRows}</tbody>
@@ -2601,22 +2771,37 @@ function buildCoordenadorChatContext() {
     institution: inst,
     path: location.pathname,
     hash: location.hash || "",
-    generatedAt: new Date().toISOString()
+    generatedAt: new Date().toISOString(),
+    orientacaoMedCof: {
+      metaQuestoesPorDia: 20,
+      focoProva: "ENAMED",
+      nota:
+        "Correlacione engajamento (questões/dia, quando disponível) com desempenho em simulados; não invente valores nem causalidade estatística."
+    }
   };
 
   try {
     if (page === "engagement") {
       const rows = engagementState.filteredRows || [];
-      const sample = rows.slice(0, 45).map((s) => ({
-        nome: s.nome,
-        turma: s.turma || TURMA_BY_NAME[s.nome.trim().toLowerCase()] || null,
-        questoes: s.questoes,
-        taxa_acerto: s.taxa_acerto,
-        engajamento: s.traction?.label,
-        questoesDia: s.questoesDia,
-        tempo_min: s.tempo_min,
-        activeMonths: s.activeMonths
-      }));
+      const sample = rows.slice(0, 45).map((s) => {
+        const rawQd = s.questoesDia;
+        const qdNum =
+          typeof rawQd === "number"
+            ? rawQd
+            : parseFloat(String(rawQd ?? "").replace(",", "."));
+        const abaixoMeta20 = Number.isFinite(qdNum) ? qdNum < 20 : null;
+        return {
+          nome: s.nome,
+          turma: s.turma || TURMA_BY_NAME[s.nome.trim().toLowerCase()] || null,
+          questoes: s.questoes,
+          taxa_acerto: s.taxa_acerto,
+          engajamento: s.traction?.label,
+          questoesDia: s.questoesDia,
+          abaixoMeta20,
+          tempo_min: s.tempo_min,
+          activeMonths: s.activeMonths
+        };
+      });
       return {
         ...base,
         engagement: {
@@ -2638,10 +2823,18 @@ function buildCoordenadorChatContext() {
       const days = period?.meta?.days || 1;
       const sample = rows.slice(0, 45).map((row) => {
         const eng = getPeriodEngagement(row.questoes, days);
+        const qdApprox =
+          row.questoes != null && days > 0
+            ? Math.round((row.questoes / days) * 10) / 10
+            : null;
+        const abaixoMeta20 =
+          qdApprox != null && Number.isFinite(qdApprox) ? qdApprox < 20 : null;
         return {
           nome: row.nome,
           turma: row.turma || TURMA_BY_NAME[row.nome.trim().toLowerCase()] || null,
           questoes: row.questoes,
+          questoesPorDiaAprox: qdApprox,
+          abaixoMeta20,
           tempo_min: row.tempo_min,
           engajamento: eng.label
         };
@@ -2686,24 +2879,24 @@ function buildCoordenadorChatContext() {
 function getCoordenadorChatSuggestions(page) {
   const map = {
     home: [
-      "Como navegar entre engajamento, período e simulados?",
-      "O que priorizar para melhorar a turma?",
-      "Como interpretar o ranking de engajamento?"
+      "Como a meta de ~20 questões/dia ajuda na preparação para a ENAMED?",
+      "O que priorizar para melhorar a turma neste semestre?",
+      "Como correlacionar hábito de estudo com desempenho em simulados?"
     ],
     engagement: [
-      "Quem está com menor engajamento na lista filtrada?",
-      "Quais alunos merecem acompanhamento prioritário?",
-      "Como explicar a diferença entre questões e tempo na plataforma?"
+      "Quem está abaixo da meta de 20 questões/dia nesta lista?",
+      "Quais alunos merecem acompanhamento prioritário para a ENAMED?",
+      "Como explicar tempo de plataforma versus volume de questões?"
     ],
     period: [
-      "Como está o desempenho deste recorte em relação ao engajamento?",
-      "Quais alunos estão abaixo do esperado neste período?",
+      "Quais alunos estão com média diária de questões abaixo do ideal?",
+      "Como este período se compara ao engajamento geral da turma?",
       "O que significa a faixa de engajamento na tabela?"
     ],
     simulados: [
-      "Quais insights pedagógicos você tira deste simulado?",
-      "Quais temas ou áreas precisam de reforço?",
-      "Como está a turma em relação à média geral?"
+      "Como relacionar o desempenho deste simulado com o engajamento na plataforma?",
+      "Quais temas ou áreas precisam de reforço para a ENAMED?",
+      "A turma está acima ou abaixo da média geral — o que priorizar?"
     ]
   };
   return map[page] || map.home;
@@ -2742,7 +2935,7 @@ function mountCoordenadorChat() {
   root.id = "medcof-coord-chat-root";
   root.innerHTML = `
     <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir assistente do coordenador" aria-expanded="false">
-      <span class="medcof-coord-chat-fab-icon" aria-hidden="true">💬</span>
+      <img class="medcof-coord-chat-fab-icon" src="/assets/coordenador-chat-fab.png" alt="" width="44" height="52" decoding="async" draggable="false" />
     </button>
     <div class="medcof-coord-chat-panel" id="medcofCoordChatPanel" hidden>
       <div class="medcof-coord-chat-head">
@@ -2752,7 +2945,10 @@ function mountCoordenadorChat() {
         </div>
         <button type="button" class="medcof-coord-chat-close" id="medcofCoordChatClose" aria-label="Fechar">×</button>
       </div>
-      <div class="medcof-coord-chat-suggestions" id="medcofCoordChatSuggestions"></div>
+      <div class="medcof-coord-chat-suggestions" id="medcofCoordChatSuggestions">
+        <div class="medcof-coord-chat-insight" id="medcofCoordChatInsight" hidden></div>
+        <div class="medcof-coord-chat-chips" id="medcofCoordChatChips"></div>
+      </div>
       <div class="medcof-coord-chat-messages" id="medcofCoordChatMessages"></div>
       <div class="medcof-coord-chat-error" id="medcofCoordChatError" hidden></div>
       <form class="medcof-coord-chat-form" id="medcofCoordChatForm">
@@ -2766,7 +2962,8 @@ function mountCoordenadorChat() {
   const panel = root.querySelector("#medcofCoordChatPanel");
   const fab = root.querySelector("#medcofCoordChatFab");
   const closeBtn = root.querySelector("#medcofCoordChatClose");
-  const suggestionsEl = root.querySelector("#medcofCoordChatSuggestions");
+  const insightEl = root.querySelector("#medcofCoordChatInsight");
+  const chipsEl = root.querySelector("#medcofCoordChatChips");
   const messagesEl = root.querySelector("#medcofCoordChatMessages");
   const errorEl = root.querySelector("#medcofCoordChatError");
   const form = root.querySelector("#medcofCoordChatForm");
@@ -2778,22 +2975,58 @@ function mountCoordenadorChat() {
   /** @type {{ role: string, content: string }[]} */
   let thread = [];
 
-  function renderSuggestions() {
-    const page = document.body.dataset.page || "home";
-    const chips = getCoordenadorChatSuggestions(page);
-    suggestionsEl.innerHTML = chips
+  /**
+   * @param {string} text
+   */
+  function setCoordInsight(text) {
+    const t = String(text || "").trim();
+    if (!t || !insightEl) {
+      if (insightEl) {
+        insightEl.hidden = true;
+        insightEl.textContent = "";
+      }
+      return;
+    }
+    insightEl.hidden = false;
+    insightEl.textContent = t;
+  }
+
+  /**
+   * @param {string[]} chips
+   */
+  function bindCoordChips(chips) {
+    if (!chipsEl) return;
+    chipsEl.innerHTML = chips
       .map((text) => {
         const safe = document.createElement("span");
         safe.textContent = text;
         return `<button type="button" class="medcof-coord-chat-chip">${safe.innerHTML}</button>`;
       })
       .join("");
-    suggestionsEl.querySelectorAll(".medcof-coord-chat-chip").forEach((btn, i) => {
+    chipsEl.querySelectorAll(".medcof-coord-chat-chip").forEach((btn, i) => {
       btn.addEventListener("click", () => {
         input.value = chips[i];
         form.requestSubmit();
       });
     });
+  }
+
+  function renderSuggestions() {
+    setCoordInsight("");
+    const page = document.body.dataset.page || "home";
+    bindCoordChips(getCoordenadorChatSuggestions(page));
+  }
+
+  /**
+   * Após resposta do assistente: insight opcional e chips dinâmicos (ou fallback estático).
+   * @param {string} [insight]
+   * @param {string[]} [followUps]
+   */
+  function applyCoordFollowUps(insight, followUps) {
+    setCoordInsight(insight || "");
+    const page = document.body.dataset.page || "home";
+    const list = Array.isArray(followUps) ? followUps.filter((s) => String(s || "").trim()) : [];
+    bindCoordChips(list.length ? list : getCoordenadorChatSuggestions(page));
   }
 
   function appendMessage(role, text) {
@@ -2810,8 +3043,23 @@ function mountCoordenadorChat() {
     fab.setAttribute("aria-expanded", v ? "true" : "false");
   }
 
-  fab.addEventListener("click", () => setPanel(!panelOpen));
-  closeBtn.addEventListener("click", () => setPanel(false));
+  fab.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setPanel(!panelOpen);
+  });
+  closeBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPanel(false);
+  });
+
+  /** Fecha ao clicar fora do chat (captura, antes de outros handlers). */
+  function onDocPointerDown(ev) {
+    if (!panelOpen) return;
+    if (root.contains(ev.target)) return;
+    setPanel(false);
+  }
+  document.addEventListener("pointerdown", onDocPointerDown, true);
 
   renderSuggestions();
 
@@ -2841,13 +3089,13 @@ function mountCoordenadorChat() {
       const res = await fetch(chatUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
           messages: thread,
           context,
-          ies_slug
+          ies_slug,
+          supabase_access_token: token
         })
       });
       const body = await res.json().catch(() => ({}));
@@ -2866,6 +3114,7 @@ function mountCoordenadorChat() {
       const reply = body.reply || "";
       appendMessage("assistant", reply);
       thread.push({ role: "assistant", content: reply });
+      applyCoordFollowUps(body.insight, body.follow_up_questions);
     } catch (err) {
       loading.remove();
       errorEl.textContent = err.message || "Erro ao enviar.";

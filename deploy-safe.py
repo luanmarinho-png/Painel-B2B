@@ -80,7 +80,14 @@ def deploy(admin_path=None):
 
     # Update admin.html + any extra local files
     uploads = {}
-    extra_files = ["favicon.svg", "brand-loader.js", "session-fix.js"]
+    extra_files = [
+        "favicon.svg",
+        "brand-loader.js",
+        "session-fix.js",
+        "assets/coordenador-chat-fab.png",
+        "assets/coordenador-chat-fab.svg",
+        "assets/logo_univassouras.svg",
+    ]
     if admin_path:
         with open(admin_path, "rb") as f:
             content = f.read()
