@@ -168,6 +168,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (page === "simulados") renderSimuladosPage();
     }
   }
+
+  if (sessionStorage.getItem(ACCESS_STATE_KEY) === "granted") {
+    mountCoordenadorChat();
+  }
 });
 
 function _showLoadingState() {
@@ -1355,6 +1359,9 @@ async function renderSimuladosPage() {
 
 async function _simRoute(root, slug) {
   const hash = location.hash.replace('#', '');
+  if (!hash.startsWith("sim=")) {
+    window.__MEDCOF_SIM_CHAT_CTX__ = null;
+  }
 
   if (hash.startsWith('sim=')) {
     const ref = decodeURIComponent(hash.slice(4));
@@ -1519,6 +1526,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
   if (myVersion !== _simDetailVersion) return;
 
   if (!rows.length) {
+    window.__MEDCOF_SIM_CHAT_CTX__ = null;
     root.innerHTML = `
       <div style="padding:20px 0"><a href="${backHash}" style="font-size:0.82rem;color:var(--text-muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg> Voltar</a></div>
       <div class="empty-state" style="padding:48px 32px"><div class="empty-state-icon">🔍</div><h2 class="empty-state-title">Simulado não encontrado</h2><p class="empty-state-desc">Os dados deste simulado podem ter sido removidos.</p></div>`;
@@ -1983,6 +1991,34 @@ async function _renderSimuladoDetail(root, slug, ref) {
   const _linkBol = ranking ? ranking.link_boletins : null;
   const boletinsBtn = _linkBol ? `<a href="${_linkBol}" target="_blank" rel="noopener" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Baixar boletins</a>` : '';
 
+  window.__MEDCOF_SIM_CHAT_CTX__ = {
+    ref,
+    titulo,
+    tipoSimulado: tipoLabel,
+    totalAlunos,
+    totalQuestoes,
+    mediaIES: mediaIES != null ? Math.round(mediaIES * 10) / 10 : null,
+    mediaGeral: mediaGeral != null ? Math.round(mediaGeral * 10) / 10 : null,
+    mediana: mediana != null ? Math.round(mediana * 10) / 10 : null,
+    notaMin: notaMin != null ? Math.round(notaMin * 10) / 10 : null,
+    notaMax: notaMax != null ? Math.round(notaMax * 10) / 10 : null,
+    rankingNacional:
+      rankNac != null && rankNacTotal != null ? { posicao: rankNac, total: rankNacTotal } : null,
+    rankingRegional:
+      rankReg != null && rankRegTotal != null ? { posicao: rankReg, total: rankRegTotal } : null,
+    areas: areaList.slice(0, 10).map((a) => ({ area: a.label, mediaPct: Math.round(a.media * 10) / 10 })),
+    temasMaisFrageis: temaList.slice(0, 8).map((t) => ({
+      tema: t.tema,
+      area: t.area,
+      pctAcertoTurma: Math.round(t.pct * 10) / 10
+    })),
+    amostraAlunos: alunos.slice(0, 40).map((a) => ({
+      nome: a.nome,
+      nota: a.nota != null ? Math.round(a.nota * 10) / 10 : null,
+      turma: a.turma || null
+    }))
+  };
+
   root.innerHTML = `
     <div style="padding:20px 0">
       <a href="${backHash}" class="sim-back">${backSvg} Todos os ${tipoLabel.toLowerCase()}</a>
@@ -2024,6 +2060,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
  } catch (err) {
     console.error('[SimDetail] Erro ao renderizar simulado:', err);
     if (myVersion !== _simDetailVersion) return; // race condition, ignore
+    window.__MEDCOF_SIM_CHAT_CTX__ = null;
     root.innerHTML = `
       <div style="padding:20px 0"><a href="${backHash}" style="font-size:0.82rem;color:var(--text-muted);text-decoration:none;display:inline-flex;align-items:center;gap:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg> Voltar</a></div>
       <div class="empty-state" style="padding:48px 32px">
@@ -2532,4 +2569,313 @@ function initRatingWidget() {
     if (commentWrap) commentWrap.style.display = "none";
     if (successEl) successEl.style.display = "block";
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Assistente do coordenador (OpenAI via Netlify Function — chave só no servidor)
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * Slug da IES na URL (primeiro segmento do path).
+ * @returns {string}
+ */
+function _medcofSlugFromPath() {
+  const parts = location.pathname.split("/").filter(Boolean);
+  return parts[0] || CURRENT_INSTITUTION_KEY || DEFAULT_INSTITUTION_KEY || "";
+}
+
+/**
+ * Monta um JSON resumido do que o coordenador está vendo para enviar ao modelo.
+ * @returns {Record<string, unknown>}
+ */
+function buildCoordenadorChatContext() {
+  const page = document.body.dataset.page || "home";
+  const slug = _medcofSlugFromPath();
+  const inst = {
+    slug,
+    name: CURRENT_INSTITUTION?.institutionName || "",
+    brand: CURRENT_INSTITUTION?.brandTitle || ""
+  };
+  const base = {
+    page,
+    institution: inst,
+    path: location.pathname,
+    hash: location.hash || "",
+    generatedAt: new Date().toISOString()
+  };
+
+  try {
+    if (page === "engagement") {
+      const rows = engagementState.filteredRows || [];
+      const sample = rows.slice(0, 45).map((s) => ({
+        nome: s.nome,
+        turma: s.turma || TURMA_BY_NAME[s.nome.trim().toLowerCase()] || null,
+        questoes: s.questoes,
+        taxa_acerto: s.taxa_acerto,
+        engajamento: s.traction?.label,
+        questoesDia: s.questoesDia,
+        tempo_min: s.tempo_min,
+        activeMonths: s.activeMonths
+      }));
+      return {
+        ...base,
+        engagement: {
+          totalNoFiltro: rows.length,
+          amostraAlunos: sample,
+          filtros: {
+            busca: (document.getElementById("engagementSearchInput")?.value || "").trim(),
+            nivel: document.getElementById("engagementLevelSelect")?.value || "",
+            ordenacao: document.getElementById("engagementSortSelect")?.value || ""
+          },
+          totalAlunosBase: ACCUMULATED_DASHBOARD?.ranking?.length || 0
+        }
+      };
+    }
+
+    if (page === "period") {
+      const period = PERIODS[periodState.currentIndex];
+      const rows = periodState.filteredRows || [];
+      const days = period?.meta?.days || 1;
+      const sample = rows.slice(0, 45).map((row) => {
+        const eng = getPeriodEngagement(row.questoes, days);
+        return {
+          nome: row.nome,
+          turma: row.turma || TURMA_BY_NAME[row.nome.trim().toLowerCase()] || null,
+          questoes: row.questoes,
+          tempo_min: row.tempo_min,
+          engajamento: eng.label
+        };
+      });
+      return {
+        ...base,
+        periodoDetalhado: {
+          periodoLabel: period?.meta?.label || period?.sheet || "",
+          turmaFiltro: periodState.activeTurmaFilter,
+          totalNoFiltro: rows.length,
+          amostraAlunos: sample,
+          filtros: {
+            busca: (document.getElementById("periodSearchInput")?.value || "").trim(),
+            tracao: document.getElementById("periodTractionSelect")?.value || "",
+            ordenacao: document.getElementById("periodSortSelect")?.value || ""
+          }
+        }
+      };
+    }
+
+    if (page === "simulados") {
+      if (window.__MEDCOF_SIM_CHAT_CTX__) {
+        return { ...base, simuladoNaTela: window.__MEDCOF_SIM_CHAT_CTX__ };
+      }
+      return { ...base, simulados: { rotaHash: location.hash || "(início)" } };
+    }
+
+    return {
+      ...base,
+      home: { nota: "Use Engajamento, Período detalhado ou Simulados para dados específicos." }
+    };
+  } catch (e) {
+    return { ...base, erroContexto: String(e && e.message) };
+  }
+}
+
+/**
+ * Sugestões por tipo de página.
+ * @param {string} page
+ * @returns {string[]}
+ */
+function getCoordenadorChatSuggestions(page) {
+  const map = {
+    home: [
+      "Como navegar entre engajamento, período e simulados?",
+      "O que priorizar para melhorar a turma?",
+      "Como interpretar o ranking de engajamento?"
+    ],
+    engagement: [
+      "Quem está com menor engajamento na lista filtrada?",
+      "Quais alunos merecem acompanhamento prioritário?",
+      "Como explicar a diferença entre questões e tempo na plataforma?"
+    ],
+    period: [
+      "Como está o desempenho deste recorte em relação ao engajamento?",
+      "Quais alunos estão abaixo do esperado neste período?",
+      "O que significa a faixa de engajamento na tabela?"
+    ],
+    simulados: [
+      "Quais insights pedagógicos você tira deste simulado?",
+      "Quais temas ou áreas precisam de reforço?",
+      "Como está a turma em relação à média geral?"
+    ]
+  };
+  return map[page] || map.home;
+}
+
+/**
+ * Garante cliente Supabase no browser (carrega CDN se necessário).
+ * @returns {Promise<any>}
+ */
+async function _medcofEnsureSupabaseForChat() {
+  const SB_URL = "https://cvwwucxjrpsfoxarsipr.supabase.co";
+  const SB_ANON =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI";
+  if (!window.supabase) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("Não foi possível carregar o cliente Supabase."));
+      document.head.appendChild(s);
+    });
+  }
+  if (!window._medcofSbClient) {
+    window._medcofSbClient = window.supabase.createClient(SB_URL, SB_ANON);
+  }
+  return window._medcofSbClient;
+}
+
+/**
+ * Injeta botão flutuante e painel de chat (após acesso concedido).
+ */
+function mountCoordenadorChat() {
+  if (document.getElementById("medcof-coord-chat-root")) return;
+
+  const root = document.createElement("div");
+  root.id = "medcof-coord-chat-root";
+  root.innerHTML = `
+    <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir assistente do coordenador" aria-expanded="false">
+      <span class="medcof-coord-chat-fab-icon" aria-hidden="true">💬</span>
+    </button>
+    <div class="medcof-coord-chat-panel" id="medcofCoordChatPanel" hidden>
+      <div class="medcof-coord-chat-head">
+        <div>
+          <div class="medcof-coord-chat-title">Assistente</div>
+          <div class="medcof-coord-chat-sub">Com base no que está na tela</div>
+        </div>
+        <button type="button" class="medcof-coord-chat-close" id="medcofCoordChatClose" aria-label="Fechar">×</button>
+      </div>
+      <div class="medcof-coord-chat-suggestions" id="medcofCoordChatSuggestions"></div>
+      <div class="medcof-coord-chat-messages" id="medcofCoordChatMessages"></div>
+      <div class="medcof-coord-chat-error" id="medcofCoordChatError" hidden></div>
+      <form class="medcof-coord-chat-form" id="medcofCoordChatForm">
+        <input type="text" class="medcof-coord-chat-input" id="medcofCoordChatInput" placeholder="Pergunte sobre alunos, turma ou simulado…" autocomplete="off" maxlength="2000" />
+        <button type="submit" class="medcof-coord-chat-send" id="medcofCoordChatSend">Enviar</button>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(root);
+
+  const panel = root.querySelector("#medcofCoordChatPanel");
+  const fab = root.querySelector("#medcofCoordChatFab");
+  const closeBtn = root.querySelector("#medcofCoordChatClose");
+  const suggestionsEl = root.querySelector("#medcofCoordChatSuggestions");
+  const messagesEl = root.querySelector("#medcofCoordChatMessages");
+  const errorEl = root.querySelector("#medcofCoordChatError");
+  const form = root.querySelector("#medcofCoordChatForm");
+  const input = root.querySelector("#medcofCoordChatInput");
+  const sendBtn = root.querySelector("#medcofCoordChatSend");
+
+  const chatUrl = `${window.location.origin}/.netlify/functions/coordenador-chat`;
+  let panelOpen = false;
+  /** @type {{ role: string, content: string }[]} */
+  let thread = [];
+
+  function renderSuggestions() {
+    const page = document.body.dataset.page || "home";
+    const chips = getCoordenadorChatSuggestions(page);
+    suggestionsEl.innerHTML = chips
+      .map((text) => {
+        const safe = document.createElement("span");
+        safe.textContent = text;
+        return `<button type="button" class="medcof-coord-chat-chip">${safe.innerHTML}</button>`;
+      })
+      .join("");
+    suggestionsEl.querySelectorAll(".medcof-coord-chat-chip").forEach((btn, i) => {
+      btn.addEventListener("click", () => {
+        input.value = chips[i];
+        form.requestSubmit();
+      });
+    });
+  }
+
+  function appendMessage(role, text) {
+    const div = document.createElement("div");
+    div.className = `medcof-coord-chat-msg medcof-coord-chat-msg--${role}`;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function setPanel(v) {
+    panelOpen = v;
+    panel.hidden = !v;
+    fab.setAttribute("aria-expanded", v ? "true" : "false");
+  }
+
+  fab.addEventListener("click", () => setPanel(!panelOpen));
+  closeBtn.addEventListener("click", () => setPanel(false));
+
+  renderSuggestions();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = (input.value || "").trim();
+    if (!text) return;
+    errorEl.hidden = true;
+    appendMessage("user", text);
+    input.value = "";
+    thread.push({ role: "user", content: text });
+    sendBtn.disabled = true;
+    const loading = document.createElement("div");
+    loading.className = "medcof-coord-chat-msg medcof-coord-chat-msg--assistant medcof-coord-chat-loading";
+    loading.textContent = "…";
+    messagesEl.appendChild(loading);
+
+    try {
+      const sb = await _medcofEnsureSupabaseForChat();
+      const { data } = await sb.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) {
+        throw new Error("Faça login no painel para usar o assistente.");
+      }
+      const ies_slug = _medcofSlugFromPath();
+      const context = buildCoordenadorChatContext();
+      const res = await fetch(chatUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          messages: thread,
+          context,
+          ies_slug
+        })
+      });
+      const body = await res.json().catch(() => ({}));
+      loading.remove();
+      if (!res.ok) {
+        let msg = body.error || `Erro HTTP ${res.status}`;
+        if (res.status === 501 || res.status === 405) {
+          msg =
+            "Servidor local simples (ex.: python -m http.server) não executa Netlify Functions — por isso o POST retorna 501. Na pasta do projeto rode: npx netlify-cli dev e use a URL indicada (ex.: http://localhost:8888). Em produção, confira o deploy no Netlify.";
+        } else if (res.status === 404) {
+          msg =
+            "Function coordenador-chat não encontrada. Verifique se o deploy inclui netlify/functions e a variável OPENAI_API_KEY no Netlify.";
+        }
+        throw new Error(msg);
+      }
+      const reply = body.reply || "";
+      appendMessage("assistant", reply);
+      thread.push({ role: "assistant", content: reply });
+    } catch (err) {
+      loading.remove();
+      errorEl.textContent = err.message || "Erro ao enviar.";
+      errorEl.hidden = false;
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && panelOpen) setPanel(false);
+  });
 }

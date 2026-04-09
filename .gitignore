@@ -1,4 +1,7 @@
 node_modules/
 .DS_Store
 .claude/
-.netlify≈
+.netlify/
+.env
+.env.*
+!.env.example
