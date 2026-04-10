@@ -783,9 +783,9 @@ window.parseArr = function(v) {
   .bq-comp-area-sub { font-size: 0.75rem; color: var(--text-soft); margin-bottom: 12px; }
   .bq-comp-q-list { display: flex; flex-direction: column; gap: 6px; }
   .bq-comp-q-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: var(--bg-card); border: 1.5px solid var(--border-subtle); border-radius: 8px; cursor: pointer; transition: all 0.15s; font-size: 0.8rem; }
-  .bq-comp-q-item:hover { border-color: var(--accent); }
-  .bq-comp-q-item.bq-sel { background: var(--accent-soft); border-color: var(--accent); }
-  .bq-comp-q-item input[type=checkbox] { margin-top: 2px; flex-shrink: 0; accent-color: var(--accent); }
+  .bq-comp-q-item:hover { border-color: var(--green); }
+  .bq-comp-q-item.bq-sel { background: var(--green-soft); border-color: var(--green); }
+  .bq-comp-q-item input[type=checkbox] { margin-top: 2px; flex-shrink: 0; accent-color: var(--green); }
   .bq-comp-q-enunc { flex: 1; color: var(--text); line-height: 1.5; }
   .bq-comp-q-meta { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
 
@@ -4006,25 +4006,32 @@ window._loadExcluidosPanel = async function(instituicao) {
   panel.innerHTML = '<span style="color:var(--text-muted);font-size:0.8rem">Buscando...</span>';
   const { rows } = await window._fetchExcluidosMaster(instituicao);
 
+  // Popular textarea manual com nomes do banco (para que a filtragem funcione mesmo sem re-importar)
+  const excTextarea = document.getElementById('exclusionList');
+  if (excTextarea) {
+    excTextarea.value = rows.map(r => r.nome).filter(Boolean).join('\n');
+  }
+
   if (!rows.length) {
-    // Primeira vez — nenhum professor excluído ainda. Mostrar formulário de importação normalmente.
     panel.innerHTML = '<span style="color:var(--text-muted);font-size:0.8rem">Nenhum professor excluído cadastrado. Importe a planilha abaixo para cadastrar.</span>';
     if (importSection) importSection.style.display = 'block';
     return;
   }
 
-  // Já tem professores cadastrados — mostrar lista e ocultar seção de importação
-  if (importSection) importSection.style.display = 'none';
+  // Mostrar lista de excluídos + manter import visível para adicionar mais
+  if (importSection) importSection.style.display = 'block';
+  const preview = rows.slice(0, 10);
+  const remaining = rows.length - preview.length;
   panel.innerHTML = `
-    <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">
-      <strong style="color:var(--text)">${rows.length} professor(es) já excluídos</strong> — ignorados automaticamente em todos os próximos uploads:
+    <div style="font-size:0.82rem;margin-bottom:10px">
+      <strong style="color:#dc2626">${rows.length} professor(es)</strong> <span style="color:var(--text-muted)">excluídos — serão ignorados automaticamente no upload:</span>
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
-      ${rows.map(r => `<span style="background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.25);color:#dc2626;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:600">${r.nome}</span>`).join("")}
-    </div>
-    <button type="button" onclick="document.getElementById('exclusionImportSection').style.display='block';this.style.display='none'" style="padding:4px 12px;border-radius:7px;border:1px solid rgba(220,38,38,0.3);background:transparent;color:#dc2626;font-size:0.74rem;font-weight:600;cursor:pointer">
-      + Adicionar mais exclusões
-    </button>`;
+    <details style="margin-bottom:10px">
+      <summary style="cursor:pointer;font-size:0.78rem;color:var(--text-muted);font-weight:600">Ver lista completa</summary>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;max-height:200px;overflow-y:auto;padding:4px 0">
+        ${rows.map(r => `<span style="background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.25);color:#dc2626;border-radius:6px;padding:2px 8px;font-size:0.7rem;font-weight:600">${r.nome || r.cpf}</span>`).join("")}
+      </div>
+    </details>`;
 };
 
 // Preencher dados da planilha de exclusão — parser robusto
@@ -4611,12 +4618,19 @@ window._loadExclusionFile = async function(file) {
       await window._detectUploadMode(slug);
       // Mostrar grid de opções
       if (grid) grid.style.display = 'grid';
+      // Carregar excluídos imediatamente ao selecionar IES
+      if (typeof window._loadExcluidosPanel === 'function') {
+        await window._loadExcluidosPanel(slug);
+      }
     } else {
       const banner = $("uploadModeBanner");
       if (banner) banner.style.display = "none";
       if (grid) grid.style.display = "none";
       window._uploadMode = null;
       window._masterByCpf = {};
+      // Limpar painel de excluídos
+      const excPanel = $("excluidosPanelContent");
+      if (excPanel) excPanel.innerHTML = '<div style="font-size:0.82rem;color:var(--text-muted)">Selecione uma instituição para ver os excluídos.</div>';
     }
   });
 
@@ -6510,7 +6524,8 @@ window._loadBoletimAvailability = async function() {
     const allData = await _supaRest('simulado_respostas', 'select=simulado_ref,ies_slug,aluno_nome');
     const countMap = {};
     (allData || []).forEach(r => {
-      if (r.aluno_nome === '__META__' || (r.aluno_nome||'').startsWith('__BATCH_')) return;
+      // Ignorar todos os registros especiais (META, BATCH, RANKING, PERS_DATA, etc.)
+      if ((r.aluno_nome||'').startsWith('__')) return;
       const key = r.simulado_ref + '|' + r.ies_slug;
       countMap[key] = (countMap[key] || 0) + 1;
     });
@@ -8066,9 +8081,12 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       const mediaCalc = temCalculada
         ? Math.round(studentsData.reduce((s, a) => s + a.notaCalculada, 0) / studentsData.length * 10) / 10
         : null;
-      const mediaPlan = temPlanilha
-        ? Math.round(studentsData.filter(a => a.notaPlanilha != null).reduce((s, a) => s + a.notaPlanilha, 0) / studentsData.filter(a => a.notaPlanilha != null).length * 10) / 10
-        : null;
+      // Para aprimorada: usar média da planilha (E10) como verdade; senão, média dos individuais
+      const mediaPlan = isAprim && formatInfo.mediaFromPlanilha != null
+        ? formatInfo.mediaFromPlanilha
+        : (temPlanilha
+          ? Math.round(studentsData.filter(a => a.notaPlanilha != null).reduce((s, a) => s + a.notaPlanilha, 0) / studentsData.filter(a => a.notaPlanilha != null).length * 10) / 10
+          : null);
 
       // Turmas
       const turmaMap = new Map();
@@ -8567,13 +8585,18 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     const hdr = rows[result.headerRow];
 
     // 3. Check header columns (normalize NFD to handle accented chars like Período)
+    let _colTotal = -1, _colNotaExpl = -1;
     for (let c = 0; c < hdr.length; c++) {
       const lbl = String(hdr[c] || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
       if (/nome\s*(completo)?/.test(lbl) && !/cpf/.test(lbl) && result.colNome < 0) result.colNome = c;
       if (/^e-?mail$/.test(lbl)) result.colEmail = c;
       if (/periodo|^turma$/.test(lbl)) result.colPeriodo = c;
-      if (/^total$/.test(lbl) && c > 0 && c < 6) result.colNota = c;
+      if (/^total$/.test(lbl) && c > 0 && c < 8) _colTotal = c;
+      if (/^nota$/.test(lbl) && c > 0 && c < 8) _colNotaExpl = c;
+      if (/^(percentual|score|desempenho|aproveitamento)$/.test(lbl) && c > 0 && c < 8) _colNotaExpl = c;
     }
+    // Priorizar coluna "Nota" (%) sobre "Total" (pontuação bruta)
+    result.colNota = _colNotaExpl >= 0 ? _colNotaExpl : _colTotal;
 
     // 4. If already identified as remark, fill remaining fields and return
     if (result.format === 'remark') {
@@ -8588,8 +8611,9 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     }
 
     // 5. Aprimorada detection: header has Nome + Email columns
-    const hasNomeEmail = result.colNome >= 0 && result.colEmail >= 0;
-    if (hasNomeEmail) {
+    // Aprimorada: tem Nome + (Email ou Período) — não exige Email obrigatório
+    const hasAprimHeader = result.colNome >= 0 && (result.colEmail >= 0 || result.colPeriodo >= 0);
+    if (hasAprimHeader) {
       result.format = 'aprimorada';
 
       // Extract title and institution from rows above header
@@ -9432,10 +9456,11 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         const cpf = cpfNorm;
         const alunoInfo = cpfToAluno[cpfNorm] || cpfToAluno[cpf] || null;
         const nome  = alunoInfo?.nome  || (colNome >= 0 ? String(row[colNome] || "").trim() : '');
-        // Turma: prioriza alunos_master, depois coluna da planilha
+        // Turma: aprimorada → planilha tem prioridade (dado mais recente do simulado)
+        //        remark → master tem prioridade (remark não tem turma)
         const turmaMaster = alunoInfo?.turma || '';
         const turmaPlanilha = colPeriodo >= 0 ? _normTurmaNr(row[colPeriodo]) : '';
-        const turma = turmaMaster || turmaPlanilha || '';
+        const turma = isAprimorada ? (turmaPlanilha || turmaMaster || '') : (turmaMaster || turmaPlanilha || '');
         if (!nome) semNome++;
 
         const respostas = [];
@@ -9858,6 +9883,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       try {
         simBQFile = null;
         window._bqFileRef = null;
+        window._detectedFormat = null;
+        window._preloadedWb = null;
         const _uploadZone = $("simUploadBq");
         if (_uploadZone) {
           _uploadZone.classList.remove("has-file");
@@ -9876,6 +9903,13 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         if (_anulPrev) { _anulPrev.style.display = "none"; _anulPrev.textContent = ""; }
         const _radExcluir = document.querySelector('input[name="bqAnuladaTrat"][value="excluir"]');
         if (_radExcluir) _radExcluir.checked = true;
+        // Limpar banner de formato
+        const _fmtBanner = $("simFormatBanner");
+        if (_fmtBanner) { _fmtBanner.style.display = "none"; _fmtBanner.innerHTML = ""; }
+        // Restaurar seção de anuladas
+        const _anulSection = $("bqAnuladasSection");
+        if (_anulSection) _anulSection.style.display = "block";
+        // Limpar campos de ranking
         ["bqRankNac", "bqRankNacTotal", "bqRankReg", "bqRankRegTotal", "bqMediaGeral"].forEach(id => {
           const el = $(id);
           if (el) el.value = "";
@@ -13678,15 +13712,17 @@ window._gerarBoletimPDF = async function(alunoData, allAlunosData, questionsMeta
   ]);
 
   // ── Preparar dados estatísticos ──
-  // Recalcular notas ao vivo a partir do gab do META (evita notas armazenadas com gabarito desatualizado)
+  // Usar nota_pct do upload (já corrigida para anuladas/planilha aprimorada) quando disponível;
+  // fallback: recalcular a partir das respostas
   const _calcNota = (resps) => {
     const validas = resps.filter(q => !q.anulada || q.tratamento === 'creditar').length;
     const correct = resps.filter(q => q.correct === true).length;
     return validas > 0 ? (correct / validas) * 100 : 0;
   };
+  const _notaFinal = (a) => a.nota_pct != null ? a.nota_pct : _calcNota(a.respostas);
   const allRespostas = allAlunosData.map(a => a.respostas);
-  const todasNotas   = allAlunosData.map(a => _calcNota(a.respostas));
-  const notaAluno    = _calcNota(alunoData.respostas);
+  const todasNotas   = allAlunosData.map(a => _notaFinal(a));
+  const notaAluno    = _notaFinal(alunoData);
   const { media: mediaTurma, dp: dpTurma } = Stats.mediaDP(todasNotas);
   const cronbach = Stats.cronbach(allRespostas);
   const percentil = Stats.percentil(notaAluno, todasNotas);
@@ -14517,16 +14553,17 @@ function _renderAlunoImportPreview(rows) {
  * O select de importação usa slug no value — converte para nome antes do insert.
  */
 function _resolveInstituicaoNomeForAlunos(slugOrNome) {
+  // Sempre retorna o SLUG para uniformizar o campo instituicao no alunos_master
   const raw = String(slugOrNome || '').trim();
   if (!raw) return '';
   const list = window._instData || [];
   const bySlug = list.find(i => (i.slug || '') === raw);
-  if (bySlug) return String(bySlug.nome || bySlug.slug || '').trim() || bySlug.slug.toUpperCase();
+  if (bySlug) return bySlug.slug;
   const low = raw.toLowerCase();
   const bySlugI = list.find(i => (i.slug || '').toLowerCase() === low);
-  if (bySlugI) return String(bySlugI.nome || bySlugI.slug || '').trim() || bySlugI.slug.toUpperCase();
+  if (bySlugI) return bySlugI.slug;
   const byNome = list.find(i => (i.nome || '').trim().toLowerCase() === low);
-  if (byNome) return String(byNome.nome || byNome.slug || '').trim();
+  if (byNome) return byNome.slug;
   return raw;
 }
 

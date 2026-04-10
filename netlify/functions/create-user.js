@@ -76,7 +76,7 @@ exports.handler = async (event) => {
     }
 
     // 2. Inserir na whitelist
-    const whitelistResp = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_autorizados`, {
+    const whitelistResp = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_autorizados?on_conflict=email,instituicao`, {
       method: 'POST',
       headers: {
         'apikey': SERVICE_KEY,
