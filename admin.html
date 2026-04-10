@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,10 +16,21 @@ window._SUPA_REST_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1';
 window._getAdminToken = async function() {
   try {
     const sb = typeof getSupabaseClient === 'function' ? getSupabaseClient() : null;
-    if (sb) {
-      const { data: { session } } = await sb.auth.getSession();
-      return session?.access_token || '';
+    if (!sb) return '';
+    let { data: { session } } = await sb.auth.getSession();
+    // Se token expirado ou ausente, tentar refresh
+    if (!session?.access_token) {
+      const { data: refreshData, error } = await sb.auth.refreshSession();
+      if (error || !refreshData?.session) {
+        // Sessão completamente expirada — redirect para login
+        console.warn('Sessão expirada — redirecionando para login');
+        const overlay = document.querySelector('.login-overlay');
+        if (overlay) { overlay.classList.remove('hidden'); }
+        return '';
+      }
+      session = refreshData.session;
     }
+    return session?.access_token || '';
   } catch(_) {}
   return '';
 };
@@ -50,11 +61,18 @@ window._supaRest = async function(table, query) {
  */
 window._supaRestAdmin = async function(table, query) {
   const token = await window._getAdminToken();
+  if (!token) throw new Error('Sessão expirada — faça login novamente');
   const resp = await fetch('/.netlify/functions/admin-proxy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
     body: JSON.stringify({ table, method: 'GET', query: query || '' })
   });
+  if (resp.status === 401) {
+    // Token rejeitado pelo servidor — forçar re-login
+    const overlay = document.querySelector('.login-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+    throw new Error('Sessão expirada — faça login novamente');
+  }
   if (!resp.ok) {
     const txt = await resp.text();
     throw new Error(txt || `HTTP ${resp.status}`);
@@ -67,18 +85,23 @@ window._supaRestAdmin = async function(table, query) {
  * @param {string} table - nome da tabela + filtros (ex: "alunos_master?on_conflict=cpf,instituicao")
  * @param {string} method - POST, PATCH, DELETE, GET
  * @param {object} body - dados para POST/PATCH
+ * @param {{ requireSuperadmin?: boolean, prefer?: string }} [extra] - requireSuperadmin restringe no proxy; prefer sobrescreve cabeçalho Prefer
  * @returns {Promise<Response>} — callers check resp.ok themselves
  */
-window._supaWrite = async function(table, method, body) {
+window._supaWrite = async function(table, method, body, extra) {
   const token = await window._getAdminToken();
   let prefer = 'return=minimal';
   if (method === 'POST') prefer = 'return=representation,resolution=merge-duplicates';
   if (method === 'GET') prefer = '';
+  if (extra && extra.prefer !== undefined) prefer = extra.prefer;
+
+  const payload = { table, method, body, prefer };
+  if (extra && extra.requireSuperadmin) payload.requireSuperadmin = true;
 
   const resp = await fetch('/.netlify/functions/admin-proxy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    body: JSON.stringify({ table, method, body, prefer })
+    body: JSON.stringify(payload)
   });
   return resp;
 };
@@ -192,6 +215,42 @@ window.parseArr = function(v) {
     --amber-soft: rgba(245,158,11,0.12);
     --radius: 16px;
     --radius-sm: 10px;
+    --login-grid-line: rgba(42,47,62,0.4);
+    --overlay-scrim: rgba(0,0,0,0.65);
+    --tab-hover-bg: rgba(255,255,255,0.04);
+    --table-row-hover: rgba(255,255,255,0.03);
+    --deploy-steps-bg: rgba(0,0,0,0.15);
+    --color-opt-selected-ring: #fff;
+  }
+
+  html { color-scheme: dark; }
+
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #eef1f8;
+    --bg-card: #ffffff;
+    --bg-elevated: #f4f6fb;
+    --bg-hover: #e8ecf4;
+    --border: #d0d7e3;
+    --border-subtle: #e4e9f2;
+    --text: #1a2233;
+    --text-soft: #4a5568;
+    --text-muted: #718096;
+    --accent: #dc2626;
+    --accent-soft: rgba(220,38,38,0.1);
+    --accent-glow: rgba(220,38,38,0.22);
+    --green: #16a34a;
+    --green-soft: rgba(22,163,74,0.12);
+    --blue: #2563eb;
+    --blue-soft: rgba(37,99,235,0.12);
+    --amber: #d97706;
+    --amber-soft: rgba(217,119,6,0.12);
+    --login-grid-line: rgba(100,116,139,0.22);
+    --overlay-scrim: rgba(15,23,42,0.42);
+    --tab-hover-bg: rgba(0,0,0,0.05);
+    --table-row-hover: rgba(0,0,0,0.04);
+    --deploy-steps-bg: rgba(0,0,0,0.06);
+    --color-opt-selected-ring: var(--text);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -212,8 +271,8 @@ window.parseArr = function(v) {
   .login-bg-grid {
     position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
     background-image:
-      linear-gradient(rgba(42,47,62,0.4) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(42,47,62,0.4) 1px, transparent 1px);
+      linear-gradient(var(--login-grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--login-grid-line) 1px, transparent 1px);
     background-size: 60px 60px;
     mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
     -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 50%, black 20%, transparent 70%);
@@ -228,6 +287,9 @@ window.parseArr = function(v) {
     position: relative; z-index: 2; width: min(100%, 420px);
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: 24px; padding: 40px 36px 36px;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.04) inset;
+  }
+  html[data-theme="dark"] .login-card {
     box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03) inset;
   }
   .login-logo { display: block; max-width: 160px; margin: 0 auto 8px; }
@@ -275,6 +337,17 @@ window.parseArr = function(v) {
     text-transform: uppercase; letter-spacing: 0.08em;
   }
   .dash-topbar-right { display: flex; align-items: center; gap: 16px; }
+  .dash-theme-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; padding: 0; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--bg-elevated);
+    color: var(--text-soft); cursor: pointer; transition: color 0.2s, border-color 0.2s, background 0.2s;
+    flex-shrink: 0;
+  }
+  .dash-theme-toggle:hover { color: var(--accent); border-color: var(--accent); background: var(--bg-hover); }
+  .dash-theme-toggle svg { width: 18px; height: 18px; display: block; }
+  html[data-theme="dark"] .dash-theme-icon-for-light { display: none; }
+  html[data-theme="light"] .dash-theme-icon-for-dark { display: none; }
   .dash-topbar-user { font-size: 0.82rem; color: var(--text-soft); }
   .dash-logout-btn {
     padding: 7px 16px; border-radius: var(--radius-sm);
@@ -297,8 +370,9 @@ window.parseArr = function(v) {
     border-radius: 10px; cursor: pointer; transition: all 0.25s;
     display: flex; align-items: center; justify-content: center; gap: 8px;
   }
-  .dash-tab:hover { color: var(--text-soft); background: rgba(255,255,255,0.03); }
-  .dash-tab.active { color: var(--text); background: var(--bg-card); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+  .dash-tab:hover { color: var(--text-soft); background: var(--tab-hover-bg); }
+  .dash-tab.active { color: var(--text); background: var(--bg-card); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+  html[data-theme="dark"] .dash-tab.active { box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
   .dash-tab svg { width: 16px; height: 16px; }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
@@ -328,7 +402,8 @@ window.parseArr = function(v) {
     transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
     cursor: pointer; text-decoration: none; color: var(--text); display: block;
   }
-  .inst-card:hover { border-color: var(--accent); box-shadow: 0 0 30px rgba(220,38,38,0.1), 0 8px 32px rgba(0,0,0,0.3); transform: translateY(-3px); }
+  .inst-card:hover { border-color: var(--accent); box-shadow: 0 0 24px rgba(220,38,38,0.12), 0 8px 28px rgba(0,0,0,0.12); transform: translateY(-3px); }
+  html[data-theme="dark"] .inst-card:hover { box-shadow: 0 0 30px rgba(220,38,38,0.1), 0 8px 32px rgba(0,0,0,0.3); }
   .inst-card-stripe { position: absolute; top: 0; left: 0; right: 0; height: 3px; }
   .inst-card-header { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
   .inst-card-logo-wrap {
@@ -385,6 +460,7 @@ window.parseArr = function(v) {
   .field select option { background: var(--bg-elevated); color: var(--text); }
   .field .hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; }
   .field input[type="date"] { color-scheme: dark; }
+  html[data-theme="light"] .field input[type="date"] { color-scheme: light; }
 
   /* Subsection divider */
   .subsection { margin-top: 32px; margin-bottom: 20px; padding-top: 24px; border-top: 1px solid var(--border-subtle); }
@@ -450,7 +526,7 @@ window.parseArr = function(v) {
     padding: 0 2px; flex-shrink: 0;
   }
   .file-chip-remove:hover { color: var(--accent); }
-  /* Acesso IES – lista de usuários cadastrados */
+  /* Acesso IES – coordenadores e admin */
   .access-user-row {
     display: flex; align-items: center; gap: 10px;
     padding: 8px 12px; background: var(--bg-elevated); border-radius: 8px;
@@ -458,7 +534,7 @@ window.parseArr = function(v) {
   }
   .access-user-email { flex: 1; color: var(--text); font-family: monospace; font-size: 0.83rem; }
   .access-user-name { color: var(--text-muted); font-size: 0.78rem; }
-  .badge-active { background: rgba(16,185,129,0.15); color: #34d399; padding: 2px 9px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+  .badge-active { background: rgba(16,185,129,0.15); color: var(--green); padding: 2px 9px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
   .badge-inactive { background: rgba(107,114,128,0.15); color: var(--text-muted); padding: 2px 9px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
   .btn-success {
     display: inline-flex; align-items: center; gap: 8px;
@@ -504,7 +580,7 @@ window.parseArr = function(v) {
   .preview-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   .preview-table th { text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--border); color: var(--text-muted); font-weight: 700; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.06em; white-space: nowrap; }
   .preview-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); color: var(--text-soft); }
-  .preview-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .preview-table tr:hover td { background: var(--table-row-hover); }
   .log-area {
     background: var(--bg-elevated); border-radius: var(--radius-sm);
     padding: 16px; margin-top: 20px; max-height: 200px; overflow-y: auto;
@@ -517,7 +593,7 @@ window.parseArr = function(v) {
   .success-banner.visible { display: block; }
   .success-banner-title { font-size: 1.1rem; font-weight: 700; color: var(--green); margin-bottom: 6px; }
   .success-banner-text { font-size: 0.85rem; color: var(--text-soft); line-height: 1.5; }
-  .deploy-steps { text-align: left; margin-top: 16px; padding: 16px 20px; background: rgba(0,0,0,0.15); border-radius: 10px; }
+  .deploy-steps { text-align: left; margin-top: 16px; padding: 16px 20px; background: var(--deploy-steps-bg); border-radius: 10px; }
   .deploy-step { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; font-size: 0.85rem; color: var(--text-soft); }
   .deploy-step:last-child { margin-bottom: 0; }
   .deploy-step-num { width: 24px; height: 24px; border-radius: 50%; background: var(--green); color: #fff; font-size: 0.72rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -529,7 +605,7 @@ window.parseArr = function(v) {
     cursor: pointer; transition: border-color 0.2s, transform 0.2s; position: relative;
   }
   .color-opt:hover { transform: scale(1.1); }
-  .color-opt.selected { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+  .color-opt.selected { border-color: var(--color-opt-selected-ring); box-shadow: 0 0 0 2px var(--accent); }
   .color-opt::after {
     content: "\2713"; position: absolute; inset: 0; display: flex; align-items: center;
     justify-content: center; color: #fff; font-size: 0.85rem; font-weight: 700;
@@ -573,7 +649,7 @@ window.parseArr = function(v) {
   /* ── Modal dupla checagem de datas ── */
   .date-modal-overlay {
     position: fixed; inset: 0; z-index: 200;
-    background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+    background: var(--overlay-scrim); backdrop-filter: blur(4px);
     display: flex; align-items: center; justify-content: center; padding: 20px;
   }
   .date-modal-overlay.hidden { display: none; }
@@ -751,12 +827,13 @@ window.parseArr = function(v) {
   .bq-qs-rejeitada { background: var(--accent-soft); color: var(--accent); }
 
   /* Reuse tooltip */
-  .bq-reuse-wrap .bq-reuse-tooltip { display:none; position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%); background:#1a1e34; color:#e2e4ec; padding:8px 12px; border-radius:8px; min-width:160px; max-width:260px; z-index:50; box-shadow:0 4px 16px rgba(0,0,0,0.4); font-family:inherit; }
-  .bq-reuse-wrap .bq-reuse-tooltip::after { content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:6px solid transparent; border-top-color:#1a1e34; }
+  .bq-reuse-wrap .bq-reuse-tooltip { display:none; position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%); background:var(--bg-card); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:8px; min-width:160px; max-width:260px; z-index:50; box-shadow:0 4px 16px rgba(0,0,0,0.2); font-family:inherit; }
+  .bq-reuse-wrap .bq-reuse-tooltip::after { content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:6px solid transparent; border-top-color:var(--bg-card); }
+  html[data-theme="dark"] .bq-reuse-wrap .bq-reuse-tooltip { box-shadow:0 4px 16px rgba(0,0,0,0.4); }
   .bq-reuse-wrap:hover .bq-reuse-tooltip { display:block; }
 
   /* Modal */
-  .bq-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.78); z-index: 300; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .bq-modal-overlay { position: fixed; inset: 0; background: var(--overlay-scrim); z-index: 300; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .bq-modal-overlay.bq-hidden { display: none; }
   .bq-modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); width: min(100%, 780px); max-height: 90vh; overflow-y: auto; padding: 28px 32px 32px; box-shadow: 0 24px 80px rgba(0,0,0,0.65); }
   .bq-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
@@ -798,6 +875,9 @@ window.parseArr = function(v) {
   .superadmin-only { display: none !important; }
   body.is-superadmin .superadmin-only,
   body.is-admin .superadmin-only { display: block !important; }
+  /* Só superadmin (ex.: criar IES no Supabase) */
+  .superadmin-exclusive { display: none !important; }
+  body.is-superadmin .superadmin-exclusive { display: inline-flex !important; }
   .inst-settings-btn {
     position: absolute; top: 10px; right: 48px; z-index: 5;
     background: var(--bg-elevated, #1e2230); border: 1px solid var(--border, #2a2f3e);
@@ -833,7 +913,7 @@ window.parseArr = function(v) {
 
   /* ── Deploy confirmation modal ── */
   .deploy-confirm-overlay {
-    position: fixed; inset: 0; z-index: 9998; background: rgba(0,0,0,0.6);
+    position: fixed; inset: 0; z-index: 9998; background: var(--overlay-scrim);
     display: flex; align-items: center; justify-content: center;
   }
   .deploy-confirm-box {
@@ -877,7 +957,36 @@ window.parseArr = function(v) {
   .settings-stripe-preview {
     height: 6px; border-radius: 3px; margin-top: 8px; transition: background 0.3s;
   }
+
+  /* Overlays com style inline — alinhar ao tema claro */
+  html[data-theme="light"] #simPdfModal,
+  html[data-theme="light"] #alunoEditModal,
+  html[data-theme="light"] #userEditModal,
+  html[data-theme="light"] #createUserModal,
+  html[data-theme="light"] #instSettingsModal,
+  html[data-theme="light"] #newInstModal,
+  html[data-theme="light"] #envioModal,
+  html[data-theme="light"] #alunoImportModal,
+  html[data-theme="light"] #boletimModal,
+  html[data-theme="light"] #enviarBoletimAlunoModal,
+  html[data-theme="light"] #boletimCoordModal,
+  html[data-theme="light"] #questViewModal,
+  html[data-theme="light"] #posVendaModal,
+  html[data-theme="light"] #avisoModal {
+    background: var(--overlay-scrim) !important;
+  }
 </style>
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('adminTheme');
+    if (t !== 'light' && t !== 'dark') t = 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+})();
+</script>
 </head>
 <body>
 
@@ -910,6 +1019,10 @@ window.parseArr = function(v) {
       <span class="dash-topbar-tag">Admin</span>
     </div>
     <div class="dash-topbar-right">
+      <button type="button" id="adminThemeToggle" class="dash-theme-toggle" onclick="window._toggleAdminTheme()" aria-pressed="false" title="Alternar tema claro/escuro">
+        <span class="dash-theme-icon dash-theme-icon-for-dark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg></span>
+        <span class="dash-theme-icon dash-theme-icon-for-light" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
+      </button>
       <span class="dash-topbar-user" id="topbarUser" style="cursor:pointer;position:relative" onclick="window._toggleAdminPopover()">—</span>
       <div id="adminPopover" style="display:none;position:absolute;top:48px;right:80px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,0.25);z-index:100;min-width:280px;max-width:360px">
         <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:8px" id="popoverUserName"></div>
@@ -969,7 +1082,10 @@ window.parseArr = function(v) {
         <div class="dash-stat"><div class="dash-stat-number" id="statHoras">—</div><div class="dash-stat-label">Horas de estudo</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statMedia">—</div><div class="dash-stat-label">Instituições cadastradas</div></div>
       </div>
-      <div class="dash-section-title">Instituições parceiras</div>
+      <div class="dash-section-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <span>Instituições parceiras</span>
+        <button type="button" class="superadmin-exclusive" onclick="window._openNewInstModal()" style="padding:8px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.82rem;font-weight:600;cursor:pointer;align-items:center;gap:6px">➕ Nova IES</button>
+      </div>
 
       <!-- Banner: IES com dados desatualizados há +15 dias -->
       <div id="staleUpdateBanner" style="display:none;margin-bottom:14px;border-radius:12px;overflow:hidden;border:1px solid rgba(239,68,68,0.25)">
@@ -1052,34 +1168,8 @@ window.parseArr = function(v) {
           </div>
         </div>
         <div id="periodSlotsContainer"></div>
-        <!-- Exclusão de professores -->
-        <details style="margin-top:16px;margin-bottom:16px;border:1.5px solid rgba(220,38,38,0.15);border-radius:14px;background:rgba(220,38,38,0.02);padding:0">
-          <summary style="padding:14px 18px;cursor:pointer;font-size:0.82rem;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px;user-select:none">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-            Professores excluídos
-          </summary>
-          <div style="padding:0 18px 18px">
-            <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:12px">Professores salvos aqui são ignorados automaticamente em todos os uploads futuros desta IES.</div>
-            <div id="excluidosPanelContent" style="margin-bottom:14px;min-height:24px">
-              <span style="color:var(--text-muted);font-size:0.8rem">Selecione uma instituição para ver os excluídos.</span>
-            </div>
-            <div id="exclusionImportSection" style="display:block">
-              <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-                <button type="button" onclick="document.getElementById('exclusionFile').click()" style="padding:6px 14px;border-radius:8px;border:1px solid rgba(220,38,38,0.3);background:rgba(220,38,38,0.06);color:#dc2626;font-size:0.78rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  Importar planilha de exclusão
-                </button>
-                <span id="exclusionFileInfo" style="font-size:0.72rem;color:var(--text-muted)"></span>
-                <input type="file" id="exclusionFile" accept=".csv,.xlsx,.xls" multiple style="display:none" onchange="Array.from(this.files).forEach(f=>window._loadExclusionFile(f));this.value=''">
-              </div>
-              <div id="exclusionPreviewPanel"></div>
-              <details style="margin-top:8px">
-                <summary style="font-size:0.72rem;color:var(--text-muted);cursor:pointer">Adicionar manualmente</summary>
-                <textarea class="text-area" id="exclusionList" placeholder="FULANO DE TAL&#10;CICLANO DA SILVA" style="margin-top:6px;min-height:60px;font-size:0.78rem"></textarea>
-              </details>
-            </div>
-          </div>
-        </details>
+        <!-- Exclusões por nome (manual) — vazio; professores via excluidos_master na aba Usuários -->
+        <textarea id="exclusionList" style="display:none;width:1px;height:1px;opacity:0;position:absolute;left:-9999px" aria-hidden="true" tabindex="-1"></textarea>
         <!-- Substituir todos -->
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;font-size:0.8rem;color:var(--text-soft);user-select:none">
           <input type="checkbox" id="chkReplaceAll" style="accent-color:#dc2626;width:16px;height:16px">
@@ -1722,11 +1812,20 @@ window.parseArr = function(v) {
     <!-- ═══════════ TAB 5: USUÁRIOS ═══════════ -->
     <div class="tab-panel" id="tab-users">
 
-      <div class="section-title-row">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        Gestão de Usuários
-      </div>
-      <p class="section-desc">Visualize, edite permissões e gerencie o acesso de todos os coordenadores cadastrados na plataforma.</p>
+      <div style="border:1.5px solid var(--border);border-radius:14px;background:var(--bg-card);overflow:hidden;margin-bottom:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;cursor:pointer;user-select:none" onclick="toggleCollapse('usersTabMainBody', this)">
+          <div style="display:flex;align-items:center;gap:12px">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <div>
+              <div style="font-size:0.95rem;font-weight:700;color:var(--text)">Gestão de Usuários</div>
+              <div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px">Coordenadores, alunos e lista de exclusão (professores — não entram nas métricas)</div>
+            </div>
+          </div>
+          <span class="collapse-chev" style="color:var(--text-muted);font-size:0.85rem">▲</span>
+        </div>
+        <div id="usersTabMainBody" style="display:block;padding:0 18px 18px">
+
+      <p class="section-desc" style="margin-top:4px">Visualize, edite permissões e gerencie o acesso de todos os coordenadores cadastrados na plataforma. Professores cadastrados na lista de exclusão servem apenas para checagem nos uploads de engajamento.</p>
 
       <!-- Filtros e busca -->
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px;align-items:center">
@@ -1755,12 +1854,12 @@ window.parseArr = function(v) {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;cursor:pointer;user-select:none" onclick="toggleCollapse('usersTableWrap', this)">
           <div style="display:flex;align-items:center;gap:10px">
             <span style="font-size:1rem">👥</span>
-            <div style="font-size:0.87rem;font-weight:700;color:var(--text)">Usuários encontrados</div>
+            <div style="font-size:0.87rem;font-weight:700;color:var(--text)">Coordenadores e admin</div>
             <div style="font-size:0.72rem;color:var(--text-muted)" id="userCount"></div>
           </div>
-          <span class="collapse-chev" style="color:var(--text-muted);font-size:0.8rem">▲</span>
+          <span class="collapse-chev" style="color:var(--text-muted);font-size:0.8rem">▼</span>
         </div>
-        <div id="usersTableWrap" style="display:block;padding:0 18px 18px">
+        <div id="usersTableWrap" style="display:none;padding:0 18px 18px">
           <div style="overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border-subtle)">
             <table style="width:100%;border-collapse:collapse;font-size:0.85rem" id="usersTable">
               <thead>
@@ -1789,9 +1888,9 @@ window.parseArr = function(v) {
             <div style="font-size:0.87rem;font-weight:700;color:var(--text)">Alunos cadastrados</div>
             <div style="font-size:0.72rem;color:var(--text-muted)" id="alunosCount"></div>
           </div>
-          <span class="a-chev" style="color:var(--text-muted);font-size:0.8rem">▲</span>
+          <span class="a-chev" style="color:var(--text-muted);font-size:0.8rem">▼</span>
         </div>
-        <div id="alunosBody" style="display:block;padding:0 18px 18px">
+        <div id="alunosBody" style="display:none;padding:0 18px 18px">
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
             <input type="text" id="alunoSearch" placeholder="Buscar por nome, e-mail, telefone ou CPF..." style="flex:1;min-width:180px;padding:8px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.82rem;outline:none">
             <select id="alunoFilterIES" style="padding:8px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.82rem;outline:none">
@@ -1836,6 +1935,54 @@ window.parseArr = function(v) {
           </div>
         </div>
       </div>
+
+      <!-- ── SEÇÃO: PROFESSORES / EXCLUÍDOS (lista negativa — excluidos_master) ── -->
+      <div style="margin-top:24px;margin-bottom:8px;border:1.5px solid rgba(220,38,38,0.2);border-radius:14px;background:var(--bg-card);overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;cursor:pointer;user-select:none" onclick="const b=document.getElementById('profExclBody');if(b.style.display==='none'){b.style.display='block';if(!window._profExclInited)window._initProfExclSection();this.querySelector('.pe-chev').textContent='▲';}else{b.style.display='none';this.querySelector('.pe-chev').textContent='▼';}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:1rem">🚫</span>
+            <div>
+              <div style="font-size:0.87rem;font-weight:700;color:var(--text)">Professores — lista de exclusão</div>
+              <div style="font-size:0.72rem;color:var(--text-muted)">Cadastro para checagem nos uploads; não entram em análises. Importe planilha (nome, CPF, IES).</div>
+            </div>
+            <div style="font-size:0.72rem;color:var(--text-muted)" id="profExclCount"></div>
+          </div>
+          <span class="pe-chev" style="color:var(--text-muted);font-size:0.8rem">▼</span>
+        </div>
+        <div id="profExclBody" style="display:none;padding:0 18px 18px">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+            <select id="profExclIES" style="padding:8px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.82rem;outline:none;min-width:200px">
+              <option value="">Selecione a IES...</option>
+            </select>
+            <button type="button" onclick="window._loadProfExclTable()" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.8rem;font-weight:600;cursor:pointer">Atualizar lista</button>
+            <button type="button" onclick="document.getElementById('profExclFile').click()" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(220,38,38,0.35);background:rgba(220,38,38,0.08);color:#dc2626;font-size:0.8rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Importar planilha
+            </button>
+            <input type="file" id="profExclFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="window._handleProfExclUsersFile(this.files[0]);this.value=''">
+            <span id="profExclFileInfo" style="font-size:0.72rem;color:var(--text-muted)"></span>
+          </div>
+          <div style="overflow-x:auto;border-radius:10px;border:1px solid var(--border-subtle)">
+            <table style="width:100%;border-collapse:collapse;font-size:0.83rem">
+              <thead>
+                <tr style="background:var(--bg-elevated)">
+                  <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">Nome</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">CPF</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">E-mail</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">IES (slug)</th>
+                  <th style="padding:10px 14px;text-align:center;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);border-bottom:1px solid var(--border)">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="profExclTableBody">
+                <tr><td colspan="5" style="padding:24px;text-align:center;color:var(--text-muted);font-size:0.82rem">Selecione uma IES e clique em Atualizar lista.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+        </div><!-- /usersTabMainBody -->
+      </div><!-- /wrapper Gestão usuários -->
 
       <!-- Modal: nome do aluno (CPF cadastrado via simulado sem nome) -->
       <div id="alunoEditModal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);align-items:center;justify-content:center;flex-direction:row">
@@ -1981,6 +2128,39 @@ window.parseArr = function(v) {
 (() => {
   const $ = (id) => document.getElementById(id);
   const overlay = $("loginOverlay"), dashboard = $("dashboard");
+  const ADMIN_THEME_KEY = 'adminTheme';
+
+  /**
+   * Aplica tema do painel admin (claro/escuro) e persiste em localStorage.
+   * @param {'light'|'dark'} theme
+   */
+  function applyAdminTheme(theme) {
+    const t = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem(ADMIN_THEME_KEY, t); } catch (_) {}
+    const btn = $('adminThemeToggle');
+    if (btn) {
+      btn.setAttribute('aria-pressed', t === 'light' ? 'true' : 'false');
+      btn.title = t === 'light' ? 'Usar tema escuro' : 'Usar tema claro';
+    }
+  }
+
+  function initAdminTheme() {
+    try {
+      const saved = localStorage.getItem(ADMIN_THEME_KEY);
+      if (saved === 'light' || saved === 'dark') applyAdminTheme(saved);
+      else applyAdminTheme('dark');
+    } catch (_) {
+      applyAdminTheme('dark');
+    }
+  }
+
+  window._toggleAdminTheme = function() {
+    const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    applyAdminTheme(cur === 'light' ? 'dark' : 'light');
+  };
+
+  initAdminTheme();
 
   function showDashboard(email) {
     overlay.classList.add("hidden");
@@ -3565,13 +3745,25 @@ window.MedCofParser = (() => {
           al.questoes_acertadas = al.questoes > 0 ? Math.round(al.questoes * al.taxa_acerto / 100) : 0;
         }
 
-        // Turma: 1º turmaOverride (arquivo individual), 2º alunos_master (CPF), 3º master-alunos.json (nome), 4º coluna planilha
+        // Turma: 1º turmaOverride (arquivo individual), 2º alunos_master (CPF), 2b) nome fallback, 3º master-alunos.json (nome), 4º coluna planilha
         if(turmaOverride) {
           al.turma = turmaOverride;
           al._turmaOverridden = true; // marca que o operador sobrescreveu
         } else if(cpfRaw && masterByCpf[cpfRaw]?.turma) {
           al.turma = masterByCpf[cpfRaw].turma;
           al._turmaFromMaster = true; // herdada do cadastro
+        } else if(!cpfRaw && nomeStr && window._masterByNome) {
+          // Fallback: sem CPF na planilha → buscar por nome no cadastro
+          const nk = nomeStr.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
+          const matched = window._masterByNome[nk];
+          if (matched) {
+            if (matched.cpf) al._cpf = matched.cpf; // recuperar CPF do cadastro
+            if (matched.turma) { al.turma = matched.turma; al._turmaFromMaster = true; }
+          } else {
+            const turmaFromMaster = lookupTurma(nomeStr, masterAlunos);
+            if(turmaFromMaster) al.turma = turmaFromMaster;
+            else if(cols.turma!=null) { const t=cellVal(ws,r,cols.turma); if(t) al.turma = String(t).trim(); }
+          }
         } else {
           const turmaFromMaster = lookupTurma(nomeStr, masterAlunos);
           if(turmaFromMaster) {
@@ -3591,7 +3783,9 @@ window.MedCofParser = (() => {
         const cpf = (al._cpf||"").replace(/\D/g,"");
         if (!cpf) _meta.missingCpf.push(al.nome);
         if (!al.turma) _meta.missingTurma.push(al.nome);
-        if (cpf && masterByCpf[cpf]) _meta.existingStudents.push(al.nome); else _meta.newStudents.push(al.nome);
+        const isExisting = (cpf && masterByCpf[cpf]) ||
+          (!cpf && window._masterByNome && window._masterByNome[(al.nome||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ')]);
+        if (isExisting) _meta.existingStudents.push(al.nome); else _meta.newStudents.push(al.nome);
         if (al._turmaFromMaster) _meta.turmaInherited++;
         if (al._turmaOverridden) _meta.turmaOverridden++;
       });
@@ -3722,19 +3916,23 @@ function _queryInstituicaoIES(slug) {
 // ── Busca professores excluídos por IES no Supabase ──
 window._fetchExcluidosMaster = async function(instituicao) {
   try {
-    let q = "excluidos_master?select=cpf,nome,email&limit=1000" + _queryInstituicaoIES(instituicao);
+    let q = "excluidos_master?select=id,cpf,nome,email,instituicao&limit=2000" + _queryInstituicaoIES(instituicao);
     const resp = await window._supaWrite(q, "GET", null);
     if (!resp.ok) return { cpfs: new Set(), nomes: new Set(), rows: [] };
     const rows = await resp.json();
+    const normCpf = c => {
+      const d = String(c || "").replace(/\D/g, "");
+      return d.length === 11 ? d : "";
+    };
     return {
-      cpfs: new Set(rows.map(r => (r.cpf||"").replace(/\D/g,"")).filter(Boolean)),
+      cpfs: new Set(rows.map(r => normCpf(r.cpf)).filter(Boolean)),
       nomes: new Set(rows.map(r => (r.nome||"").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ")).filter(Boolean)),
       rows
     };
   } catch(e) { console.warn("fetchExcluidosMaster:", e); return { cpfs: new Set(), nomes: new Set(), rows: [] }; }
 };
 
-// ── Busca alunos_master por IES (para lookup de turma por CPF) ──
+// ── Busca alunos_master por IES (para lookup de turma por CPF e por nome) ──
 window._fetchAlunosMasterByCpf = async function(instituicao) {
   try {
     let q = "alunos_master?select=cpf,turma,nome,codigo_aluno&limit=5000" + _queryInstituicaoIES(instituicao);
@@ -3742,7 +3940,25 @@ window._fetchAlunosMasterByCpf = async function(instituicao) {
     if (!resp.ok) return {};
     const rows = await resp.json();
     const map = {};
-    rows.forEach(r => { const cpf = (r.cpf||"").replace(/\D/g,""); if(cpf) map[cpf] = r; });
+    const nomeMap = {};
+    const nomesAmb = new Set();
+    rows.forEach(r => {
+      const cpf = (r.cpf||"").replace(/\D/g,"");
+      if (cpf) {
+        map[cpf] = r;
+        // Indexar por nome normalizado para fallback
+        const nk = (r.nome||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
+        if (nk && nk.length >= 5) {
+          if (nomeMap[nk] && nomeMap[nk].cpf !== cpf) {
+            nomesAmb.add(nk); // mesmo nome, CPFs diferentes
+          } else {
+            nomeMap[nk] = { cpf, turma: r.turma, nome: r.nome, codigo_aluno: r.codigo_aluno };
+          }
+        }
+      }
+    });
+    nomesAmb.forEach(k => delete nomeMap[k]);
+    window._masterByNome = nomeMap; // mapa separado para lookup por nome
     return map;
   } catch(e) { console.warn("fetchAlunosMasterByCpf:", e); return {}; }
 };
@@ -3767,31 +3983,43 @@ window._upsertAlunosMaster = async function(instituicao, periods, logFn) {
       ? _resolveInstituicaoNomeForAlunos(instituicao) || instituicao
       : instituicao;
   // Coletar alunos únicos por CPF (última ocorrência ganha turma)
-  const byNome = {}; // fallback para alunos sem CPF
+  // Fallback: busca CPF pelo nome quando planilha não tem CPF
+  const masterByNome = window._masterByNome || {};
+  const byNomeNoMatch = {}; // nomes sem CPF E sem match
   const byCpf = {};
+  let resolvedByName = 0;
   periods.forEach(p => {
     (p.alunos || []).forEach(al => {
-      const cpf = (al._cpf||"").replace(/\D/g,"");
+      let cpf = (al._cpf||"").replace(/\D/g,"");
       const turma = _normTurmaNr(al.turma);
+      // Fallback: sem CPF na planilha → buscar pelo nome no cadastro
+      if (!cpf && al.nome) {
+        const nk = al.nome.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
+        const matched = masterByNome[nk];
+        if (matched && matched.cpf) {
+          cpf = matched.cpf;
+          resolvedByName++;
+        }
+      }
       if (cpf) {
         if (!byCpf[cpf]) {
           const existingMaster = (window._masterByCpf || {})[cpf];
           const turmaIsInherited = al._turmaFromMaster && existingMaster?.turma && turma === _normTurmaNr(existingMaster.turma);
-          // Valor explícito de turma (batch PostgREST exige chaves iguais; herdada = repetir valor do master)
           const turmaVal = turmaIsInherited ? _normTurmaNr(existingMaster.turma) : turma;
           byCpf[cpf] = { cpf, nome: al.nome, email: al._email||null, contato: al._contato||null, codigo_aluno: al._codigo_aluno||null, instituicao: instKey, turma: turmaVal };
         } else if (turma && !byCpf[cpf].turma) {
           byCpf[cpf].turma = turma;
         }
       } else {
-        // Sem CPF — não inserir no alunos_master (CPF é obrigatório)
-        byNome[al.nome] = true;
+        byNomeNoMatch[al.nome] = true;
       }
     });
   });
+  if (resolvedByName > 0) log(`🔗 ${resolvedByName} aluno(s) identificado(s) pelo nome (CPF recuperado do cadastro)`, "ok");
+  if (Object.keys(byNomeNoMatch).length > 0) log(`⚠️ ${Object.keys(byNomeNoMatch).length} aluno(s) sem CPF e sem match por nome — não salvos no cadastro`, "warn");
   const toUpsert = Object.values(byCpf);
   if (!toUpsert.length) {
-    log("⚠️ Nenhum aluno com CPF para salvar no alunos_master. Verifique se a planilha tem coluna CPF.", "warn");
+    log("⚠️ Nenhum aluno com CPF para salvar no alunos_master. Verifique se a planilha tem coluna CPF ou se os nomes conferem com o cadastro.", "warn");
     return;
   }
   // PostgREST exige o mesmo conjunto de chaves em cada objeto do array (PGRST102)
@@ -3883,36 +4111,50 @@ window._saveEngajamentoToSupabase = async function(slug, periods, logFn) {
   }
 };
 
-// ── Salvar professores excluídos no Supabase ──
+// ── Salvar professores excluídos no Supabase (CPF obrigatório — lista negativa para métricas) ──
 window._saveExcluidosMaster = async function(instituicao, rows, logFn) {
   const log = logFn || console.log;
   if (!rows.length) return;
 
-  // Normalizar nomes para deduplicação
-  const normName = s => (s||"").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ");
-  const seen = new Set();
+  const normCpf = c => {
+    const d = String(c || "").replace(/\D/g, "");
+    return d.length === 11 ? d : "";
+  };
 
-  // Buscar excluídos existentes para não duplicar
   const existing = await window._fetchExcluidosMaster(instituicao);
-  const existingNomes = existing.nomes || new Set(); // já normalizados
+  const existingCpfs = existing.cpfs || new Set();
+  const seenCpf = new Set();
 
   const toInsert = [];
+  let skippedNoCpf = 0;
+  let skippedDup = 0;
+
   rows.forEach(r => {
     const nome = (r.nome||"").trim();
     if (!nome) return;
-    const key = normName(nome);
-    if (seen.has(key) || existingNomes.has(key)) return; // dedup
-    seen.add(key);
-    const cpf = (r._cpf||r.cpf||"").replace(/\D/g,"");
+    const cpf = normCpf(r._cpf || r.cpf);
+    if (!cpf) {
+      skippedNoCpf++;
+      return;
+    }
+    if (seenCpf.has(cpf) || existingCpfs.has(cpf)) {
+      skippedDup++;
+      return;
+    }
+    seenCpf.add(cpf);
     toInsert.push({
-      cpf: cpf || key, // usa nome normalizado como fallback para campo cpf (constraint exige não-vazio)
+      cpf,
       nome,
       email: r._email||r.email||null,
       instituicao
     });
   });
 
-  if (!toInsert.length) { log("ℹ️ Todos os professores já estão cadastrados como excluídos.", "ok"); return; }
+  if (skippedNoCpf) log(`⚠️ ${skippedNoCpf} linha(s) sem CPF válido (11 dígitos) ignorada(s).`, "warn");
+  if (!toInsert.length) {
+    log(skippedDup ? `ℹ️ Nenhum registro novo (${skippedDup} já existiam).` : "ℹ️ Todos os professores já estão cadastrados como excluídos.", "ok");
+    return;
+  }
 
   try {
     const resp = await window._supaWrite(
@@ -3993,120 +4235,231 @@ window._detectUploadMode = async function(slug) {
   if (window._renderPeriodSlots) window._renderPeriodSlots();
 };
 
-// ── Carregar e exibir professores já excluídos para a IES selecionada ──
-window._loadExcluidosPanel = async function(instituicao) {
-  const panel = document.getElementById('excluidosPanelContent');
-  const importSection = document.getElementById('exclusionImportSection');
-  if (!panel) return;
-  if (!instituicao) {
-    panel.innerHTML = '<span style="color:var(--text-muted);font-size:0.8rem">Selecione uma instituição.</span>';
-    if (importSection) importSection.style.display = 'block';
-    return;
-  }
-  panel.innerHTML = '<span style="color:var(--text-muted);font-size:0.8rem">Buscando...</span>';
-  const { rows } = await window._fetchExcluidosMaster(instituicao);
-
-  // Popular textarea manual com nomes do banco (para que a filtragem funcione mesmo sem re-importar)
-  const excTextarea = document.getElementById('exclusionList');
-  if (excTextarea) {
-    excTextarea.value = rows.map(r => r.nome).filter(Boolean).join('\n');
-  }
-
-  if (!rows.length) {
-    panel.innerHTML = '<span style="color:var(--text-muted);font-size:0.8rem">Nenhum professor excluído cadastrado. Importe a planilha abaixo para cadastrar.</span>';
-    if (importSection) importSection.style.display = 'block';
-    return;
-  }
-
-  // Mostrar lista de excluídos + manter import visível para adicionar mais
-  if (importSection) importSection.style.display = 'block';
-  const preview = rows.slice(0, 10);
-  const remaining = rows.length - preview.length;
-  panel.innerHTML = `
-    <div style="font-size:0.82rem;margin-bottom:10px">
-      <strong style="color:#dc2626">${rows.length} professor(es)</strong> <span style="color:var(--text-muted)">excluídos — serão ignorados automaticamente no upload:</span>
-    </div>
-    <details style="margin-bottom:10px">
-      <summary style="cursor:pointer;font-size:0.78rem;color:var(--text-muted);font-weight:600">Ver lista completa</summary>
-      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;max-height:200px;overflow-y:auto;padding:4px 0">
-        ${rows.map(r => `<span style="background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.25);color:#dc2626;border-radius:6px;padding:2px 8px;font-size:0.7rem;font-weight:600">${r.nome || r.cpf}</span>`).join("")}
-      </div>
-    </details>`;
+// ── Aba Usuários: professores excluídos (excluidos_master) ──
+window._profExclInited = false;
+window._initProfExclSection = function() {
+  window._profExclInited = true;
+  const sel = document.getElementById('profExclIES');
+  if (!sel || sel.options.length > 1) return;
+  const opts = (window._instData || []).map(i => `<option value="${i.slug}">${i.nome || i.slug.toUpperCase()}</option>`).join('');
+  sel.innerHTML = '<option value="">Selecione a IES...</option>' + opts;
+  if (window._curInst) sel.value = window._curInst;
 };
 
-// Preencher dados da planilha de exclusão — parser robusto
-window._loadExclusionFile = async function(file) {
+window._loadProfExclTable = async function() {
+  window._initProfExclSection();
+  const slug = document.getElementById('profExclIES')?.value || '';
+  const tbody = document.getElementById('profExclTableBody');
+  const cnt = document.getElementById('profExclCount');
+  if (!slug) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text-muted)">Selecione uma IES.</td></tr>';
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text-muted)">Carregando...</td></tr>';
+  const { rows } = await window._fetchExcluidosMaster(slug);
+  if (cnt) cnt.textContent = rows.length ? rows.length + ' cad.' : '';
+  const esc = s => String(s || '').replace(/</g, '&lt;');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text-muted)">Nenhum cadastro nesta IES. Use Importar planilha (nome e CPF obrigatórios).</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const id = r.id;
+    const cpf = String(r.cpf || '').replace(/\D/g, '');
+    const cpfFmt = cpf.length === 11 ? cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4') : esc(r.cpf);
+    return `<tr>
+      <td style="padding:8px 12px">${esc(r.nome)}</td>
+      <td style="padding:8px 12px;font-family:monospace;font-size:0.78rem">${cpfFmt}</td>
+      <td style="padding:8px 12px">${esc(r.email || '—')}</td>
+      <td style="padding:8px 12px;font-size:0.78rem">${esc(r.instituicao || '')}</td>
+      <td style="padding:8px 12px;text-align:center">
+        <button type="button" class="btn-prof-excl-del" data-id="${String(id)}" style="padding:4px 10px;border-radius:6px;border:1px solid rgba(220,38,38,0.35);background:transparent;color:#dc2626;font-size:0.72rem;cursor:pointer">Remover</button>
+      </td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('.btn-prof-excl-del').forEach(btn => {
+    btn.onclick = () => window._deleteProfExclRow(btn.getAttribute('data-id'), slug);
+  });
+};
+
+window._deleteProfExclRow = async function(id, slug) {
+  if (!id || !confirm('Remover este registro da lista de exclusão? Novos uploads passarão a considerar esse CPF/nome nas métricas.')) return;
+  try {
+    const resp = await window._supaWrite('excluidos_master?id=eq.' + encodeURIComponent(id), 'DELETE', null);
+    if (resp.ok) {
+      showToast('Registro removido.', 'success');
+      window._loadProfExclTable();
+    } else {
+      const t = await resp.text().catch(() => '');
+      showToast('Erro ao remover: ' + (t || resp.status), 'error');
+    }
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  }
+};
+
+window._handleProfExclUsersFile = async function(file) {
   if (!file) return;
-  const info = document.getElementById('exclusionFileInfo');
-  const slug = document.getElementById('updateInst')?.value || '';
-  if (!slug) { info.textContent = '❌ Selecione uma instituição primeiro.'; return; }
-  info.textContent = 'Processando planilha de exclusão...';
+  const info = document.getElementById('profExclFileInfo');
+  const slug = document.getElementById('profExclIES')?.value || '';
+  if (!slug) {
+    if (info) info.textContent = 'Selecione a IES primeiro.';
+    showToast('Selecione a IES.', 'warn');
+    return;
+  }
+  window._initProfExclSection();
+  if (info) info.textContent = 'Lendo...';
   try {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
-    const cell = (r,c) => { const a = XLSX.utils.encode_cell({r,c}); return ws[a] ? String(ws[a].v) : ''; };
-
-    // Detectar header row: busca "nome" nas primeiras 5 linhas
-    let headerRow = -1, colNome = -1, colCpf = -1, colEmail = -1;
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    const cell = (r, c) => {
+      const a = XLSX.utils.encode_cell({ r, c });
+      return ws[a] ? String(ws[a].v) : '';
+    };
+    /**
+     * CPF da célula (texto ou número Excel). Zeros à esquerda perdidos no export → 9–10 dígitos viram 11.
+     * @returns {string} 11 dígitos ou '' se inválido
+     */
+    const cpfDigitsFromCell = (r, c) => {
+      const a = XLSX.utils.encode_cell({ r, c });
+      const raw = ws[a] ? ws[a].v : '';
+      if (raw === undefined || raw === null || raw === '') return '';
+      let d = '';
+      if (typeof raw === 'number' && Number.isFinite(raw)) {
+        d = String(Math.round(raw)).replace(/\D/g, '');
+      } else {
+        d = String(raw).replace(/\D/g, '');
+      }
+      if (!d) return '';
+      if (d.length > 11) d = d.slice(-11);
+      if (d.length < 9) return '';
+      if (d.length === 11) return d;
+      return d.padStart(11, '0');
+    };
+    let headerRow = -1;
+    let colNome = -1;
+    let colCpf = -1;
+    let colEmail = -1;
     for (let r = 0; r <= Math.min(4, range.e.r); r++) {
       for (let c = range.s.c; c <= range.e.c; c++) {
-        const h = cell(r,c).trim().toLowerCase();
-        if (h.includes('nome')) { headerRow = r; colNome = c; break; }
+        const h = cell(r, c).trim().toLowerCase();
+        if (h.includes('nome')) {
+          headerRow = r;
+          colNome = c;
+          break;
+        }
       }
       if (headerRow >= 0) break;
     }
-
-    // Se não achou "nome", tentar coluna B (índice 1) como nome genérico
     if (headerRow < 0) {
       headerRow = 0;
-      colNome = 1; // assume ID=0, Nome=1 (formato mais comum)
+      colNome = 1;
     }
-
-    // Detectar CPF e Email na mesma header row
     for (let c = range.s.c; c <= range.e.c; c++) {
       const h = cell(headerRow, c).trim().toLowerCase();
       if (h.includes('cpf') && colCpf < 0) colCpf = c;
       else if ((h === 'email' || h.includes('e-mail') || h.includes('e mail')) && colEmail < 0) colEmail = c;
     }
-
-    console.log(`[Exclusion] header=${headerRow}, nome=${colNome}, cpf=${colCpf}, email=${colEmail}`);
-
-    // Ler todas as linhas
     const allRows = [];
     for (let r = headerRow + 1; r <= range.e.r; r++) {
       const nome = cell(r, colNome).trim();
       if (!nome || nome.length < 2) continue;
-      // Pular se parece ser header duplicado
       if (nome.toLowerCase() === 'nome' || nome.toLowerCase() === 'id') continue;
-      const cpf = colCpf >= 0 ? cell(r, colCpf).replace(/\D/g, '') : '';
+      const cpf = colCpf >= 0 ? cpfDigitsFromCell(r, colCpf) : '';
       const email = colEmail >= 0 ? cell(r, colEmail).trim().toLowerCase() : '';
       allRows.push({ nome, _cpf: cpf, _email: email });
     }
-
-    if (!allRows.length) { info.textContent = '❌ Nenhuma linha encontrada na planilha.'; return; }
-
-    console.log(`[Exclusion] ${allRows.length} rows parsed. First: ${allRows[0].nome}, Last: ${allRows[allRows.length-1].nome}`);
-
-    // Salvar AUTOMATICAMENTE no excluidos_master
-    info.textContent = `Salvando ${allRows.length} professor(es) no Supabase...`;
-    await window._saveExcluidosMaster(slug, allRows, (msg, type) => {
+    if (!allRows.length) {
+      if (info) info.textContent = 'Nenhuma linha válida.';
+      return;
+    }
+    let skippedCpf = 0;
+    const validRows = [];
+    allRows.forEach(r => {
+      const cpf = String(r._cpf || '');
+      if (cpf.length !== 11) {
+        skippedCpf++;
+        return;
+      }
+      validRows.push({ nome: r.nome, _cpf: cpf, _email: r._email });
+    });
+    if (!validRows.length) {
+      if (info) info.textContent = 'Nenhum CPF válido (11 dígitos).';
+      showToast('CPF obrigatório em cada linha.', 'warn');
+      return;
+    }
+    if (info) info.textContent = 'Salvando...';
+    await window._saveExcluidosMaster(slug, validRows, (msg, type) => {
       if (type === 'ok') showToast(msg, 'success');
       else if (type === 'warn') showToast(msg, 'warn');
-      else console.log('[Exclusion]', msg);
     });
-
-    // Recarregar painel para mostrar lista atualizada
-    await window._loadExcluidosPanel(slug);
-
-    info.textContent = `✅ ${allRows.length} professor(es) importado(s) e salvo(s) de "${file.name}"`;
-    showToast(`${allRows.length} professores salvos para exclusão`, 'success');
-  } catch(err) {
-    info.textContent = '❌ Erro: ' + err.message;
-    console.error('Exclusion import error:', err);
-    showToast('Erro na importação: ' + err.message, 'error');
+    await window._loadProfExclTable();
+    const sk = skippedCpf ? ' (' + skippedCpf + ' ignoradas)' : '';
+    if (info) info.textContent = '✅ ' + validRows.length + ' salvo(s)' + sk;
+    showToast(validRows.length + ' registro(s) na lista de exclusão', 'success');
+  } catch (e) {
+    if (info) info.textContent = 'Erro: ' + e.message;
+    showToast(e.message, 'error');
   }
+};
+
+/**
+ * Abre aba Usuários e a seção Professores — lista de exclusão para cadastro (CPF).
+ * @param {string} slugHint slug da IES para pré-selecionar no dropdown
+ */
+window._goToProfExclCadastro = function(slugHint) {
+  document.querySelectorAll('.dash-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  const ut = document.querySelector('.dash-tab[data-tab="users"]');
+  const tp = document.getElementById('tab-users');
+  if (ut) ut.classList.add('active');
+  if (tp) tp.classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  const mainBody = document.getElementById('usersTabMainBody');
+  if (mainBody && mainBody.style.display === 'none') {
+    mainBody.style.display = 'block';
+    const hdr = mainBody.previousElementSibling;
+    const chev = hdr && hdr.querySelector('.collapse-chev');
+    if (chev) chev.textContent = '▲';
+  }
+  const peBody = document.getElementById('profExclBody');
+  if (peBody) {
+    peBody.style.display = 'block';
+    const hdr = peBody.previousElementSibling;
+    const chev = hdr && hdr.querySelector('.pe-chev');
+    if (chev) chev.textContent = '▲';
+  }
+  if (typeof window._initProfExclSection === 'function') window._initProfExclSection();
+  const sel = document.getElementById('profExclIES');
+  if (sel && slugHint) {
+    const has = Array.from(sel.options).some(o => o.value === slugHint);
+    if (has) sel.value = slugHint;
+  }
+  if (typeof window._loadProfExclTable === 'function' && slugHint) {
+    setTimeout(() => window._loadProfExclTable(), 50);
+  }
+};
+
+/**
+ * Confirma se a lista de exclusão de professores foi atualizada antes do upload.
+ * @param {string} slugHint slug da IES para direcionar o cadastro se o usuário cancelar
+ * @returns {boolean} true = continuar upload; false = cancelou para ir cadastrar
+ */
+window._confirmProfExclListBeforeUpload = function(slugHint) {
+  const msg =
+    'Você já atualizou a lista de exclusão de professores?\n\n' +
+    'Ela evita que professores entrem nas métricas (aba Usuários → Professores — CPF obrigatório).\n\n' +
+    '• OK = Sim, continuar com o upload\n' +
+    '• Cancelar = Não — preciso cadastrar antes (abrir a seção de cadastro)';
+  const continuar = window.confirm(msg);
+  if (!continuar) {
+    window._goToProfExclCadastro(slugHint || '');
+    showToast('Cadastre a lista de exclusão de professores antes de publicar o engajamento.', 'warn');
+  }
+  return continuar;
 };
 </script>
 
@@ -4322,12 +4675,7 @@ window._loadExclusionFile = async function(file) {
     window._generatePeriodSlots();
     // Desmarcar "substituir todos"
     if ($("chkReplaceAll")) $("chkReplaceAll").checked = false;
-    // Limpar exclusão manual
     if ($("exclusionList")) $("exclusionList").value = "";
-    if ($("exclusionFileInfo")) $("exclusionFileInfo").textContent = "";
-    if ($("exclusionPreviewPanel")) $("exclusionPreviewPanel").innerHTML = "";
-    // Limpar painel de excluídos
-    if ($("excluidosPanelContent")) $("excluidosPanelContent").innerHTML = '<span style="color:var(--text-muted);font-size:0.8rem">Selecione uma instituição.</span>';
     // Esconder preview, log, banners e validação
     if ($("previewCard")) $("previewCard").style.display = "none";
     if ($("processLog")) { $("processLog").innerHTML = ""; $("processLog").style.display = "none"; }
@@ -4338,6 +4686,7 @@ window._loadExclusionFile = async function(file) {
     if ($("newTurmaInput")) $("newTurmaInput").value = "";
     window._uploadMode = null;
     window._masterByCpf = {};
+    window._masterByNome = {};
     window._selectedMode = null;
     // Voltar para etapa 0
     ['uploadStep0','uploadStep1','uploadStep2'].forEach((id,i) => {
@@ -4425,53 +4774,7 @@ window._loadExclusionFile = async function(file) {
       if ($('newTurmaInput')) $('newTurmaInput').value = '';
       // Configurar turmaOverride nos slots
       window._generatePeriodSlots();
-      // Carregar excluídos
-      const slug = $('updateInst').value;
-      if (slug && window._loadExcluidosPanel) window._loadExcluidosPanel(slug);
     }, 150);
-  };
-
-  // ── Importar planilha de exclusão ──────────────────────────────
-  window._loadExclusionFile = function(file) {
-    if (!file) return;
-    const info = document.getElementById('exclusionFileInfo');
-    info.textContent = 'Carregando...';
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      try {
-        let names = [];
-        if (file.name.endsWith('.csv')) {
-          const lines = e.target.result.split(/\r?\n/).filter(l => l.trim());
-          // Skip header if first line looks like a header
-          const start = /nome|name|aluno/i.test(lines[0]) ? 1 : 0;
-          for (let i = start; i < lines.length; i++) {
-            const cols = lines[i].split(/[,;\t]/);
-            const name = (cols[0] || '').trim().replace(/^["']|["']$/g, '');
-            if (name) names.push(name);
-          }
-        } else {
-          const wb = XLSX.read(e.target.result, { type: 'array' });
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
-          const firstKey = Object.keys(json[0] || {})[0];
-          json.forEach(row => {
-            const val = String(firstKey ? row[firstKey] : '').trim();
-            if (val) names.push(val);
-          });
-        }
-        // Append to textarea (below existing manual entries)
-        const ta = document.getElementById('exclusionList');
-        const existing = ta.value.trim();
-        ta.value = (existing ? existing + '\n' : '') + names.join('\n');
-        const prev = info.dataset.total ? parseInt(info.dataset.total) : 0;
-        info.dataset.total = prev + names.length;
-        info.textContent = `✅ ${names.length} nome(s) de "${file.name}"${prev > 0 ? ` (+${prev} anteriores)` : ''}`;
-      } catch(err) {
-        info.textContent = '❌ Erro: ' + err.message;
-      }
-    };
-    if (file.name.endsWith('.csv')) reader.readAsText(file);
-    else reader.readAsArrayBuffer(file);
   };
 
   function setupUploadZone(zoneId, fileInputId, defaultIcon, onFile) {
@@ -4618,19 +4921,13 @@ window._loadExclusionFile = async function(file) {
       await window._detectUploadMode(slug);
       // Mostrar grid de opções
       if (grid) grid.style.display = 'grid';
-      // Carregar excluídos imediatamente ao selecionar IES
-      if (typeof window._loadExcluidosPanel === 'function') {
-        await window._loadExcluidosPanel(slug);
-      }
     } else {
       const banner = $("uploadModeBanner");
       if (banner) banner.style.display = "none";
       if (grid) grid.style.display = "none";
       window._uploadMode = null;
       window._masterByCpf = {};
-      // Limpar painel de excluídos
-      const excPanel = $("excluidosPanelContent");
-      if (excPanel) excPanel.innerHTML = '<div style="font-size:0.82rem;color:var(--text-muted)">Selecione uma instituição para ver os excluídos.</div>';
+    window._masterByNome = {};
     }
   });
 
@@ -4737,6 +5034,8 @@ window._loadExclusionFile = async function(file) {
     // Coletar slots (visão plana: um item por arquivo de turma)
     const slots = _getFlatSlots();
     if(!slots.length){log("Envie pelo menos uma planilha de seguimento","err");return;}
+
+    if (typeof window._confirmProfExclListBeforeUpload === 'function' && !window._confirmProfExclListBeforeUpload(slug)) return;
 
     // ── Validação pré-processamento ──
     const validation = window._runPreflightValidation(slots);
@@ -5012,17 +5311,26 @@ window._loadExclusionFile = async function(file) {
 
       // ── Gravar no Supabase (engajamento + alunos) ──
       log(`\n📡 Salvando no Supabase...`, "ok");
+      let engSaveOk = false;
       if (window._saveEngajamentoToSupabase) {
-        await window._saveEngajamentoToSupabase(slug, parsedPeriods, log);
+        const engResult = await window._saveEngajamentoToSupabase(slug, parsedPeriods, log);
+        engSaveOk = engResult?.ok === true;
       }
       if (window._upsertAlunosMaster) {
         await window._upsertAlunosMaster(slug, parsedPeriods, log);
       }
-      log(`\n🎉 Dados publicados! O dashboard já está atualizado.`, "ok");
 
-      showToast(`${totalAlunosProcessed.size} alunos atualizados no Supabase`, 'success');
-      $("successBanner").classList.add("visible");
-      $("successText").innerHTML = `<strong>Dados publicados!</strong> ${parsedPeriods.length} período(s) e ${totalAlunosProcessed.size} alunos gravados no Supabase. O dashboard já está atualizado.`;
+      if (engSaveOk) {
+        log(`\n🎉 Dados publicados! O dashboard já está atualizado.`, "ok");
+        showToast(`${totalAlunosProcessed.size} alunos atualizados no Supabase`, 'success');
+        $("successBanner").classList.add("visible");
+        $("successText").innerHTML = `<strong>Dados publicados!</strong> ${parsedPeriods.length} período(s) e ${totalAlunosProcessed.size} alunos gravados no Supabase. O dashboard já está atualizado.`;
+      } else {
+        log(`\n❌ ERRO: O engajamento NÃO foi salvo no Supabase. Verifique se sua sessão está ativa e tente novamente.`, "err");
+        showToast(`Erro ao salvar engajamento — sessão pode ter expirado`, 'error');
+        $("successBanner").classList.add("visible");
+        $("successText").innerHTML = `<strong style="color:#dc2626">Atenção:</strong> O processamento concluiu mas o engajamento <strong>NÃO foi gravado</strong> no Supabase. Faça login novamente e reprocesse.`;
+      }
       renderPreview(parsedPeriods);
       window._refreshInstGrid?.();
       // Esconder etapa 1, mostrar preview
@@ -5429,6 +5737,7 @@ window._netlifyDeploy = async function(filesObj, progressEl, onSuccess) {
 
     if(!name||!slug){alert("Preencha nome e slug.");return;}
     if(!regSegFiles.length){alert("Envie pelo menos uma planilha B2B.");return;}
+    if (typeof window._confirmProfExclListBeforeUpload === 'function' && !window._confirmProfExclListBeforeUpload(slug)) return;
 
     const logArea=$("regLog"); logArea.style.display="block"; logArea.innerHTML="";
     function log(msg,type="") { const d=document.createElement("div"); if(type) d.className="log-"+type; d.textContent=msg; logArea.appendChild(d); logArea.scrollTop=logArea.scrollHeight; }
@@ -6757,9 +7066,12 @@ async function openUserModal(email, nome, role, inst, ativo, iesResponsavel) {
 
   // Reagir a mudança de role para mostrar/ocultar IES
   document.getElementById('modalRole').onchange = function() {
+    if (this.disabled) return;
     const show = this.value === 'admin' || this.value === 'superadmin';
     if (iesField) iesField.style.display = show ? 'block' : 'none';
   };
+
+  _applyUserRoleSelectUI(role || 'coordenador');
 
   document.getElementById('userEditModal').style.display = 'flex';
 }
@@ -6771,11 +7083,18 @@ function closeUserModal() {
 
 async function saveUserEdit() {
   if (!editingUserId) return;
-  const role = document.getElementById('modalRole').value;
+  const roleEl = document.getElementById('modalRole');
+  const role = roleEl.value;
   const inst = document.getElementById('modalInst').value;
   const ativo = document.getElementById('modalStatus').value === 'active';
   const btn = document.getElementById('modalSaveBtn');
   const feedback = document.getElementById('modalFeedback');
+
+  if (!document.body.classList.contains('is-superadmin') && role === 'admin') {
+    feedback.style.color = 'var(--accent)';
+    feedback.textContent = 'Apenas superadmin pode atribuir a função admin.';
+    return;
+  }
 
   btn.disabled = true;
   btn.textContent = 'Salvando...';
@@ -6798,10 +7117,13 @@ async function saveUserEdit() {
     const payload = { email: editingUserId, role, instituicao: inst, ativo, instituicoes_responsavel: iesResp };
     if (newSenha) payload.password = newSenha;
 
+    const token = await window._getAdminToken();
+    if (!token) throw new Error('Sessão expirada — faça login novamente.');
+
     // Chamar Netlify Function que atualiza TANTO a whitelist QUANTO o user_metadata do Auth
     const resp = await fetch('/.netlify/functions/update-user', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify(payload)
     });
 
@@ -6835,6 +7157,31 @@ function _updateInstRequired() {
   if (req) req.style.display = needsInst ? '' : 'none';
 }
 
+/**
+ * Opção Admin só para superadmin; edição de perfil admin bloqueia troca de função para não-superadmin.
+ * @param {string|null} editingRole - role do usuário no modal de edição, ou null no fluxo de criação
+ */
+function _applyUserRoleSelectUI(editingRole) {
+  const isSa = document.body.classList.contains('is-superadmin');
+  const createSel = document.getElementById('createRole');
+  const modalSel = document.getElementById('modalRole');
+  if (createSel) {
+    const adminOpt = createSel.querySelector('option[value="admin"]');
+    if (adminOpt) {
+      adminOpt.hidden = !isSa;
+      adminOpt.disabled = !isSa;
+    }
+  }
+  if (modalSel) {
+    const adminOpt = modalSel.querySelector('option[value="admin"]');
+    if (adminOpt) {
+      adminOpt.hidden = !isSa;
+      adminOpt.disabled = !isSa;
+    }
+    modalSel.disabled = !isSa && editingRole === 'admin';
+  }
+}
+
 function openCreateUserModal() {
   document.getElementById('createNome').value = '';
   document.getElementById('createEmail').value = '';
@@ -6843,6 +7190,7 @@ function openCreateUserModal() {
   document.getElementById('createSenha').value = '';
   document.getElementById('createUserFeedback').textContent = '';
   _updateInstRequired();
+  _applyUserRoleSelectUI(null);
   document.getElementById('createUserModal').style.display = 'flex';
   setTimeout(() => document.getElementById('createNome').focus(), 100);
 }
@@ -6877,6 +7225,11 @@ async function submitCreateUser() {
   if (!email || !email.includes('@')) { feedback.style.color='var(--accent)'; feedback.textContent='Informe um e-mail válido.'; return; }
   if (!instituicao && role === 'coordenador') { feedback.style.color='var(--accent)'; feedback.textContent='Selecione a instituição.'; return; }
   if (!senha || senha.length < 8) { feedback.style.color='var(--accent)'; feedback.textContent='A senha deve ter no mínimo 8 caracteres.'; return; }
+  if (!document.body.classList.contains('is-superadmin') && role === 'admin') {
+    feedback.style.color = 'var(--accent)';
+    feedback.textContent = 'Apenas superadmin pode atribuir a função admin.';
+    return;
+  }
 
   btn.disabled = true;
   btn.textContent = 'Criando...';
@@ -6884,9 +7237,12 @@ async function submitCreateUser() {
   feedback.textContent = 'Criando usuário...';
 
   try {
+    const token = await window._getAdminToken();
+    if (!token) throw new Error('Sessão expirada — faça login novamente.');
+
     const resp = await fetch('/.netlify/functions/create-user', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ nome, email, role, instituicao, senha })
     });
 
@@ -6963,23 +7319,14 @@ document.getElementById('userEditModal').addEventListener('click', function(e) {
 
 // Função reutilizável para expandir e carregar usuários/alunos
 function _autoExpandUsersTab() {
-  // Auto-expand users table and load if empty
-  const wrap = document.getElementById('usersTableWrap');
-  if (wrap && wrap.style.display === 'none') {
-    wrap.style.display = 'block';
-    const chev = wrap.previousElementSibling?.querySelector('.collapse-chev');
+  const mainBody = document.getElementById('usersTabMainBody');
+  if (mainBody && mainBody.style.display === 'none') {
+    mainBody.style.display = 'block';
+    const hdr = mainBody.previousElementSibling;
+    const chev = hdr && hdr.querySelector('.collapse-chev');
     if (chev) chev.textContent = '▲';
   }
   if (allUsers.length === 0) loadUsers();
-
-  // Auto-expand alunos section and load if not loaded
-  const alunosBody = document.getElementById('alunosBody');
-  if (alunosBody && alunosBody.style.display === 'none') {
-    alunosBody.style.display = 'block';
-    const achev = alunosBody.parentElement?.querySelector('.a-chev');
-    if (achev) achev.textContent = '▲';
-  }
-  if (!window._alunosLoaded) window._loadAlunosMaster();
 }
 
 // Carregar e expandir usuários e alunos automaticamente ao abrir a aba
@@ -8302,6 +8649,40 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
           </div>
         </div>
 
+        <!-- Step 1.5: Confirmação da Média IES -->
+        <div id="_reviewStepMedia" style="display:none">
+          <div style="background:rgba(59,130,246,0.08);border:1.5px solid rgba(59,130,246,0.3);border-radius:12px;padding:20px;margin-bottom:20px">
+            <div style="font-weight:700;color:#3b82f6;font-size:0.95rem;margin-bottom:10px">📊 Confirmação da Média IES no Boletim</div>
+            <div style="font-size:0.82rem;color:var(--text);line-height:1.7">
+              A média abaixo será exibida no <strong>boletim do aluno</strong> como a média da IES.
+              <br>Confira se está correta. Se não, desmarque e insira o valor correto.
+            </div>
+          </div>
+          <div style="background:var(--bg-elevated);border:1.5px solid var(--border-subtle);border-radius:12px;padding:20px;margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+              <div style="font-size:0.75rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">Média IES detectada</div>
+              <div id="_reviewMediaDetected" style="font-size:1.5rem;font-weight:800">—</div>
+              <div id="_reviewMediaSource" style="font-size:0.72rem;color:var(--text-muted);background:var(--bg-card);padding:3px 8px;border-radius:6px"></div>
+            </div>
+            <div style="margin-top:12px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;font-weight:600;color:var(--text)">
+                <input type="checkbox" id="_reviewMediaConfirm" checked style="accent-color:#3b82f6;width:18px;height:18px"> Confirmo que esta média está correta
+              </label>
+            </div>
+            <div id="_reviewMediaManualWrap" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border-subtle)">
+              <label style="font-size:0.82rem;font-weight:600;color:var(--text);display:block;margin-bottom:6px">
+                Insira a média correta da IES (0 a 100):
+              </label>
+              <input type="number" id="_reviewMediaManual" min="0" max="100" step="0.1" placeholder="Ex: 52.3" style="width:200px;padding:10px 14px;border-radius:8px;border:1.5px solid rgba(59,130,246,0.4);background:var(--bg-card);color:var(--text);font-size:1rem;font-weight:700" />
+              <div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px">Este valor substituirá a média detectada no boletim.</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;padding-top:16px;border-top:1px solid var(--border-subtle)">
+            <button id="_reviewMediaBackBtn" style="padding:10px 20px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-elevated);color:var(--text);font-weight:600;cursor:pointer;font-size:0.85rem">← Voltar</button>
+            <button id="_reviewMediaNextBtn" style="padding:10px 24px;border-radius:10px;border:none;background:var(--accent,#3b82f6);color:#fff;font-weight:700;cursor:pointer;font-size:0.85rem">Confirmar média →</button>
+          </div>
+        </div>
+
         <!-- Step 2: Confirmação final -->
         <div id="_reviewStep2" style="display:none">
           <div style="background:rgba(234,179,8,0.08);border:1.5px solid rgba(234,179,8,0.3);border-radius:12px;padding:20px;margin-bottom:20px">
@@ -8339,22 +8720,77 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       modal.querySelector('#_reviewCancelBtn').addEventListener('click', () => closeModal({ confirmed: false }));
       overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal({ confirmed: false }); });
 
-      // Step 1 → Step 2
+      // Track chosen values across steps
+      let _chosenSource = null;
+      let _chosenAnulTrat = null;
+      let _chosenMediaIes = null;
+
+      // Step 1 → Step Media (confirmação da média)
       modal.querySelector('#_reviewNextBtn').addEventListener('click', () => {
-        const source = isAprim ? 'planilha' : ((modal.querySelector('input[name="_reviewNotaSource"]:checked')?.value) || (temPlanilha ? 'planilha' : 'calculada'));
-        const chosenAnulTrat = modal.querySelector('input[name="_reviewAnuladaTrat"]:checked')?.value || anuladaTrat;
-        const anulTratLabel = chosenAnulTrat === 'creditar' ? 'creditadas' : chosenAnulTrat === 'excluir' ? 'excluídas do denominador' : 'ignoradas (questão normal)';
-        const chosenMedia = source === 'planilha' && mediaPlan != null ? mediaPlan : mediaCalc;
+        _chosenSource = isAprim ? 'planilha' : ((modal.querySelector('input[name="_reviewNotaSource"]:checked')?.value) || (temPlanilha ? 'planilha' : 'calculada'));
+        _chosenAnulTrat = modal.querySelector('input[name="_reviewAnuladaTrat"]:checked')?.value || anuladaTrat;
+        const detectedMedia = _chosenSource === 'planilha' && mediaPlan != null ? mediaPlan : mediaCalc;
+        const sourceLabel = isAprim && formatInfo.mediaFromPlanilha != null ? 'planilha aprimorada (linha de metadados)'
+          : _chosenSource === 'planilha' ? 'média dos alunos (coluna da planilha)'
+          : 'calculada a partir das respostas';
+
+        modal.querySelector('#_reviewMediaDetected').textContent = detectedMedia != null ? detectedMedia.toFixed(1) + '%' : '—';
+        modal.querySelector('#_reviewMediaDetected').style.color = detectedMedia != null ? _fc(detectedMedia) : 'var(--text)';
+        modal.querySelector('#_reviewMediaSource').textContent = 'Fonte: ' + sourceLabel;
+
+        // Toggle manual input
+        const chk = modal.querySelector('#_reviewMediaConfirm');
+        const manualWrap = modal.querySelector('#_reviewMediaManualWrap');
+        const manualInput = modal.querySelector('#_reviewMediaManual');
+        chk.checked = true;
+        manualWrap.style.display = 'none';
+        manualInput.value = '';
+
+        chk.addEventListener('change', () => {
+          manualWrap.style.display = chk.checked ? 'none' : 'block';
+          if (!chk.checked) manualInput.focus();
+        });
+
+        modal.querySelector('#_reviewStep1').style.display = 'none';
+        modal.querySelector('#_reviewStepMedia').style.display = 'block';
+      });
+
+      // Step Media → back to Step 1
+      modal.querySelector('#_reviewMediaBackBtn').addEventListener('click', () => {
+        modal.querySelector('#_reviewStepMedia').style.display = 'none';
+        modal.querySelector('#_reviewStep1').style.display = 'block';
+      });
+
+      // Step Media → Step 2 (confirmação final)
+      modal.querySelector('#_reviewMediaNextBtn').addEventListener('click', () => {
+        const chk = modal.querySelector('#_reviewMediaConfirm');
+        const manualInput = modal.querySelector('#_reviewMediaManual');
+        const detectedMedia = _chosenSource === 'planilha' && mediaPlan != null ? mediaPlan : mediaCalc;
+
+        if (!chk.checked) {
+          const manualVal = parseFloat(manualInput.value);
+          if (isNaN(manualVal) || manualVal < 0 || manualVal > 100) {
+            manualInput.style.borderColor = '#dc2626';
+            manualInput.focus();
+            return;
+          }
+          _chosenMediaIes = Math.round(manualVal * 10) / 10;
+        } else {
+          _chosenMediaIes = detectedMedia;
+        }
+
+        const anulTratLabel = _chosenAnulTrat === 'creditar' ? 'creditadas' : _chosenAnulTrat === 'excluir' ? 'excluídas do denominador' : 'ignoradas (questão normal)';
+        const mediaLabel = !chk.checked ? `${fmtP(_chosenMediaIes)} (inserida manualmente)` : fmtP(_chosenMediaIes);
 
         modal.querySelector('#_reviewFinalSummary').innerHTML = `
           ✅ <strong>${studentsData.length}</strong> alunos serão gravados<br>
-          ✅ Fonte de nota: <strong>${source === 'planilha' ? 'coluna da planilha (Remark/Excel)' : 'calculada'}</strong><br>
-          ✅ Média IES final: <strong style="color:${_fc(chosenMedia)}">${fmtP(chosenMedia)}</strong><br>
+          ✅ Fonte de nota: <strong>${_chosenSource === 'planilha' ? 'coluna da planilha (Remark/Excel)' : 'calculada'}</strong><br>
+          ✅ Média IES no boletim: <strong style="color:${_fc(_chosenMediaIes)}">${mediaLabel}</strong><br>
           ✅ Turmas: ${turmaStats.map(t => t.label + ' (' + t.n + ')').join(', ')}
           ${anuladasCount > 0 ? '<br>✅ Questões anuladas: <strong>' + anuladasCount + '</strong> — tratamento: <strong>' + anulTratLabel + '</strong>' : ''}
         `;
 
-        modal.querySelector('#_reviewStep1').style.display = 'none';
+        modal.querySelector('#_reviewStepMedia').style.display = 'none';
         modal.querySelector('#_reviewStep2').style.display = 'block';
 
         // Enable final button only when slug matches
@@ -8369,14 +8805,14 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
         finalBtn.addEventListener('click', () => {
           if (finalBtn.disabled) return;
-          closeModal({ confirmed: true, notaSource: source, anuladaTrat: chosenAnulTrat });
+          closeModal({ confirmed: true, notaSource: _chosenSource, anuladaTrat: _chosenAnulTrat, mediaIesOverride: _chosenMediaIes });
         });
       });
 
-      // Step 2 → Step 1
+      // Step 2 → Step Media
       modal.querySelector('#_reviewBackBtn').addEventListener('click', () => {
-        modal.querySelector('#_reviewStep1').style.display = 'block';
         modal.querySelector('#_reviewStep2').style.display = 'none';
+        modal.querySelector('#_reviewStepMedia').style.display = 'block';
       });
     });
   }
@@ -8464,8 +8900,45 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
   }
 
   /**
+   * Normaliza nome para lookup: remove acentos, uppercase, colapsa espaços.
+   * @returns {string} nome normalizado
+   */
+  function _normalizeNomeForLookup(nome) {
+    if (!nome) return '';
+    return nome.trim().toUpperCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ');
+  }
+
+  /**
+   * Tenta match por nome normalizado no mapa nomeToAluno.
+   * Retorna { cpf, nome, turma } ou null.
+   * Só aceita match ÚNICO (exato). Se ambíguo, retorna null.
+   */
+  function _matchAlunoByNome(nomeRaw, nomeToAluno) {
+    if (!nomeRaw || !nomeToAluno) return null;
+    const key = _normalizeNomeForLookup(nomeRaw);
+    if (!key || key.length < 5) return null;
+    // 1) Match exato normalizado
+    if (nomeToAluno[key]) return nomeToAluno[key];
+    // 2) Match por primeiro + último nome (só se único)
+    const parts = key.split(' ');
+    if (parts.length < 2) return null;
+    const first = parts[0], last = parts[parts.length - 1];
+    const candidates = [];
+    for (const [k, v] of Object.entries(nomeToAluno)) {
+      const kParts = k.split(' ');
+      if (kParts.length >= 2 && kParts[0] === first && kParts[kParts.length - 1] === last) {
+        candidates.push(v);
+      }
+    }
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  /**
    * CPF na coluna A: aceita formatado, número Excel e só dígitos.
-   * @returns {string|null} 11 dígitos ou null
+   * Excel exporta como número e apaga zeros à esquerda: 10 dígitos → falta um "0" no início; 9 → faltam dois.
+   * @returns {string|null} 11 dígitos (normalizado) ou null
    */
   function _bqCpfFromCell(raw) {
     if (raw === undefined || raw === null || raw === "") return null;
@@ -8477,8 +8950,10 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     }
     if (!d) return null;
     if (d.length > 11) d = d.slice(-11);
-    if (d.length < 10) return null;
-    return d.length === 11 ? d : d.padStart(11, "0");
+    if (d.length < 9) return null;
+    if (d.length === 11) return d;
+    // 9 ou 10 dígitos: reconstituir 11 (ex.: 10 dígitos → um "0" à esquerda; depois o lookup no master usa este CPF)
+    return d.padStart(11, "0");
   }
 
   /**
@@ -8604,8 +9079,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       result.studentStartRow = result.headerRow + 2;
       // Count students
       for (let i = result.studentStartRow; i < rows.length; i++) {
-        const cpf = String(rows[i]?.[0] || '').replace(/\D/g, '');
-        if (cpf.length >= 11) result.totalStudents++;
+        if (_bqCpfFromCell(rows[i]?.[0])) result.totalStudents++;
       }
       return result;
     }
@@ -8633,9 +9107,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
           mediaRow = i;
         }
 
-        // Check if this is a student row (CPF in col A)
-        const cpfClean = cellA.replace(/\D/g, '');
-        if (cpfClean.length >= 11 && result.studentStartRow < 0) {
+        // Check if this is a student row (CPF in col A — inclui 9–10 dígitos sem zeros à esquerda)
+        if (_bqCpfFromCell(rows[i]?.[0]) && result.studentStartRow < 0) {
           result.studentStartRow = i;
           break;
         }
@@ -8653,8 +9126,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       // Count students
       if (result.studentStartRow >= 0) {
         for (let i = result.studentStartRow; i < rows.length; i++) {
-          const cpf = String(rows[i]?.[0] || '').replace(/\D/g, '');
-          if (cpf.length >= 11) result.totalStudents++;
+          if (_bqCpfFromCell(rows[i]?.[0])) result.totalStudents++;
         }
       }
 
@@ -8669,8 +9141,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       result.gabaritoRow = result.headerRow + 1;
       result.studentStartRow = result.headerRow + 2;
       for (let i = result.studentStartRow; i < rows.length; i++) {
-        const cpf = String(rows[i]?.[0] || '').replace(/\D/g, '');
-        if (cpf.length >= 11) result.totalStudents++;
+        if (_bqCpfFromCell(rows[i]?.[0])) result.totalStudents++;
       }
     }
 
@@ -9301,82 +9772,115 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       // ── 10. Lookup CPF → {nome, turma} em alunos_master
       // Tenta slug exato, depois base do slug (ex: uninassau-cacoal → UNINASSAU),
       // depois ilike para cobrir variações de capitalização/sufixo
-      simLog(logId, "🔍 Carregando cadastro de alunos por CPF...");
+      simLog(logId, "🔍 Carregando cadastro de alunos por CPF e nome...");
       let cpfToAluno = {}; // cpf → {nome, turma}
+      let nomeToAluno = {}; // nome_normalizado → {cpf, nome, turma}
       try {
-        const slugBase  = slug.split('-')[0].toUpperCase(); // uninassau-cacoal → UNINASSAU
+        const slugBase  = slug.split('-')[0].toUpperCase();
         const slugUpper = slug.toUpperCase();
+        const slugAsName = slug.replace(/-/g, ' ').toUpperCase();
+        const slugSpecificPattern = '*' + slug.split('-').map(s => s.toUpperCase()).join('*') + '*';
 
-        // Tentar com turma primeiro; se falhar, tentar sem turma (coluna pode não existir)
-        const _fetchAlunos = async (fields, filter) => {
+        const _fetchAlunosBq = async (query) => {
           try {
-            return await _supaRestAdmin('alunos_master', `select=${fields}&${filter}&cpf=not.is.null&limit=5000`);
+            return await _supaRestAdmin('alunos_master', query);
           } catch { return []; }
         };
 
-        // Variante mais provável: slug com hífens → espaços uppercase (ex: "uninassau-cacoal" → "UNINASSAU CACOAL")
-        // Esta é a forma como os nomes são armazenados no banco para instituições compostas.
-        const slugAsName = slug.replace(/-/g, ' ').toUpperCase(); // "UNINASSAU CACOAL"
-        // ilike específico usando todos os segmentos do slug (ex: *UNINASSAU*CACOAL*) para evitar o limite de 1000 rows
-        const slugSpecificPattern = '*' + slug.split('-').map(s => s.toUpperCase()).join('*') + '*';
+        // 1) Mesmo critério de engajamento/exclusões: slug OU nome oficial da IES (window._instData)
+        const instQ = typeof _queryInstituicaoIES === 'function'
+          ? _queryInstituicaoIES(slug)
+          : `&instituicao=eq.${encodeURIComponent(slug)}`;
+        let allAlunos = await _fetchAlunosBq(`select=nome,cpf,turma&cpf=not.is.null&limit=5000${instQ}`);
 
-        // Filtros específicos em ordem de prioridade:
-        // 1. Exact: "UNINASSAU CACOAL" (slug hífens→espaços uppercase — forma padrão do banco)
-        // 2. Exact: slug literal, UPPERCASE
-        // 3. ilike específico com todos os segmentos: *UNINASSAU*CACOAL* (evita limite 1000 rows)
-        // O ilike amplo (*UNINASSAU*) só é usado como último recurso pois pode ultrapassar o limite
-        // de 1000 rows do Supabase e excluir alunos de IES que estejam além desse corte.
-        const specificFilters = [
-          `instituicao=eq.${encodeURIComponent(slugAsName)}`,
-          `instituicao=eq.${encodeURIComponent(slug)}`,
-          `instituicao=eq.${encodeURIComponent(slugUpper)}`,
-          `instituicao=ilike.${encodeURIComponent(slugSpecificPattern)}`,
-        ];
-        const broadFallback = `instituicao=ilike.${encodeURIComponent('*'+slugBase+'*')}`;
-
-        let allAlunos = [];
-        // Para cada variante de fields, tenta os filtros específicos em sequência;
-        // só usa o broad ilike se todos os específicos retornarem vazio.
-        for (const fields of ['nome,cpf,turma', 'nome,cpf']) {
-          for (const f of specificFilters) {
-            const rows = await _fetchAlunos(fields, f);
-            if (rows.length > 0) { allAlunos = rows; break; }
+        // 2) Fallbacks legados se instituicao no banco não bater com slug/nome do cadastro
+        if (allAlunos.length === 0) {
+          const _fetchAlunosLegacy = async (fields, filter) => {
+            try {
+              return await _supaRestAdmin('alunos_master', `select=${fields}&${filter}&cpf=not.is.null&limit=5000`);
+            } catch { return []; }
+          };
+          const specificFilters = [
+            `instituicao=eq.${encodeURIComponent(slugAsName)}`,
+            `instituicao=eq.${encodeURIComponent(slug)}`,
+            `instituicao=eq.${encodeURIComponent(slugUpper)}`,
+            `instituicao=ilike.${encodeURIComponent(slugSpecificPattern)}`,
+          ];
+          const broadFallback = `instituicao=ilike.${encodeURIComponent('*'+slugBase+'*')}`;
+          for (const fields of ['nome,cpf,turma', 'nome,cpf']) {
+            for (const f of specificFilters) {
+              const rows = await _fetchAlunosLegacy(fields, f);
+              if (rows.length > 0) { allAlunos = rows; break; }
+            }
+            if (allAlunos.length === 0) {
+              allAlunos = await _fetchAlunosLegacy(fields, broadFallback);
+            }
+            if (allAlunos.length > 0) break;
           }
-          if (allAlunos.length === 0) {
-            allAlunos = await _fetchAlunos(fields, broadFallback);
-          }
-          if (allAlunos.length > 0) break;
         }
 
         const seen = new Set();
+        const nomesSeen = new Set(); // para detectar nomes duplicados
+        const nomesAmb = new Set(); // nomes que aparecem mais de uma vez (ambíguos)
         allAlunos.forEach(a => {
           const cpfKey = String(a.cpf || '').replace(/\D/g,'').trim().padStart(11,'0');
           if (cpfKey && cpfKey !== '00000000000' && !seen.has(cpfKey)) {
             seen.add(cpfKey);
             cpfToAluno[cpfKey] = { nome: a.nome || '', turma: a.turma || '' };
+            // Indexar por nome normalizado (para fallback sem CPF)
+            const nomeKey = _normalizeNomeForLookup(a.nome);
+            if (nomeKey && nomeKey.length >= 5) {
+              if (nomesSeen.has(nomeKey)) {
+                nomesAmb.add(nomeKey);
+              } else {
+                nomesSeen.add(nomeKey);
+                nomeToAluno[nomeKey] = { cpf: cpfKey, nome: a.nome || '', turma: a.turma || '' };
+              }
+            }
           }
         });
-        simLog(logId, `👥 ${Object.keys(cpfToAluno).length} aluno(s) com CPF no cadastro`, Object.keys(cpfToAluno).length > 0 ? "ok" : "warn");
+        // Remover nomes ambíguos (mais de um CPF com mesmo nome)
+        nomesAmb.forEach(k => delete nomeToAluno[k]);
+        simLog(logId, `👥 ${Object.keys(cpfToAluno).length} aluno(s) com CPF no cadastro | ${Object.keys(nomeToAluno).length} nomes únicos indexados`, Object.keys(cpfToAluno).length > 0 ? "ok" : "warn");
         if (Object.keys(cpfToAluno).length === 0) {
-          simLog(logId, `⚠️ Nenhum aluno encontrado. Variantes testadas: "${slugAsName}", "${slug}", "${slugUpper}", "${slugSpecificPattern}", "*${slugBase}*"`, "warn");
+          simLog(logId, `⚠️ Nenhum aluno no alunos_master para esta IES (slug "${slug}" + nome do cadastro quando houver). Confira o campo instituicao no Supabase.`, "warn");
         }
       } catch(e) {
         simLog(logId, "⚠️ Erro ao buscar alunos: " + e.message, "warn");
       }
 
       // ── 10b. Identificar CPFs novos (SEM gravar — gravação só após confirmação final)
+      // Inclui fallback por nome quando CPF está ausente na planilha
       const instNomeParaAluno = slug; // sempre usar slug para uniformizar com cadastro IES
       const cpfKeysAntesLookup = new Set(Object.keys(cpfToAluno));
       let bqJaExistiam = 0;
+      let bqMatchedByName = 0;
+      let bqSkippedNoId = 0;
       const bqNovosMap = new Map();
       const _autoRegStartRow = isAprimorada && formatInfo.studentStartRow >= 0 ? formatInfo.studentStartRow : hRow + 1;
       for (let ri = _autoRegStartRow; ri < rows.length; ri++) {
         const row = rows[ri];
-        const cpfNorm = _bqCpfFromCell(row[0]);
-        if (!cpfNorm) continue;
+        let cpfNorm = _bqCpfFromCell(row[0]);
         const nomeX = colNome >= 0 ? String(row[colNome] || "").trim() : "";
         const emailX = colEmail >= 0 ? String(row[colEmail] || "").trim() : "";
         const turmaX = colPeriodo >= 0 ? _normTurmaNr(row[colPeriodo]) : null;
+
+        // Fallback: se não tem CPF mas tem nome, buscar CPF pelo nome no cadastro
+        if (!cpfNorm && nomeX) {
+          const matched = _matchAlunoByNome(nomeX, nomeToAluno);
+          if (matched && matched.cpf) {
+            cpfNorm = matched.cpf;
+            bqMatchedByName++;
+          }
+        }
+
+        if (!cpfNorm) {
+          // Sem CPF e sem match por nome — pular
+          const raw0 = row[0];
+          if ((raw0 !== undefined && raw0 !== null && String(raw0).trim() !== "") || nomeX) bqSkippedNoId++;
+          continue;
+        }
+
         if (cpfKeysAntesLookup.has(cpfNorm)) {
           bqJaExistiam++;
         } else if (!bqNovosMap.has(cpfNorm)) {
@@ -9391,6 +9895,12 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         }
       }
       simLog(logId, `📊 CPFs: ${bqJaExistiam} já no master | ${bqNovosMap.size} novos (serão cadastrados após confirmação)`, "ok");
+      if (bqMatchedByName > 0) {
+        simLog(logId, `🔗 ${bqMatchedByName} aluno(s) identificado(s) pelo nome (sem CPF na planilha → CPF encontrado no cadastro)`, "ok");
+      }
+      if (bqSkippedNoId > 0) {
+        simLog(logId, `⚠️ ${bqSkippedNoId} linha(s) sem CPF e sem match por nome — não serão incluídas`, "warn");
+      }
 
       // ── 11. Processar questões anuladas (SKIP para aprimorada — notas já corrigidas)
       const anuladasIdx = new Set();
@@ -9445,9 +9955,21 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       const studentsData = [];
       let semNome = 0;
       let _bqLinhasIgnoradas = 0;
+      let _bqResolvByName = 0;
       for (let i = _studentStartRow; i < rows.length; i++) {
         const row = rows[i];
-        const cpfNorm = _bqCpfFromCell(row[0]);
+        let cpfNorm = _bqCpfFromCell(row[0]);
+        // Fallback por nome quando CPF ausente
+        if (!cpfNorm) {
+          const nomeRow = colNome >= 0 ? String(row[colNome] || "").trim() : "";
+          if (nomeRow) {
+            const matched = _matchAlunoByNome(nomeRow, nomeToAluno);
+            if (matched && matched.cpf) {
+              cpfNorm = matched.cpf;
+              _bqResolvByName++;
+            }
+          }
+        }
         if (!cpfNorm) {
           const raw0 = row[0];
           if (raw0 !== undefined && raw0 !== null && String(raw0).trim() !== "") _bqLinhasIgnoradas++;
@@ -9529,9 +10051,12 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       if (_bqLinhasIgnoradas > 0) {
         simLog(
           logId,
-          `ℹ️ ${_bqLinhasIgnoradas} linha(s) com valor na coluna A que não é CPF válido (totais, médias, texto) — ignoradas. Se faltarem alunos, confira se o CPF está sem formatação estranha ou em outra coluna.`,
+          `ℹ️ ${_bqLinhasIgnoradas} linha(s) sem CPF válido e sem match por nome — ignoradas. Se faltarem alunos, confira se o nome ou CPF estão corretos.`,
           "ok"
         );
+      }
+      if (_bqResolvByName > 0) {
+        simLog(logId, `🔗 ${_bqResolvByName} aluno(s) identificado(s) pelo nome (CPF recuperado do cadastro)`, "ok");
       }
       simLog(logId,
         `👥 ${studentsData.length} aluno(s) processado(s)` +
@@ -9609,13 +10134,17 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       }
 
       // Para aprimorada: usar média da planilha (E10) como fonte de verdade
-      const _mediaIesFinal = isAprimorada && formatInfo.mediaFromPlanilha != null
+      // Se o usuário forneceu override no modal de confirmação, usar esse valor
+      const _mediaIesAuto = isAprimorada && formatInfo.mediaFromPlanilha != null
         ? formatInfo.mediaFromPlanilha
         : (studentsData.length > 0
           ? Math.round(studentsData.reduce((s, a) => s + a.notaPct, 0) / studentsData.length * 10) / 10
           : null);
-      const _mediaSource = isAprimorada && formatInfo.mediaFromPlanilha != null ? 'planilha_aprimorada' : _notaSource;
-      simLog(logId, `📊 Média IES final: ${_mediaIesFinal != null ? _mediaIesFinal.toFixed(1) + '%' : 'n/d'} (fonte: ${_mediaSource})`, "ok");
+      const _mediaIesFinal = _reviewResult.mediaIesOverride != null ? _reviewResult.mediaIesOverride : _mediaIesAuto;
+      const _mediaSource = _reviewResult.mediaIesOverride != null && _reviewResult.mediaIesOverride !== _mediaIesAuto
+        ? 'manual'
+        : (isAprimorada && formatInfo.mediaFromPlanilha != null ? 'planilha_aprimorada' : _notaSource);
+      simLog(logId, `📊 Média IES final: ${_mediaIesFinal != null ? _mediaIesFinal.toFixed(1) + '%' : 'n/d'} (fonte: ${_mediaSource}${_mediaSource === 'manual' ? ', inserida pelo usuário' : ''})`, "ok");
 
       // ── 12c. Agora sim: gravar alunos novos no alunos_master (após confirmação) ──
       let bqCadastradosNovos = 0;
@@ -12702,10 +13231,10 @@ function _loadScript(src) {
         <img id="instSettingsLogoPreview" src="" alt="Logo" style="width:60px;height:60px;object-fit:contain;border-radius:10px;border:1px solid var(--border);background:var(--bg-elevated)">
         <label style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.85rem;cursor:pointer;transition:border-color 0.2s">
           Escolher arquivo
-          <input type="file" id="instSettingsLogoFile" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,image/svg+xml" style="display:none" onchange="previewInstLogo(this)">
+          <input type="file" id="instSettingsLogoFile" accept="image/png,image/jpeg,image/webp,image/avif" style="display:none" onchange="previewInstLogo(this)">
         </label>
       </div>
-      <div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px">PNG, JPG, WebP, AVIF, GIF ou SVG</div>
+      <div id="instSettingsLogoHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:6px">PNG, JPG, WebP ou AVIF · máx 500 KB · será convertido para WebP</div>
     </div>
     <div class="field" style="margin-bottom:16px">
       <label style="display:block;font-size:0.78rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Cor do painel (hex)</label>
@@ -12747,6 +13276,39 @@ function _loadScript(src) {
     </div>
     <div style="border-top:1px solid var(--border);margin-top:20px;padding-top:16px">
       <button onclick="deleteInstSettings()" style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(220,38,38,0.4);background:rgba(220,38,38,0.06);color:#dc2626;font-size:0.82rem;font-weight:600;cursor:pointer;transition:all 0.2s" onmouseover="this.style.background='rgba(220,38,38,0.14)'" onmouseout="this.style.background='rgba(220,38,38,0.06)'">🗑 Deletar esta IES e todos os dados</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: nova IES (registro Supabase — superadmin) -->
+<div id="newInstModal" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;flex-direction:row">
+  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:28px;width:min(92%,440px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+      <h3 style="font-size:1.05rem;font-weight:700;margin:0">Nova IES (Supabase)</h3>
+      <button type="button" onclick="window._closeNewInstModal()" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.45;margin:0 0 16px">Cria o registro em <code style="font-size:0.76rem">instituicoes</code> para aparecer no painel. A pasta do site (<code style="font-size:0.76rem">slug/</code>) continua sendo gerada no computador com <code style="font-size:0.76rem">create-all-ies.py</code> e o deploy no Netlify.</p>
+    <div class="field" style="margin-bottom:12px">
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Slug <span class="req">*</span></label>
+      <input type="text" id="newInstSlug" placeholder="ex: minha-faculdade" autocomplete="off" oninput="var el=document.getElementById('newInstSlugPreview');if(el)el.textContent=(this.value||'').trim()||'slug'" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;font-family:monospace;outline:none">
+      <div style="font-size:0.68rem;color:var(--text-muted);margin-top:4px">Minúsculas, números e hífen. URL: /<span id="newInstSlugPreview">slug</span>/</div>
+    </div>
+    <div class="field" style="margin-bottom:12px">
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Nome de exibição <span class="req">*</span></label>
+      <input type="text" id="newInstNome" placeholder="Ex: FACULDADE EXEMPLO" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
+    </div>
+    <div class="field" style="margin-bottom:14px">
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Cidade</label>
+      <input type="text" id="newInstCidade" placeholder="Opcional" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
+    </div>
+    <label class="settings-toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;font-size:0.85rem">
+      <input type="checkbox" id="newInstWip" checked>
+      <span>Marcar como WIP (Em breve) até a pasta existir no deploy</span>
+    </label>
+    <div id="newInstError" style="font-size:0.8rem;color:var(--accent);min-height:20px;margin-bottom:8px;text-align:center"></div>
+    <div style="display:flex;gap:10px">
+      <button type="button" onclick="window._closeNewInstModal()" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
+      <button type="button" id="newInstSubmitBtn" onclick="window._submitNewInst()" style="flex:1;padding:11px;border-radius:10px;border:none;background:var(--accent,#dc2626);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Criar registro</button>
     </div>
   </div>
 </div>
@@ -12836,13 +13398,178 @@ function closeInstSettings() {
   _instSettingsLogoFile = null;
 }
 
-function previewInstLogo(input) {
-  if (input.files && input.files[0]) {
-    _instSettingsLogoFile = input.files[0];
-    const reader = new FileReader();
-    reader.onload = (e) => { document.getElementById('instSettingsLogoPreview').src = e.target.result; };
-    reader.readAsDataURL(input.files[0]);
+/**
+ * Modal Nova IES — cria linha em `instituicoes` (apenas superadmin; validado no admin-proxy).
+ */
+window._openNewInstModal = function() {
+  if (!document.body.classList.contains('is-superadmin')) {
+    showToast('Apenas superadmin pode criar uma nova IES.', 'error');
+    return;
   }
+  const slugEl = document.getElementById('newInstSlug');
+  const prev = document.getElementById('newInstSlugPreview');
+  if (slugEl) slugEl.value = '';
+  if (prev) prev.textContent = 'slug';
+  const nomeEl = document.getElementById('newInstNome');
+  if (nomeEl) nomeEl.value = '';
+  const cidEl = document.getElementById('newInstCidade');
+  if (cidEl) cidEl.value = '';
+  const wipEl = document.getElementById('newInstWip');
+  if (wipEl) wipEl.checked = true;
+  const errEl = document.getElementById('newInstError');
+  if (errEl) errEl.textContent = '';
+  const modal = document.getElementById('newInstModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  modal.onclick = function(e) { if (e.target === modal) window._closeNewInstModal(); };
+  if (slugEl) setTimeout(function() { slugEl.focus(); }, 80);
+};
+
+window._closeNewInstModal = function() {
+  const modal = document.getElementById('newInstModal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.onclick = null;
+  }
+};
+
+window._submitNewInst = async function() {
+  const errEl = document.getElementById('newInstError');
+  const btn = document.getElementById('newInstSubmitBtn');
+  if (errEl) errEl.textContent = '';
+  const rawSlug = (document.getElementById('newInstSlug') && document.getElementById('newInstSlug').value || '').trim().toLowerCase();
+  const nome = (document.getElementById('newInstNome') && document.getElementById('newInstNome').value || '').trim();
+  const cidade = (document.getElementById('newInstCidade') && document.getElementById('newInstCidade').value || '').trim();
+  const wipEl = document.getElementById('newInstWip');
+  const wip = wipEl ? wipEl.checked : true;
+
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(rawSlug)) {
+    if (errEl) errEl.textContent = 'Slug inválido: use minúsculas, números e hífen (ex: minha-ies).';
+    return;
+  }
+  if (nome.length < 2) {
+    if (errEl) errEl.textContent = 'Informe o nome de exibição da instituição.';
+    return;
+  }
+  if ((window._instData || []).some(function(i) { return i.slug === rawSlug; })) {
+    if (errEl) errEl.textContent = 'Já existe uma IES com este slug.';
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Salvando...';
+  }
+  try {
+    var row = {
+      slug: rawSlug,
+      nome: nome,
+      path: '/' + rawSlug + '/',
+      cidade: cidade || null,
+      ativo: true,
+      wip: wip,
+      stripe: 'neutro'
+    };
+    var resp = await window._supaWrite('instituicoes', 'POST', row, {
+      requireSuperadmin: true,
+      prefer: 'return=representation'
+    });
+    var txt = await resp.text();
+    if (!resp.ok) {
+      var msg = txt;
+      try {
+        var j = JSON.parse(txt);
+        if (j.message) msg = j.message;
+        if (j.error && typeof j.error === 'string') msg = j.error;
+        if (j.hint) msg += ' — ' + j.hint;
+      } catch (_) {}
+      throw new Error(msg || ('Erro HTTP ' + resp.status));
+    }
+    showToast('IES registrada: ' + rawSlug, 'success');
+    window._closeNewInstModal();
+    try { localStorage.removeItem('_admc_inst'); } catch (e) {}
+    if (typeof loadAndRenderInstitutions === 'function') await loadAndRenderInstitutions();
+    if (typeof window._refreshInstGrid === 'function') window._refreshInstGrid();
+  } catch (e) {
+    var em = e && e.message ? e.message : String(e);
+    if (errEl) errEl.textContent = em;
+    showToast(em, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Criar registro';
+    }
+  }
+};
+
+const LOGO_MAX_BYTES = 500 * 1024; // 500 KB
+const LOGO_MAX_DIM = 512; // px — redimensiona se maior
+const LOGO_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
+
+function previewInstLogo(input) {
+  const hint = document.getElementById('instSettingsLogoHint');
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+
+  // Validar tipo
+  if (!LOGO_ALLOWED_TYPES.includes(file.type)) {
+    hint.innerHTML = '<span style="color:#dc2626">Formato não suportado. Use PNG, JPG, WebP ou AVIF.</span>';
+    input.value = '';
+    _instSettingsLogoFile = null;
+    return;
+  }
+
+  // Validar tamanho bruto (antes da conversão)
+  if (file.size > LOGO_MAX_BYTES * 4) {
+    hint.innerHTML = '<span style="color:#dc2626">Arquivo muito grande (máx 2 MB antes da conversão).</span>';
+    input.value = '';
+    _instSettingsLogoFile = null;
+    return;
+  }
+
+  // Carregar imagem, redimensionar se necessário e converter para WebP
+  const img = new Image();
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    img.onload = () => {
+      let w = img.naturalWidth, h = img.naturalHeight;
+      // Redimensionar se exceder LOGO_MAX_DIM mantendo proporção
+      if (w > LOGO_MAX_DIM || h > LOGO_MAX_DIM) {
+        const ratio = Math.min(LOGO_MAX_DIM / w, LOGO_MAX_DIM / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      // Fundo transparente para logos com alpha
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          hint.innerHTML = '<span style="color:#dc2626">Erro ao processar imagem.</span>';
+          _instSettingsLogoFile = null;
+          return;
+        }
+        if (blob.size > LOGO_MAX_BYTES) {
+          hint.innerHTML = `<span style="color:#dc2626">Imagem convertida ainda muito grande (${(blob.size/1024).toFixed(0)} KB). Use uma imagem menor.</span>`;
+          _instSettingsLogoFile = null;
+          return;
+        }
+        // Criar File a partir do Blob para manter a interface
+        _instSettingsLogoFile = new File([blob], 'logo.webp', { type: 'image/webp' });
+        document.getElementById('instSettingsLogoPreview').src = URL.createObjectURL(blob);
+        hint.innerHTML = `<span style="color:#16a34a">✓ ${w}×${h}px · ${(blob.size/1024).toFixed(0)} KB · WebP</span>`;
+      }, 'image/webp', 0.85);
+    };
+    img.onerror = () => {
+      hint.innerHTML = '<span style="color:#dc2626">Não foi possível ler a imagem.</span>';
+      _instSettingsLogoFile = null;
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 function syncColorFromHex(hex) {
@@ -12889,13 +13616,12 @@ async function saveInstSettings() {
       wip: !document.getElementById('instSettingsAtivo').checked,
     };
 
-    // Upload logo se selecionado
+    // Upload logo se selecionado (já convertido para WebP pelo previewInstLogo)
     if (_instSettingsLogoFile) {
-      const ext = _instSettingsLogoFile.name.split('.').pop().toLowerCase() || 'png';
-      const filePath = slug + '.' + ext;
+      const filePath = slug + '.webp';
       const { data: upData, error: upErr } = await sb.storage
         .from('logos')
-        .upload(filePath, _instSettingsLogoFile, { upsert: true, contentType: _instSettingsLogoFile.type });
+        .upload(filePath, _instSettingsLogoFile, { upsert: true, contentType: 'image/webp' });
       if (upErr) throw new Error('Erro ao enviar logo: ' + upErr.message);
       updates.logo_url = 'https://cvwwucxjrpsfoxarsipr.supabase.co/storage/v1/object/public/logos/' + filePath;
     }
@@ -13203,11 +13929,12 @@ window._saveEnvio = async function() {
 
 <!-- ═══════════ MODAL: IMPORTAÇÃO EM MASSA DE ALUNOS ═══════════ -->
 <div id="alunoImportModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);align-items:center;justify-content:center">
-  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:32px;width:min(92%,540px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
+  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:32px;width:min(92%,620px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
       <h3 style="font-size:1.1rem;font-weight:700">📥 Importar Alunos em Massa</h3>
-      <button onclick="document.getElementById('alunoImportModal').style.display='none'" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
+      <button type="button" onclick="window._closeAlunoImportModal()" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
     </div>
+    <div id="alunoImportStep1">
     <div class="field" style="margin-bottom:16px">
       <label style="display:block;font-size:0.78rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">IES de destino</label>
       <select id="alunoImportIES" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
@@ -13219,24 +13946,42 @@ window._saveEnvio = async function() {
       <div id="alunoImportZone" style="border:2px dashed var(--border);border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:border-color 0.2s" onclick="document.getElementById('alunoImportFile').click()">
         <div id="alunoImportZoneIcon" style="font-size:2rem;margin-bottom:6px">📄</div>
         <div id="alunoImportZoneTitle" style="font-size:0.88rem;font-weight:600;color:var(--text)">Arraste ou clique para selecionar</div>
-        <div id="alunoImportZoneHint" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">Colunas esperadas: nome, email, telefone, instituicao (opcional)</div>
+        <div id="alunoImportZoneHint" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">Obrigatório: nome, CPF, e-mail, turma. Coluna IES opcional se já escolheu acima.</div>
         <input type="file" id="alunoImportFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="window._handleAlunoImportFile(this.files[0])">
       </div>
     </div>
+    <div id="alunoImportErrBox" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.25);font-size:0.76rem;color:var(--accent);max-height:120px;overflow-y:auto"></div>
     <div id="alunoImportPreview" style="display:none;margin-bottom:16px">
-      <div style="font-size:0.78rem;font-weight:600;color:var(--text-soft);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em">Preview (primeiros 5 registros)</div>
+      <div style="font-size:0.78rem;font-weight:600;color:var(--text-soft);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em">Preview (primeiros 5 válidos)</div>
       <div style="overflow-x:auto;border-radius:8px;border:1px solid var(--border-subtle)">
-        <table style="width:100%;border-collapse:collapse;font-size:0.78rem" id="alunoImportPreviewTable">
-          <thead><tr style="background:var(--bg-elevated)"><th style="padding:8px 10px;text-align:left">Nome</th><th style="padding:8px 10px;text-align:left">Email</th><th style="padding:8px 10px;text-align:left">Telefone</th><th style="padding:8px 10px;text-align:left">IES</th></tr></thead>
+        <table style="width:100%;border-collapse:collapse;font-size:0.76rem" id="alunoImportPreviewTable">
+          <thead><tr style="background:var(--bg-elevated)"><th style="padding:8px 10px;text-align:left">Nome</th><th style="padding:8px 10px;text-align:left">CPF</th><th style="padding:8px 10px;text-align:left">Email</th><th style="padding:8px 10px;text-align:left">Turma</th><th style="padding:8px 10px;text-align:left">Tel</th></tr></thead>
           <tbody id="alunoImportPreviewBody"></tbody>
         </table>
       </div>
       <div id="alunoImportStats" style="font-size:0.78rem;color:var(--text-muted);margin-top:8px"></div>
     </div>
-    <div id="alunoImportResult" style="display:none;margin-bottom:16px;padding:14px;border-radius:10px;font-size:0.85rem;font-weight:600"></div>
-    <div style="display:flex;gap:12px">
-      <button onclick="document.getElementById('alunoImportModal').style.display='none'" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.9rem;font-weight:600;cursor:pointer">Cancelar</button>
-      <button id="alunoImportBtn" onclick="window._executeAlunoImport()" disabled style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--green,#22c55e);color:#fff;font-size:0.9rem;font-weight:700;cursor:pointer;opacity:0.5">Importar</button>
+    <div id="alunoImportStep1Actions" style="display:flex;gap:12px">
+      <button type="button" onclick="window._closeAlunoImportModal()" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.9rem;font-weight:600;cursor:pointer">Cancelar</button>
+      <button type="button" id="alunoImportBtnConferir" onclick="window._alunoImportConferir()" disabled style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--blue,#2563eb);color:#fff;font-size:0.9rem;font-weight:700;cursor:pointer;opacity:0.5">Conferir importação</button>
+    </div>
+    </div>
+    <div id="alunoImportStep2" style="display:none">
+      <div id="alunoImportConference" style="font-size:0.84rem;line-height:1.5;margin-bottom:14px;padding:14px;border-radius:12px;background:var(--bg-elevated);border:1px solid var(--border-subtle)"></div>
+      <div style="margin-bottom:14px;font-size:0.8rem;color:var(--text-soft)">Alunos já cadastrados (mesmo CPF nesta IES):</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;font-size:0.82rem">
+        <input type="radio" name="alunoImportDup" value="skip" checked style="accent-color:var(--green)">
+        Ignorar — não alterar cadastro existente
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;font-size:0.82rem">
+        <input type="radio" name="alunoImportDup" value="update" style="accent-color:var(--green)">
+        Atualizar apenas e-mail e turma (mantém CPF, IES e nome)
+      </label>
+      <div id="alunoImportResult" style="display:none;margin-bottom:16px;padding:14px;border-radius:10px;font-size:0.85rem;font-weight:600"></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <button type="button" onclick="window._alunoImportVoltar()" style="flex:1;min-width:120px;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.9rem;font-weight:600;cursor:pointer">Voltar</button>
+        <button type="button" id="alunoImportBtnExec" onclick="window._executeAlunoImport()" style="flex:1;min-width:160px;padding:12px;border-radius:10px;border:none;background:var(--green,#22c55e);color:#fff;font-size:0.9rem;font-weight:700;cursor:pointer">Confirmar importação</button>
+      </div>
     </div>
   </div>
 </div>
@@ -13304,8 +14049,8 @@ window._saveEnvio = async function() {
       <h3 id="boletimCoordModalTitle" style="font-size:1.02rem;font-weight:700;margin:0;line-height:1.3">Avisar coordenação</h3>
       <button type="button" onclick="document.getElementById('boletimCoordModal').style.display='none'" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
     </div>
-    <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 10px;line-height:1.45">Serão gerados e anexados: <strong>relatório PDF</strong>, <strong>planilha Excel</strong> e <strong>ZIP com os boletins individuais</strong>. Pode levar alguns minutos.</p>
-    <p style="font-size:0.74rem;color:var(--text-muted);margin:0 0 14px;line-height:1.5;border-left:3px solid rgba(79,70,229,0.45);padding:8px 0 8px 12px;background:rgba(79,70,229,0.06);border-radius:0 8px 8px 0"><strong style="color:var(--text-soft)">Observação:</strong> turmas muito grandes podem estourar o limite de tamanho do corpo da requisição na função (Netlify); nesse caso o usuário vê o erro e a dica no aviso. Se isso for frequente, o caminho seria armazenar os arquivos no storage e enviar só os links (evolução futura, fora do escopo atual).</p>
+    <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Será anexada a <strong>planilha Excel</strong> e o e-mail incluirá o <strong>link dos boletins</strong> (pasta ou página dos PDFs). É obrigatório cadastrar esse link no upload do resultado.</p>
+    <div id="boletimCoordLinkAviso" style="margin:0 0 14px;font-size:0.78rem;line-height:1.5;color:var(--text-muted)">Verificando link dos boletins…</div>
     <div class="field" style="margin-bottom:12px">
       <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Coordenador</label>
       <select id="boletimCoordEmailSelect" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.85rem;outline:none;display:none"></select>
@@ -13316,7 +14061,7 @@ window._saveEnvio = async function() {
     </div>
     <div style="display:flex;gap:10px">
       <button type="button" onclick="document.getElementById('boletimCoordModal').style.display='none'" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
-      <button type="button" onclick="window._submitBoletimCoordEmail()" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Enviar aviso</button>
+      <button type="button" id="boletimCoordSendBtn" onclick="window._submitBoletimCoordEmail()" disabled style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer;opacity:0.55">Enviar aviso</button>
     </div>
   </div>
 </div>
@@ -13326,6 +14071,19 @@ window._saveEnvio = async function() {
 // ══════════════════════════════════════════════════════════════════════
 // ═══════════ MOTOR DE BOLETINS — Cálculos + PDF + ZIP ═══════════════
 // ══════════════════════════════════════════════════════════════════════
+
+/** Link dos boletins salvo no __RANKING__ após upload do simulado. */
+window._fetchRankingLinkBoletins = async function(slug, simRef) {
+  try {
+    const rows = await _supaRest('simulado_respostas',
+      `select=respostas&simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&limit=1`);
+    const lb = rows && rows[0] && rows[0].respostas && rows[0].respostas.link_boletins;
+    return typeof lb === 'string' ? lb.trim() : '';
+  } catch (e) {
+    console.warn('_fetchRankingLinkBoletins:', e);
+    return '';
+  }
+};
 
 /**
  * Coordenadores ativos da IES (usuarios_autorizados) — slug ou nome da instituição.
@@ -13430,8 +14188,41 @@ window._openBoletimEmailCoordModal = async function(slug, simId) {
   window._boletimCoordPending = { slug, simId, titulo, nomeIes, simRef };
   document.getElementById('boletimCoordModalTitle').textContent = 'Avisar coordenação — ' + titulo;
   const modal = document.getElementById('boletimCoordModal');
+  const avisoEl = document.getElementById('boletimCoordLinkAviso');
+  const sendBtn = document.getElementById('boletimCoordSendBtn');
+  if (avisoEl) avisoEl.innerHTML = '<span style="opacity:0.85">Verificando link dos boletins…</span>';
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.style.opacity = '0.55';
+    sendBtn.style.cursor = 'not-allowed';
+  }
   modal.style.display = 'flex';
   modal.onclick = function(ev) { if (ev.target === modal) modal.style.display = 'none'; };
+  try {
+    const linkBol = await window._fetchRankingLinkBoletins(slug, simRef);
+    if (avisoEl) {
+      if (linkBol) {
+        const esc = (s) => String(s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(34,197,94,0.45);background:rgba(34,197,94,0.1);color:var(--text)"><strong style="color:#16a34a">Link dos boletins cadastrado.</strong> Você pode enviar o e-mail — o coordenador receberá o Excel e o acesso: <span style="word-break:break-all;opacity:0.95">' + esc(linkBol) + '</span></div>';
+      } else {
+        avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(234,179,8,0.55);background:rgba(234,179,8,0.12);color:var(--text)"><strong style="color:#b45309">Cadastre o link dos boletins antes de enviar.</strong> Vá em <strong>Simulados → Banco de Questões</strong>, processe de novo o resultado deste simulado (ou refaça o upload) e preencha o campo <em>Link dos boletins</em> com a URL da pasta ou página dos PDFs. Depois feche este modal e abra o aviso novamente.</div>';
+      }
+    }
+    if (sendBtn) {
+      sendBtn.disabled = !linkBol;
+      sendBtn.style.opacity = linkBol ? '1' : '0.55';
+      sendBtn.style.cursor = linkBol ? 'pointer' : 'not-allowed';
+    }
+  } catch (e) {
+    console.warn(e);
+    if (avisoEl) {
+      avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(220,38,38,0.35);background:rgba(220,38,38,0.08)">Não foi possível verificar o link. Tente de novo ou cadastre o link no upload.</div>';
+    }
+    if (sendBtn) {
+      sendBtn.disabled = true;
+      sendBtn.style.opacity = '0.55';
+    }
+  }
 };
 
 window._buildBoletinsZipBlob = async function(slug, simRef) {
@@ -13468,32 +14259,30 @@ window._submitBoletimCoordEmail = async function() {
     const dn = opt && opt.getAttribute('data-nome');
     if (dn) nomeDest = dn.trim() || nomeDest;
   }
+  const linkBoletinsRanking = await window._fetchRankingLinkBoletins(p.slug, p.simRef);
+  if (!linkBoletinsRanking) {
+    showToast('Cadastre o link dos boletins no processamento do resultado (campo Link dos boletins) antes de enviar o e-mail ao coordenador.', 'error');
+    return;
+  }
   document.getElementById('boletimCoordModal').style.display = 'none';
   try {
-    showToast('Gerando PDF, Excel e ZIP… aguarde.', 'info');
+    showToast('Gerando Excel e preparando e-mail…', 'info');
     const token = await window._getAdminToken();
     if (!token) {
       showToast('Faça login novamente.', 'error');
       return;
     }
+    const linkPainel = new URL('admin.html', location.href).href;
     const pack = await window._simGeneratePDF(p.slug, p.simId, { blobsOnly: true });
-    if (!pack || !pack.pdfBlob) {
-      showToast('Não foi possível gerar o relatório. Há resultado cadastrado para este simulado?', 'error');
+    if (!pack || !pack.xlsxBlob) {
+      showToast('Não foi possível gerar a planilha Excel. Há resultado cadastrado para este simulado?', 'error');
       return;
     }
-    const zipBlob = await window._buildBoletinsZipBlob(p.slug, p.simRef);
-    const b64pdf = await window._blobToBase64(pack.pdfBlob);
-    const b64xlsx = pack.xlsxBlob ? await window._blobToBase64(pack.xlsxBlob) : null;
-    const b64zip = await window._blobToBase64(zipBlob);
+    const b64xlsx = await window._blobToBase64(pack.xlsxBlob);
     const base = pack.baseName || 'Relatorio';
-    const nomeIESFile = String(p.nomeIes || 'IES').replace(/[^a-zA-Z0-9]/g, '_');
-    const zipName = 'Boletins_' + nomeIESFile + '_' + String(p.simRef).replace(/[^a-zA-Z0-9._-]/g, '_') + '.zip';
     const attachments = [
-      { filename: base + '.pdf', content_base64: b64pdf, type: 'application/pdf' },
-      ...(b64xlsx ? [{ filename: base + '.xlsx', content_base64: b64xlsx, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }] : []),
-      { filename: zipName, content_base64: b64zip, type: 'application/zip' }
+      { filename: base + '.xlsx', content_base64: b64xlsx, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
     ];
-    const linkPainel = new URL('admin.html', location.href).href;
     const res = await fetch(location.origin + '/.netlify/functions/send-boletim-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -13504,6 +14293,8 @@ window._submitBoletimCoordEmail = async function() {
         titulo_simulado: p.titulo,
         nome_ies: p.nomeIes,
         link_boletim: linkPainel,
+        link_boletins_individuais: linkBoletinsRanking,
+        coord_excel_e_link: true,
         notificacao_coordenador: true,
         attachments
       })
@@ -13513,10 +14304,10 @@ window._submitBoletimCoordEmail = async function() {
     if (!res.ok) {
       const msg = j.error || (j.details && (typeof j.details === 'string' ? j.details : JSON.stringify(j.details))) || 'Erro HTTP ' + res.status;
       const limiteReq = res.status === 413 || /payload|too large|body|limite/i.test(String(msg));
-      showToast(msg + (limiteReq ? ' — Limite da requisição: turmas muito grandes podem exceder o permitido; tente turmas menores ou envio em partes.' : ''), 'error');
+      showToast(msg + (limiteReq ? ' — Limite da requisição: tente novamente ou reduza o tamanho dos dados.' : ''), 'error');
       return;
     }
-    showToast('E-mail com PDF, Excel e ZIP enviado ao coordenador.', 'success');
+    showToast('E-mail com Excel e link enviado ao coordenador.', 'success');
   } catch (e) {
     showToast('Erro: ' + e.message, 'error');
     console.error(e);
@@ -14431,31 +15222,45 @@ window._generateBoletinsLote = async function() {
 </script>
 
 <script>
-// ── Importação em massa de alunos ────────────────────────────────
-window._alunoImportRows = [];
+// ── Importação em massa de alunos (CPF+turma+conferência) ───────
+window._alunoImportValidRows = [];
+window._alunoImportConference = null;
+
+function _normCpfAlunoImport(c) {
+  let d = String(c || '').replace(/\D/g, '');
+  if (d.length === 10) d = '0' + d;
+  return d.length === 11 ? d : '';
+}
+
+window._closeAlunoImportModal = function() {
+  document.getElementById('alunoImportModal').style.display = 'none';
+  window._alunoImportConference = null;
+};
 
 window._openAlunoImportModal = function() {
-  window._alunoImportRows = [];
+  window._alunoImportValidRows = [];
+  window._alunoImportConference = null;
+  document.getElementById('alunoImportStep1').style.display = 'block';
+  document.getElementById('alunoImportStep2').style.display = 'none';
   document.getElementById('alunoImportPreview').style.display = 'none';
+  const errBox = document.getElementById('alunoImportErrBox');
+  if (errBox) { errBox.style.display = 'none'; errBox.textContent = ''; }
   document.getElementById('alunoImportResult').style.display = 'none';
-  document.getElementById('alunoImportBtn').disabled = true;
-  document.getElementById('alunoImportBtn').style.opacity = '0.5';
+  const cbtn = document.getElementById('alunoImportBtnConferir');
+  if (cbtn) { cbtn.disabled = true; cbtn.style.opacity = '0.5'; }
   document.getElementById('alunoImportZoneIcon').textContent = '📄';
   document.getElementById('alunoImportZoneTitle').textContent = 'Arraste ou clique para selecionar';
-  document.getElementById('alunoImportZoneHint').textContent = 'Colunas esperadas: nome, email, telefone, instituicao (opcional)';
+  document.getElementById('alunoImportZoneHint').textContent = 'Obrigatório: nome, CPF, e-mail, turma.';
   document.getElementById('alunoImportFile').value = '';
-  // Populate IES select
   const sel = document.getElementById('alunoImportIES');
   const opts = (window._instData || []).map(i => `<option value="${i.slug}">${i.nome || i.slug.toUpperCase()}</option>`).join('');
   sel.innerHTML = '<option value="">Selecione a IES...</option>' + opts;
-  // Auto-select for non-superadmin
   if (window._curInst) sel.value = window._curInst;
   const modal = document.getElementById('alunoImportModal');
   modal.style.display = 'flex';
-  modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
+  modal.onclick = (e) => { if (e.target === modal) window._closeAlunoImportModal(); };
 };
 
-// Drag-drop support for import zone
 (function() {
   const zone = document.getElementById('alunoImportZone');
   if (!zone) return;
@@ -14498,15 +15303,49 @@ window._handleAlunoImportFile = function(file) {
           rows.push(_extractAlunoRow(vals, colMap));
         });
       }
-      // Filter invalid (no email)
-      rows = rows.filter(r => r.email && r.email.includes('@'));
-      window._alunoImportRows = rows;
-      _renderAlunoImportPreview(rows);
-    } catch(err) {
-      document.getElementById('alunoImportResult').style.display = 'block';
-      document.getElementById('alunoImportResult').style.background = 'rgba(220,38,38,0.1)';
-      document.getElementById('alunoImportResult').style.color = 'var(--accent)';
-      document.getElementById('alunoImportResult').textContent = 'Erro ao ler planilha: ' + err.message;
+      const errLines = [];
+      const byCpf = new Map();
+      rows.forEach((r, idx) => {
+        const cpf = _normCpfAlunoImport(r._cpfRaw || r.cpf);
+        const nome = String(r.nome || '').trim();
+        const email = String(r.email || '').toLowerCase().trim();
+        const turmaRaw = String(r.turmaRaw || '').trim();
+        const turmaNorm = typeof _normTurmaNr === 'function' ? _normTurmaNr(turmaRaw) : turmaRaw;
+        const turma = turmaNorm != null && turmaNorm !== '' ? String(turmaNorm) : turmaRaw;
+        if (!nome || !email.includes('@')) return;
+        if (!cpf) {
+          errLines.push('Linha ' + (idx + 2) + ': CPF ausente ou inválido (11 dígitos).');
+          return;
+        }
+        if (!String(turma || '').trim()) {
+          errLines.push('Linha ' + (idx + 2) + ': turma obrigatória.');
+          return;
+        }
+        byCpf.set(cpf, {
+          nome,
+          cpf,
+          email,
+          turma: String(turma).trim(),
+          telefone: r.telefone || '',
+          instituicao: r.instituicao || ''
+        });
+      });
+      window._alunoImportValidRows = Array.from(byCpf.values());
+      const errBox = document.getElementById('alunoImportErrBox');
+      if (errLines.length && errBox) {
+        errBox.style.display = 'block';
+        errBox.textContent = errLines.slice(0, 15).join('\n') + (errLines.length > 15 ? '\n… +' + (errLines.length - 15) + ' avisos' : '');
+      } else if (errBox) {
+        errBox.style.display = 'none';
+        errBox.textContent = '';
+      }
+      _renderAlunoImportPreview(window._alunoImportValidRows);
+    } catch (err) {
+      const errBox = document.getElementById('alunoImportErrBox');
+      if (errBox) {
+        errBox.style.display = 'block';
+        errBox.textContent = 'Erro ao ler planilha: ' + err.message;
+      }
     }
   };
   if (file.name.endsWith('.csv')) reader.readAsText(file);
@@ -14514,23 +15353,29 @@ window._handleAlunoImportFile = function(file) {
 };
 
 function _mapAlunoColumns(headers) {
-  const map = { nome: -1, email: -1, telefone: -1, instituicao: -1 };
+  const map = { nome: -1, email: -1, telefone: -1, instituicao: -1, cpf: -1, turma: -1 };
   headers.forEach((h, i) => {
-    const l = h.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-    if (l.includes('nome') || l === 'name') map.nome = i;
-    else if (l.includes('mail') || l.includes('e-mail')) map.email = i;
-    else if (l.includes('tel') || l.includes('phone') || l.includes('celular') || l.includes('whats')) map.telefone = i;
-    else if (l.includes('inst') || l.includes('ies') || l.includes('faculdade')) map.instituicao = i;
+    const l = h.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (map.nome < 0 && (l.includes('nome') || l === 'name')) map.nome = i;
+    else if (map.cpf < 0 && (l.includes('cpf') || l === 'documento')) map.cpf = i;
+    else if (map.email < 0 && (l.includes('mail') || l.includes('e-mail'))) map.email = i;
+    else if (map.telefone < 0 && (l.includes('tel') || l.includes('phone') || l.includes('celular') || l.includes('whats'))) map.telefone = i;
+    else if (map.turma < 0 && (l.includes('turma') || l.includes('periodo') || l.includes('classe'))) map.turma = i;
+    else if (map.instituicao < 0 && (l.includes('inst') || l.includes('ies') || l.includes('faculdade'))) map.instituicao = i;
   });
   return map;
 }
 
 function _extractAlunoRow(cols, colMap) {
+  const cpfCell = colMap.cpf >= 0 ? cols[colMap.cpf] || '' : '';
+  const turmaCell = colMap.turma >= 0 ? cols[colMap.turma] || '' : '';
   return {
     nome: colMap.nome >= 0 ? cols[colMap.nome] || '' : '',
+    _cpfRaw: cpfCell,
     email: colMap.email >= 0 ? (cols[colMap.email] || '').toLowerCase().trim() : '',
     telefone: colMap.telefone >= 0 ? cols[colMap.telefone] || '' : '',
     instituicao: colMap.instituicao >= 0 ? cols[colMap.instituicao] || '' : '',
+    turmaRaw: turmaCell
   };
 }
 
@@ -14538,22 +15383,21 @@ function _renderAlunoImportPreview(rows) {
   const preview = document.getElementById('alunoImportPreview');
   const tbody = document.getElementById('alunoImportPreviewBody');
   const stats = document.getElementById('alunoImportStats');
-  const esc = s => (s||'').replace(/</g,'&lt;');
+  const esc = s => (s || '').replace(/</g, '&lt;');
+  const cbtn = document.getElementById('alunoImportBtnConferir');
   preview.style.display = 'block';
   tbody.innerHTML = rows.slice(0, 5).map(r =>
-    `<tr><td style="padding:6px 10px">${esc(r.nome)}</td><td style="padding:6px 10px">${esc(r.email)}</td><td style="padding:6px 10px">${esc(r.telefone)}</td><td style="padding:6px 10px">${esc(r.instituicao)}</td></tr>`
+    `<tr><td style="padding:6px 10px">${esc(r.nome)}</td><td style="padding:6px 10px;font-family:monospace;font-size:0.72rem">${esc(r.cpf)}</td><td style="padding:6px 10px">${esc(r.email)}</td><td style="padding:6px 10px">${esc(r.turma)}</td><td style="padding:6px 10px">${esc(r.telefone)}</td></tr>`
   ).join('');
-  stats.textContent = `${rows.length} registro(s) encontrado(s) com email válido` + (rows.length > 5 ? ` (mostrando 5)` : '');
-  document.getElementById('alunoImportBtn').disabled = rows.length === 0;
-  document.getElementById('alunoImportBtn').style.opacity = rows.length === 0 ? '0.5' : '1';
+  stats.textContent = rows.length + ' registro(s) válido(s) (CPF+nome+email+turma)' + (rows.length > 5 ? ' — mostrando 5' : '');
+  const ok = rows.length > 0 && document.getElementById('alunoImportIES').value;
+  if (cbtn) {
+    cbtn.disabled = !ok;
+    cbtn.style.opacity = ok ? '1' : '0.5';
+  }
 }
 
-/**
- * alunos_master.instituicao segue o mesmo formato do filtro da aba (nome da IES), não o slug.
- * O select de importação usa slug no value — converte para nome antes do insert.
- */
 function _resolveInstituicaoNomeForAlunos(slugOrNome) {
-  // Sempre retorna o SLUG para uniformizar o campo instituicao no alunos_master
   const raw = String(slugOrNome || '').trim();
   if (!raw) return '';
   const list = window._instData || [];
@@ -14567,85 +15411,157 @@ function _resolveInstituicaoNomeForAlunos(slugOrNome) {
   return raw;
 }
 
-window._executeAlunoImport = async function() {
-  const rows = window._alunoImportRows;
-  if (!rows.length) return;
+window._alunoImportConferir = async function() {
   const iesOverride = document.getElementById('alunoImportIES').value;
-  const instFromSelect = _resolveInstituicaoNomeForAlunos(iesOverride);
-  const btn = document.getElementById('alunoImportBtn');
-  const resultEl = document.getElementById('alunoImportResult');
+  const instSlug = _resolveInstituicaoNomeForAlunos(iesOverride);
+  const valid = window._alunoImportValidRows || [];
+  if (!instSlug) {
+    showToast('Selecione a IES de destino.', 'warn');
+    return;
+  }
+  if (!valid.length) {
+    showToast('Nenhuma linha válida. Use colunas: nome, CPF, e-mail, turma.', 'warn');
+    return;
+  }
+  const btn = document.getElementById('alunoImportBtnConferir');
   btn.disabled = true;
-  btn.textContent = 'Importando...';
+  btn.textContent = 'Conferindo...';
+  try {
+    const inst = (window._instData || []).find(i => i.slug === instSlug);
+    const nomeIES = inst?.nome || instSlug;
+    const q = 'select=id,cpf,nome,email,turma,instituicao&or=(instituicao.eq.' + encodeURIComponent(instSlug) + ',instituicao.eq.' + encodeURIComponent(nomeIES) + ')&limit=8000';
+    const existingRows = await _supaRestAdmin('alunos_master', q) || [];
+    const byCpf = {};
+    existingRows.forEach(r => {
+      let c = String(r.cpf || '').replace(/\D/g, '');
+      if (c.length === 10) c = '0' + c;
+      if (c.length === 11) byCpf[c] = r;
+    });
+    const newRows = [];
+    const dupRows = [];
+    valid.forEach(r => {
+      const ex = byCpf[r.cpf];
+      if (ex) dupRows.push(Object.assign({}, r, { _existing: ex }));
+      else newRows.push(r);
+    });
+    window._alunoImportConference = { instituicao: instSlug, newRows, dupRows, valid };
+    const conf = document.getElementById('alunoImportConference');
+    conf.innerHTML =
+      '<strong>' + valid.length + '</strong> linha(s) na planilha.<br>' +
+      '<span style="color:var(--green)">• ' + newRows.length + ' novo(s)</span> (CPF não cadastrado nesta IES)<br>' +
+      '<span style="color:var(--amber)">• ' + dupRows.length + ' já cadastrado(s)</span> (mesmo CPF)';
+    document.getElementById('alunoImportStep1').style.display = 'none';
+    document.getElementById('alunoImportStep2').style.display = 'block';
+  } catch (e) {
+    showToast('Erro: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Conferir importação';
+  }
+};
+
+window._alunoImportVoltar = function() {
+  document.getElementById('alunoImportStep2').style.display = 'none';
+  document.getElementById('alunoImportStep1').style.display = 'block';
+  document.getElementById('alunoImportResult').style.display = 'none';
+};
+
+window._executeAlunoImport = async function() {
+  const data = window._alunoImportConference;
+  if (!data || !data.instituicao) {
+    showToast('Faça a conferência novamente.', 'warn');
+    return;
+  }
+  const dupMode = document.querySelector('input[name="alunoImportDup"]:checked')?.value || 'skip';
+  const instituicao = data.instituicao;
+  const resultEl = document.getElementById('alunoImportResult');
+  const execBtn = document.getElementById('alunoImportBtnExec');
+  execBtn.disabled = true;
+  execBtn.textContent = 'Importando...';
   resultEl.style.display = 'none';
 
+  let added = 0;
+  let updated = 0;
+  let skippedDup = 0;
+  let errors = 0;
+  const ts = new Date().toISOString();
+
   try {
-    // Buscar emails existentes (via REST — SDK trava)
-    const existing = await _supaRestAdmin('alunos_master', 'select=email');
-    const existingEmails = new Set((existing || []).map(e => e.email.toLowerCase().trim()));
+    const toInsert = data.newRows.map(r => ({
+      cpf: r.cpf,
+      nome: r.nome.trim(),
+      email: r.email,
+      contato: r.telefone || '',
+      instituicao,
+      turma: r.turma || null,
+      cadastro_origem: 'ies',
+      updated_at: ts
+    }));
 
-    let added = 0, dupes = 0, errors = 0;
-    const toInsert = [];
-
-    for (const r of rows) {
-      const email = r.email.toLowerCase().trim();
-      if (existingEmails.has(email)) { dupes++; continue; }
-      const instCell = String(r.instituicao || '').trim();
-      const instituicao = instFromSelect || _resolveInstituicaoNomeForAlunos(instCell) || instCell;
-      toInsert.push({
-        nome: r.nome || '',
-        email: email,
-        contato: r.telefone || '',
-        instituicao,
-        cadastro_origem: 'ies'
-      });
-      existingEmails.add(email); // avoid self-duplicates in batch
-    }
-
-    if (toInsert.length > 0) {
-      // Insert in batches of 500 (via REST)
-      for (let i = 0; i < toInsert.length; i += 500) {
-        const batch = toInsert.slice(i, i + 500);
-        try {
-          const resp = await _supaWrite('alunos_master', 'POST', batch);
-          if (!resp.ok) {
-            const errTxt = await resp.text();
-            errors += batch.length;
-            console.error('Import error:', resp.status, errTxt);
-          } else {
-            added += batch.length;
-          }
-        } catch (e) {
-          errors += batch.length;
-          console.error('Import error:', e);
-        }
+    for (let i = 0; i < toInsert.length; i += 500) {
+      const batch = toInsert.slice(i, i + 500);
+      try {
+        const resp = await _supaWrite('alunos_master?on_conflict=cpf,instituicao', 'POST', batch);
+        if (resp.ok) added += batch.length;
+        else errors += batch.length;
+      } catch (e) {
+        errors += batch.length;
       }
     }
 
-    const msg = `✅ ${added} adicionado(s), ${dupes} duplicado(s), ${errors} erro(s)`;
-    resultEl.style.display = 'block';
-    resultEl.style.background = errors > 0 ? 'rgba(245,158,11,0.1)' : 'rgba(34,197,94,0.1)';
-    resultEl.style.color = errors > 0 ? 'var(--amber)' : 'var(--green)';
-    resultEl.textContent = msg;
-    showToast(msg, errors > 0 ? 'info' : 'success');
+    if (dupMode === 'update' && data.dupRows.length) {
+      for (const r of data.dupRows) {
+        const ex = r._existing;
+        if (!ex || !ex.id) {
+          errors++;
+          continue;
+        }
+        const body = { email: r.email, turma: r.turma || null, updated_at: ts };
+        try {
+          const resp = await _supaWrite('alunos_master?id=eq.' + encodeURIComponent(ex.id), 'PATCH', body);
+          if (resp.ok) updated++;
+          else errors++;
+        } catch (e) {
+          errors++;
+        }
+      }
+    } else {
+      skippedDup = data.dupRows.length;
+    }
 
-    // Reload alunos list (recarrega dropdown IES e dispara busca atual)
+    resultEl.style.display = 'block';
+    resultEl.style.background = errors > 0 ? 'rgba(245,158,11,0.12)' : 'rgba(34,197,94,0.1)';
+    resultEl.style.color = errors > 0 ? 'var(--amber)' : 'var(--green)';
+    const msg =
+      '✅ ' +
+      added +
+      ' novo(s)' +
+      (dupMode === 'update' ? ', ' + updated + ' atualizado(s) (e-mail/turma)' : ', ' + skippedDup + ' duplicado(s) ignorados') +
+      (errors ? ', ' + errors + ' erro(s)' : '');
+    resultEl.textContent = msg;
+    showToast('Importação concluída.', errors ? 'info' : 'success');
+
     window._alunosLoaded = false;
     if (typeof window._loadAlunosMaster === 'function') {
       await window._loadAlunosMaster();
       window._onAlunosFilterChange();
     }
-
-  } catch(e) {
+  } catch (e) {
     resultEl.style.display = 'block';
     resultEl.style.background = 'rgba(220,38,38,0.1)';
     resultEl.style.color = 'var(--accent)';
     resultEl.textContent = 'Erro: ' + e.message;
-    showToast('Erro na importação: ' + e.message, 'error');
+    showToast(e.message, 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Importar';
+    execBtn.disabled = false;
+    execBtn.textContent = 'Confirmar importação';
   }
 };
+
+document.getElementById('alunoImportIES')?.addEventListener('change', function() {
+  const rows = window._alunoImportValidRows || [];
+  if (rows.length) _renderAlunoImportPreview(rows);
+});
 </script>
 
 <!-- ═══════════ MODAL: VISUALIZAR QUESTÕES ENVIADAS ═══════════ -->

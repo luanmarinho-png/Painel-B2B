@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel Institucional — Período detalhado</title>
+  <script src="/session-fix.js?v=2"></script>
+  <link rel="stylesheet" href="shared.css?v=2">
+  <style>
+    .btn-logout {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px;
+      background: transparent; border: 1px solid #ccc;
+      color: #555; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; font-family: inherit;
+      white-space: nowrap;
+    }
+    .btn-logout:hover { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.5); color: #dc2626; }
+    .btn-logout svg { flex-shrink: 0; }
+  </style>
+</head>
+<body data-page="period">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark" data-institution-initials>PT</div>
+        <div class="brand-copy">
+          <div class="brand-title" data-institution-brand>PITÁGORAS BACABAL × MedCof</div>
+          <div class="brand-subtitle">Leitura comparativa por recorte temporal</div>
+        </div>
+      </div>
+      <nav class="main-nav" aria-label="Navegação principal">
+        <a class="nav-link" href="index.html">Inicial</a>
+        <a class="nav-link" href="engajamento.html">Engajamento</a>
+        <a class="nav-link active" href="periodo-detalhado.html">Período detalhado</a>
+        <a class="nav-link" href="simulado-personalizado.html">Simulados</a>
+      </nav>
+      <button class="btn-logout" id="btnLogout" onclick="handleLogout()" title="Sair da conta">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sair
+      </button>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero-card hero-strong">
+      <div class="hero-kicker">Página 3</div>
+      <h1>Período detalhado dos alunos</h1>
+      <p class="hero-sub">Esta página foi organizada para aprofundar a leitura por recorte temporal, facilitando comparação, distribuição e compreensão do comportamento dos alunos dentro de cada período avaliado. O foco aqui é análise operacional detalhada, sem perder clareza visual.</p>
+      <div class="hero-chip-row">
+        <span class="hero-chip">Comparação entre recortes do ciclo</span>
+        <span class="hero-chip">Filtros rápidos por aluno e engajamento</span>
+        <span class="hero-chip">Leitura clara para acompanhamento fino</span>
+      </div>
+    </section>
+
+    <section class="section-shell">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Seleção de período</div>
+          <h2>Escolha o recorte que deseja analisar</h2>
+          <p>Cada cartão representa um período da base. Ao selecionar um recorte, a página atualiza automaticamente os KPIs, destaques e a tabela detalhada.</p>
+        </div>
+      </div>
+      <div class="period-selector-grid" id="periodSelectorGrid"></div>
+    </section>
+
+    <section class="section-shell">
+      <div class="export-card">
+        <div class="export-head">
+          <div class="export-title">
+            <div class="export-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" class="export-icon-svg">
+                <path d="M12 3v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                <path d="M8 10.5 12 14.5l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="M5 18h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.5" opacity="0.5"></rect>
+              </svg>
+            </div>
+            <div>
+              <h3>Baixar análises em Excel</h3>
+              <p>Marque os períodos desejados e baixe uma planilha compatível com Excel para uso da coordenação.</p>
+            </div>
+          </div>
+        </div>
+        <div class="export-grid">
+          <div class="export-options" id="exportPeriodOptions"></div>
+          <div class="export-actions">
+            <button class="btn-select-all" type="button" onclick="toggleAllExportPeriods()">Selecionar ou limpar todos</button>
+            <button class="btn-export" type="button" onclick="downloadSelectedPeriods()">Baixar planilha Excel (.csv)</button>
+            <div class="export-hint" id="exportHint">Nenhum período selecionado.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-shell">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Recorte selecionado</div>
+          <h2 id="periodSelectedLabel">—</h2>
+          <p id="periodSelectedSummary">—</p>
+        </div>
+      </div>
+
+      <div class="kpi-grid" id="periodKpis"></div>
+
+      <div class="grid-3" id="periodInsights" style="margin-top:18px"></div>
+
+      <div class="filters">
+        <div class="filter-group">
+          <label for="periodSearchInput">Buscar aluno</label>
+          <input id="periodSearchInput" type="text" placeholder="Digite o nome...">
+        </div>
+        <div class="filter-group">
+          <label for="periodSortSelect">Ordenar por</label>
+          <select id="periodSortSelect">
+            <option value="questoes_desc">Questões (maior primeiro)</option>
+            <option value="questoes_asc">Questões (menor primeiro)</option>
+            <option value="tempo_min_desc">Tempo de uso (maior)</option>
+            <option value="tempo_min_asc">Tempo de uso (menor)</option>
+            <option value="nome_asc">Nome (A→Z)</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="periodTractionSelect">Filtrar engajamento</label>
+          <select id="periodTractionSelect">
+            <option value="">Todos os alunos</option>
+            <option value="alto">Alto — 20 ou mais questões/dia</option>
+            <option value="medio">Médio — 10 a 19,9 questões/dia</option>
+            <option value="baixo">Baixo — menos de 10 questões/dia</option>
+          </select>
+        </div>
+        <div class="results-count" id="periodResultsCount"></div>
+      </div>
+    </section>
+
+    <section class="section-shell">
+      <div class="table-head">
+        <div>
+          <div class="section-kicker">Detalhamento por aluno</div>
+          <h3>Tabela detalhada do período</h3>
+          <p class="helper-text">Leitura detalhada do comportamento de cada aluno no recorte selecionado, com foco em comparação e apoio ao acompanhamento.</p>
+        </div>
+      </div>
+
+      <!-- Filtro por período acadêmico — injetado via JS para IES com turma -->
+      <div id="periodTurmaFilterBar" style="display:none"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:42px">#</th>
+              <th>Aluno</th>
+              <th class="num">Período</th>
+              <th class="num">Tempo de uso</th>
+              <th class="num">Questões</th>
+              <th class="num">Aulas</th>
+              <th class="num">Vídeos</th>
+              <th class="num">Flashcards</th>
+              <th class="num" style="text-align:center">Engajamento do período</th>
+            </tr>
+          </thead>
+          <tbody id="periodTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="pagination" id="periodPagination" style="margin-top:14px"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    Página de <strong data-institution-brand>PITÁGORAS BACABAL × MedCof</strong> — apoio à comparação e leitura mais fina dos recortes avaliados.
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="dashboard-data.js"></script>
+  <script src="shared.js?v=2"></script>
+<script src="/brand-loader.js?v=2"></script>
+</body>
+</html>

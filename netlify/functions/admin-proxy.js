@@ -68,7 +68,11 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'JSON inválido' }) };
     }
 
-    const { table, method, query, body, prefer, range } = payload;
+    const { table, method, query, body, prefer, range, requireSuperadmin } = payload;
+
+    if (requireSuperadmin === true && role !== 'superadmin') {
+      return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Apenas superadmin pode executar esta operação' }) };
+    }
 
     if (!table) {
       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Campo table obrigatório' }) };

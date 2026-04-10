@@ -9,15 +9,40 @@ Uso:
   python3 sync-netlify.py          # só sincroniza
   python3 sync-netlify.py --deploy # sincroniza e faz deploy em seguida
 """
-import json, urllib.request, urllib.parse, os, sys, base64, ssl
+import json, urllib.request, urllib.parse, urllib.error, os, sys, base64, ssl
 
 # Ignora verificação de certificado SSL (problema comum no macOS com Python 3.13)
 _SSL_CTX = ssl._create_unverified_context()
 
-TOKEN   = "nfc_WMdi7KsBiBga5RhzHszLmtHBZhEex96G6828"
-SITE_ID = "9a61aead-5bfa-4efb-a3f8-fe3431c2c684"
+SITE_ID = os.environ.get("NETLIFY_SITE_ID") or "9a61aead-5bfa-4efb-a3f8-fe3431c2c684"
 API     = "https://api.netlify.com/api/v1"
 BASE    = os.path.dirname(os.path.abspath(__file__))
+
+def _load_dotenv():
+    path = os.path.join(BASE, ".env")
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8-sig") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if not key:
+                continue
+            prev = (os.environ.get(key) or "").strip()
+            if not prev:
+                os.environ[key] = val
+
+def _netlify_auth_header():
+    t = os.environ.get("NETLIFY_AUTH_TOKEN") or os.environ.get("NETLIFY_TOKEN")
+    if not t or not str(t).strip():
+        print("ERRO: defina NETLIFY_AUTH_TOKEN (https://app.netlify.com/user/applications#personal-access-tokens)")
+        print("      ou adicione NETLIFY_AUTH_TOKEN no .env")
+        sys.exit(1)
+    return f"Bearer {str(t).strip()}"
 
 # Arquivos/pastas que NUNCA devem ser baixados (gerados localmente)
 IGNORE_PREFIXES = [
@@ -30,9 +55,19 @@ IGNORE_FILES = {
 
 def api_get(path):
     req = urllib.request.Request(f"{API}{path}",
-          headers={"Authorization": f"Bearer {TOKEN}"})
-    with urllib.request.urlopen(req, context=_SSL_CTX) as r:
-        return json.loads(r.read())
+          headers={"Authorization": _netlify_auth_header()})
+    try:
+        with urllib.request.urlopen(req, context=_SSL_CTX) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        if e.code == 401:
+            print("\n❌ 401 — token inválido ou revogado. Atualize NETLIFY_AUTH_TOKEN no .env")
+            print("   https://app.netlify.com/user/applications#personal-access-tokens")
+            print("   Se exportou um token errado no terminal: unset NETLIFY_AUTH_TOKEN")
+        elif body:
+            print("\nResposta:", body[:400])
+        raise SystemExit(1) from e
 
 def find_good_deploy():
     deploys = api_get(f"/sites/{SITE_ID}/deploys?per_page=20")
@@ -139,6 +174,7 @@ def collect_template_paths():
     return templates
 
 if __name__ == "__main__":
+    _load_dotenv()
     n = sync()
     if "--deploy" in sys.argv:
         if n == 0:

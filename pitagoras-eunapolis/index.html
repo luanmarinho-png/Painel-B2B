@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel Institucional — Página Inicial</title>
+  <script src="/session-fix.js?v=2"></script>
+  <link rel="stylesheet" href="shared.css?v=2">
+  <style>
+    .btn-logout {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px;
+      background: transparent; border: 1px solid #ccc;
+      color: #555; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; font-family: inherit;
+      white-space: nowrap;
+    }
+    .btn-logout:hover { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.5); color: #dc2626; }
+    .btn-logout svg { flex-shrink: 0; }
+  </style>
+</head>
+<body data-page="home">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark" data-institution-initials>PT</div>
+        <div class="brand-copy">
+          <div class="brand-title" data-institution-brand>PITÁGORAS EUNÁPOLIS × MedCof</div>
+          <div class="brand-subtitle">Painel institucional de engajamento e simulado</div>
+        </div>
+      </div>
+      <nav class="main-nav" aria-label="Navegação principal">
+        <a class="nav-link active" href="index.html">Inicial</a>
+        <a class="nav-link" href="engajamento.html">Engajamento</a>
+        <a class="nav-link" href="periodo-detalhado.html">Período detalhado</a>
+        <a class="nav-link" href="simulado-personalizado.html">Simulados</a>
+      </nav>
+      <button class="btn-logout" id="btnLogout" onclick="handleLogout()" title="Sair da conta">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sair
+      </button>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero-card hero-strong home-stage">
+      <div class="hero-kicker">Página inicial</div>
+      <h1 id="homeBrandHeading">Painel institucional PITÁGORAS EUNÁPOLIS × MedCof</h1>
+      <p class="hero-sub">Uma navegação clara para acompanhar engajamento, leitura por período e desempenho no simulado na caminhada rumo ao conceito 5 no ENAMED.</p>
+
+      <div class="home-brand-center">
+        <div class="home-brand-pill">Caminhada institucional rumo ao conceito 5</div>
+
+        <div class="home-logo-stack">
+          <div class="home-logo-card institution" id="institutionLogoSlot">
+            <img class="home-institution-logo" src="logo_pitagoras-eunapolis.png" alt="Logo da PITÁGORAS EUNÁPOLIS">
+          </div>
+
+          <div class="home-logo-connector" aria-hidden="true">×</div>
+
+          <div class="home-logo-card medcof">
+            <img src="logo-novo-medcof.avif" alt="Logo do Grupo MedCof" class="medcof-logo-img" style="max-width:160px;max-height:140px;object-fit:contain;display:block;margin:auto">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-shell home-map-section">
+      <div class="section-head home-map-head">
+        <div>
+          <div class="section-kicker">Mapa do painel</div>
+          <h2>Três páginas. Três focos de leitura.</h2>
+          <p>Escolha a página ideal para reunião, acompanhamento ou tomada de decisão.</p>
+        </div>
+      </div>
+
+      <div class="home-page-grid">
+
+        <!-- Card 1 — Inicial -->
+        <a class="home-page-card home-page-card-neutral" href="index.html">
+          <div class="home-page-card-stripe"></div>
+          <div class="home-page-card-body">
+            <div class="home-page-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+              </svg>
+            </div>
+            <div class="home-page-index">Página 1</div>
+            <h3>Inicial</h3>
+            <p>Apresenta o painel, a parceria institucional e o direcionamento estratégico da caminhada rumo ao conceito 5.</p>
+            <div class="home-page-link">Abrir página inicial →</div>
+          </div>
+        </a>
+
+        <!-- Card 2 — Engajamento -->
+        <a class="home-page-card home-page-card-green" href="engajamento.html">
+          <div class="home-page-card-stripe"></div>
+          <div class="home-page-card-body">
+            <div class="home-page-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+              </svg>
+            </div>
+            <div class="home-page-index">Página 2</div>
+            <h3>Engajamento</h3>
+            <p>Mostra o ritmo de uso da plataforma, o engajamento do grupo e quem precisa de reforço na rotina de estudo.</p>
+            <div class="home-page-link">Abrir engajamento →</div>
+          </div>
+        </a>
+
+        <!-- Card 3 — Período detalhado -->
+        <a class="home-page-card home-page-card-blue" href="periodo-detalhado.html">
+          <div class="home-page-card-stripe"></div>
+          <div class="home-page-card-body">
+            <div class="home-page-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+            </div>
+            <div class="home-page-index">Página 3</div>
+            <h3>Período detalhado</h3>
+            <p>Organiza os alunos por recorte temporal para facilitar comparação, leitura operacional e análise por período.</p>
+            <div class="home-page-link">Abrir período detalhado →</div>
+          </div>
+        </a>
+
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    Painel institucional <strong data-institution-brand>PITÁGORAS EUNÁPOLIS × MedCof</strong> — estrutura multipágina pronta para uso no Google Sites.
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="dashboard-data.js"></script>
+  <script src="shared.js?v=2"></script>
+<script src="/brand-loader.js?v=2"></script>
+</body>
+</html>

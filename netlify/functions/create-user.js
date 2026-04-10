@@ -3,6 +3,7 @@
 // Usa service_role key no servidor — nunca exposta no frontend
 
 const SUPABASE_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
+const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
 const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTMwMjEzOCwiZXhwIjoyMDkwODc4MTM4fQ.M6ZGpySPaj1ecL9rXS3q9UM4FnfD6Cz3eA0tFWqHi4c';
 
 const CORS = {
@@ -28,7 +29,34 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
+  const authHeader = event.headers.authorization || event.headers.Authorization || '';
+  const userToken = authHeader.replace(/^Bearer\s+/i, '');
+  if (!userToken) {
+    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Token não fornecido' }) };
+  }
+
+  let callerRole;
+  try {
+    const userResp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: ANON_KEY, Authorization: `Bearer ${userToken}` }
+    });
+    if (!userResp.ok) {
+      return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Token inválido' }) };
+    }
+    const caller = await userResp.json();
+    callerRole = caller.user_metadata?.role;
+    if (callerRole !== 'admin' && callerRole !== 'superadmin') {
+      return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Acesso negado' }) };
+    }
+  } catch (e) {
+    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Falha ao validar sessão' }) };
+  }
+
   const { email, nome, role, instituicao, senha } = body;
+
+  if (role === 'admin' && callerRole !== 'superadmin') {
+    return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Apenas superadmin pode atribuir a função admin.' }) };
+  }
 
   if (!email || !nome || !role || !senha) {
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Campos obrigatórios: email, nome, role, senha' }) };

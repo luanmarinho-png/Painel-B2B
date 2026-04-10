@@ -3,14 +3,13 @@
 Define OPENAI_API_KEY no Netlify com escopos Builds + Functions (serverless enxergam a chave).
 
 Lê a chave do .env na raiz (OPENAI_API_KEY ou openai_api_key).
-Usa o mesmo TOKEN e SITE_ID do deploy-safe.py (ou NETLIFY_AUTH_TOKEN / NETLIFY_SITE_ID).
+Usa NETLIFY_AUTH_TOKEN e NETLIFY_SITE_ID (ou valores no .env na raiz).
 
 Uso: python3 scripts/netlify-set-openai-env.py
 Depois: novo deploy (python3 deploy-safe.py) para as functions pegarem o valor atualizado.
 """
 import json
 import os
-import re
 import sys
 import urllib.error
 import urllib.request
@@ -19,14 +18,20 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API = "https://api.netlify.com/api/v1"
 
 
-def _read_deploy_safe_const(name):
-    path = os.path.join(BASE_DIR, "deploy-safe.py")
+def _load_dotenv_root():
+    path = os.path.join(BASE_DIR, ".env")
     if not os.path.isfile(path):
-        return None
+        return
     with open(path, encoding="utf-8") as f:
-        text = f.read()
-    m = re.search(rf"^{name}\s*=\s*\"([^\"]+)\"", text, re.MULTILINE)
-    return m.group(1) if m else None
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
 
 
 def load_openai_key():
@@ -69,11 +74,12 @@ def api_json_error(tok, method, path, body=None):
 
 
 def main():
-    tok = os.environ.get("NETLIFY_AUTH_TOKEN") or _read_deploy_safe_const("TOKEN")
-    site_id = os.environ.get("NETLIFY_SITE_ID") or _read_deploy_safe_const("SITE_ID")
+    _load_dotenv_root()
+    tok = os.environ.get("NETLIFY_AUTH_TOKEN") or os.environ.get("NETLIFY_TOKEN")
+    site_id = os.environ.get("NETLIFY_SITE_ID") or "9a61aead-5bfa-4efb-a3f8-fe3431c2c684"
 
-    if not tok or not site_id:
-        print("ERRO: defina NETLIFY_AUTH_TOKEN e NETLIFY_SITE_ID ou mantenha deploy-safe.py com TOKEN/SITE_ID.")
+    if not tok:
+        print("ERRO: defina NETLIFY_AUTH_TOKEN no ambiente ou no .env (token em https://app.netlify.com/user/applications#personal-access-tokens).")
         sys.exit(1)
 
     openai_key = load_openai_key()

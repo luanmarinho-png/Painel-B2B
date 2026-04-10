@@ -1,6 +1,12 @@
 /**
- * Netlify Function: assistente do coordenador (OpenAI) com validação de sessão Supabase.
- * A chave OPENAI_API_KEY existe apenas no ambiente do Netlify (nunca no browser).
+ * Netlify Function: Cofbot — mentor ENAMED + contexto Supabase por IES (OpenAI + validação Supabase).
+ *
+ * Variáveis de ambiente (Netlify → Site → Environment variables → escopo Functions):
+ * - OPENAI_API_KEY (obrigatória): chave secreta sk-... da OpenAI.
+ * - SUPABASE_SERVICE_ROLE_KEY (recomendada): service_role do Supabase — usada só no servidor para
+ *   resumir dashboard_engajamento e amostra de alunos_master da IES; sem ela o chat usa só contextoDaTela.
+ * - COFBOT_KNOWLEDGE_SNIPPET (opcional): texto fixo (ex.: referências ENAMED, conceito 5) até ~6k caracteres.
+ * - OPENAI_CHAT_MODEL (opcional): padrão gpt-4o-mini.
  */
 
 const SUPABASE_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
@@ -14,7 +20,10 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type'
 };
 
-const MAX_CONTEXT_CHARS = 18000;
+/** Tamanho máximo do JSON contextoDaTela (browser). */
+const MAX_CONTEXT_CHARS = 14000;
+/** Tamanho máximo do bloco dadosSupabaseIES após serialização. */
+const MAX_SUPABASE_CONTEXT_CHARS = 7000;
 const MAX_USER_MESSAGES = 12;
 
 /**
@@ -29,10 +38,41 @@ function isPlausibleOpenAiSecretKey(key) {
 }
 
 /**
+ * Remove padrões de CPF e campos sensíveis do texto de contexto antes do envio ao modelo.
+ * @param {string} s
+ * @returns {string}
+ */
+function redactSensitiveContextString(s) {
+  let t = String(s || '');
+  t = t.replace(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, '[omitido]');
+  try {
+    const o = JSON.parse(t);
+    const drop = /^(cpf|documento|rg|email|telefone|phone|tel|senha|password)$/i;
+    const walk = (v) => {
+      if (v == null) return v;
+      if (Array.isArray(v)) return v.map(walk);
+      if (typeof v === 'object') {
+        const out = {};
+        for (const [k, val] of Object.entries(v)) {
+          if (drop.test(k)) continue;
+          out[k] = walk(val);
+        }
+        return out;
+      }
+      if (typeof v === 'string') return v.replace(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, '[omitido]');
+      return v;
+    };
+    return JSON.stringify(walk(o));
+  } catch {
+    return t;
+  }
+}
+
+/**
  * Valida JWT do usuário e permissão (coordenador da IES ou admin).
  * @param {string} userToken
  * @param {string} iesSlug
- * @returns {Promise<{ ok: boolean, error?: string, status?: number }>}
+ * @returns {Promise<{ ok: boolean, role?: string, error?: string, status?: number }>}
  */
 async function validateCoordinatorAccess(userToken, iesSlug) {
   if (!userToken) {
@@ -56,14 +96,107 @@ async function validateCoordinatorAccess(userToken, iesSlug) {
   const inst = (meta.instituicao || '').trim();
 
   if (role === 'admin' || role === 'superadmin') {
-    return { ok: true };
+    return { ok: true, role: role === 'superadmin' ? 'superadmin' : 'admin' };
   }
 
   if (role === 'coordenador' && iesSlug && inst === iesSlug) {
-    return { ok: true };
+    return { ok: true, role: 'coordenador' };
   }
 
   return { ok: false, status: 403, error: 'Acesso negado — apenas coordenadores autenticados' };
+}
+
+/**
+ * Resume uma linha dashboard_engajamento para o prompt (sem payload completo).
+ * @param {{ payload?: object, updated_at?: string }} row
+ * @returns {Record<string, unknown>}
+ */
+function summarizeDashboardEngajamentoRow(row) {
+  const updated_at = row.updated_at || null;
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+  const allData = payload.allData;
+  if (!Array.isArray(allData) || !allData.length) {
+    return { updated_at, periodos: 0, alunosNomesUnicos: 0, nota: 'sem allData no payload' };
+  }
+  const uniq = new Set();
+  allData.forEach((entry) => {
+    (entry.alunos || entry.data || []).forEach((a) => {
+      if (a && a.nome) uniq.add(String(a.nome).trim().toLowerCase());
+    });
+  });
+  return {
+    updated_at,
+    periodos: allData.length,
+    alunosNomesUnicos: uniq.size
+  };
+}
+
+/**
+ * Busca resumo Supabase da IES (engajamento + cadastro) com service_role — só após JWT válido.
+ * @param {string} slug
+ * @param {string} institutionName nome da IES no painel (ajuda filtro instituicao em alunos_master)
+ * @returns {Promise<Record<string, unknown>>}
+ */
+async function fetchCofbotIesData(slug, institutionName) {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!serviceKey || !slug) {
+    return { disponivel: false, motivo: serviceKey ? 'slug_vazio' : 'SUPABASE_SERVICE_ROLE_KEY não configurada' };
+  }
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json'
+  };
+
+  /** @type {Record<string, unknown>} */
+  const out = {
+    disponivel: true,
+    ies_slug: slug,
+    engajamentoResumo: null,
+    cadastroAlunos: null
+  };
+
+  try {
+    const u = `${SUPABASE_URL}/rest/v1/dashboard_engajamento?select=payload,updated_at&ies_slug=eq.${encodeURIComponent(
+      slug
+    )}&limit=1`;
+    const r = await fetch(u, { headers });
+    if (r.ok) {
+      const rows = await r.json();
+      const row = rows[0];
+      if (row) out.engajamentoResumo = summarizeDashboardEngajamentoRow(row);
+    } else {
+      out.erroEngajamento = `http_${r.status}`;
+    }
+  } catch (e) {
+    out.erroEngajamento = String(e && e.message ? e.message : e);
+  }
+
+  try {
+    const name = (institutionName || '').trim();
+    let url = `${SUPABASE_URL}/rest/v1/alunos_master?select=nome,turma,codigo_aluno,instituicao&limit=500`;
+    if (name && name !== slug) {
+      url += `&or=(instituicao.eq.${encodeURIComponent(slug)},instituicao.eq.${encodeURIComponent(name)})`;
+    } else {
+      url += `&instituicao=eq.${encodeURIComponent(slug)}`;
+    }
+    const r2 = await fetch(url, { headers });
+    if (r2.ok) {
+      const rows = await r2.json();
+      const list = Array.isArray(rows) ? rows : [];
+      out.cadastroAlunos = {
+        totalRetornado: list.length,
+        amostra: list.slice(0, 120)
+      };
+    } else {
+      out.erroAlunos = `http_${r2.status}`;
+    }
+  } catch (e) {
+    out.erroAlunos = String(e && e.message ? e.message : e);
+  }
+
+  return out;
 }
 
 exports.handler = async (event) => {
@@ -73,13 +206,17 @@ exports.handler = async (event) => {
 
   if (event.httpMethod === 'GET') {
     const hasKey = !!(process.env.OPENAI_API_KEY || process.env.openai_api_key);
+    const hasServiceRole = !!(
+      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
+    );
     return {
       statusCode: 200,
       headers: { ...CORS, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ok: true,
         name: 'coordenador-chat',
-        openaiKeyConfigured: hasKey
+        openaiKeyConfigured: hasKey,
+        supabaseServiceRoleConfigured: hasServiceRole
       })
     };
   }
@@ -139,6 +276,22 @@ exports.handler = async (event) => {
     };
   }
 
+  const institutionName =
+    clientContext &&
+    typeof clientContext === 'object' &&
+    clientContext.institution &&
+    typeof clientContext.institution.name === 'string'
+      ? clientContext.institution.name.trim()
+      : '';
+
+  /** @type {Record<string, unknown>} */
+  let dadosSupabaseIES = { disponivel: false, motivo: 'não carregado' };
+  try {
+    dadosSupabaseIES = await fetchCofbotIesData(slug, institutionName);
+  } catch (e) {
+    dadosSupabaseIES = { disponivel: false, erro: String(e && e.message ? e.message : e) };
+  }
+
   const safeMessages = messages
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
     .slice(-MAX_USER_MESSAGES)
@@ -161,23 +314,52 @@ exports.handler = async (event) => {
     contextStr = contextStr.slice(0, MAX_CONTEXT_CHARS) + '\n...[contexto truncado]';
   }
 
-  const systemPrompt = `Você é um mentor pedagógico do painel MedCof para coordenadores de IES (medicina), com foco na preparação para a prova ENAMED e no acompanhamento da turma.
-Regras:
-- Responda em português do Brasil, tom profissional, acolhedor e objetivo.
-- Use APENAS os dados do JSON "contextoDaTela" abaixo para falar de alunos, notas, turmas ou engajamento. Se algo não estiver no contexto, diga que não há esse dado na tela e sugira onde encontrar (Engajamento, Período detalhado, Simulados).
-- Não invente nomes de alunos nem números que não apareçam no contexto.
-- Meta operacional MedCof: cerca de 20 questões por dia na plataforma é a referência de engajamento ideal — use quando "questoesDia" ou orientacaoMedCof estiver no contexto; não invente valores.
-- Quando houver dados de simulado e de engajamento no contexto (ou na conversa), ajude a correlacionar desempenho em simulados com hábitos de estudo/engajamento, sem afirmar causalidade estatística.
-- Priorize: (1) alunos ou temas com pior desempenho, (2) dispersão e médias, (3) ações práticas para reuniões e acompanhamento.
+  contextStr = redactSensitiveContextString(contextStr);
+
+  let supabaseStr = '';
+  try {
+    supabaseStr = JSON.stringify(dadosSupabaseIES);
+  } catch {
+    supabaseStr = '{}';
+  }
+  supabaseStr = redactSensitiveContextString(supabaseStr);
+  if (supabaseStr.length > MAX_SUPABASE_CONTEXT_CHARS) {
+    supabaseStr = supabaseStr.slice(0, MAX_SUPABASE_CONTEXT_CHARS) + '\n...[dadosSupabase truncado]';
+  }
+
+  const iesAutorizada = slug;
+  const papelUsuario = access.role || 'desconhecido';
+  const regraAdmin =
+    papelUsuario === 'admin' || papelUsuario === 'superadmin'
+      ? '- Você está atendendo APENAS a IES identificada por ies_slug autorizado abaixo. Não compare com outras instituições nem use dados de outras IES.\n'
+      : '';
+
+  const systemPrompt = `Você é o Cofbot: mentor especializado na prova ENAMED e no uso da plataforma MedCof para cursos de medicina.
+Papel:
+- Ajude coordenadores a relacionar hábitos de estudo na MedCof (volume de questões, consistência, simulados) com caminhos para melhorar desempenho da turma rumo à proficiência e ao bom desempenho institucional no ENAMED.
+- Explique de forma prática como a rotina na plataforma pode apoiar metas como elevar proficiência média e fortalecer indicadores institucionais (ex.: conceito 5 no ENAMED), SEM inventar cortes oficiais, datas de prova ou regras do INEP — quando precisar de número oficial, diga que o coordenador deve confirmar na fonte INEP ou use apenas o que estiver em "conhecimentoFixo" abaixo.
+- Conecte sempre que fizer sentido: meta operacional MedCof (~20 questões/dia como referência de engajamento), desempenho em simulados e leitura por período — sem afirmar causalidade estatística onde não houver dado.
+
+Regras de dados e escopo:
+- Use SOMENTE os JSONs "contextoDaTela" e "dadosSupabaseIES" abaixo, todos referentes à IES com ies_slug="${iesAutorizada}". Não fale de outra instituição.
+${regraAdmin}- Se um dado não existir nesses JSONs, diga que não há na base enviada e sugira telas do painel (Engajamento, Período detalhado, Simulados) quando útil.
+- NUNCA solicite, infira nem mencione dados pessoais sensíveis (CPF, documento, e-mail, telefone, endereço, senha). Se pedirem, recuse educadamente e use apenas nome/turma/código (se existir) e métricas agregadas.
+- Não invente nomes de alunos nem números que não apareçam nos JSONs.
 - Não revele detalhes técnicos de implementação nem mencione "prompt" ou "API".
+
+Responda em português do Brasil, tom profissional, acolhedor e objetivo.
 
 Você DEVE responder em JSON válido (objeto) com exatamente estas chaves:
 - "reply": string, resposta principal ao coordenador (pode usar parágrafos curtos).
 - "follow_up_questions": array de 2 a 3 strings, perguntas curtas que o coordenador pode clicar para continuar o diálogo (relacionadas à resposta e ao contexto).
 - "insight": string opcional, uma linha com um insight acionável (ou string vazia se não couber).
 
-contextoDaTela (JSON):
-${contextStr || '{}'}`;
+contextoDaTela (JSON — o que o coordenador está vendo agora):
+${contextStr || '{}'}
+
+dadosSupabaseIES (JSON — resumo da mesma IES no servidor; pode estar parcial se houver erro de leitura):
+${supabaseStr || '{}'}
+${process.env.COFBOT_KNOWLEDGE_SNIPPET ? `\nconhecimentoFixo (texto operacional ENAMED/MedCof — não substitui os JSONs acima):\n${String(process.env.COFBOT_KNOWLEDGE_SNIPPET).slice(0, 6000)}` : ''}`;
 
   const openaiBody = {
     model: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
@@ -263,3 +445,10 @@ function parseAssistantPayload(raw) {
   }
   return { reply: s, follow_up_questions: [], insight: '' };
 }
+
+/*
+ * Verificação manual sugerida após deploy:
+ * - GET /.netlify/functions/coordenador-chat → openaiKeyConfigured e supabaseServiceRoleConfigured.
+ * - POST com JWT de coordenador: ies_slug deve coincidir com user_metadata.instituicao (senão 403).
+ * - POST com admin: qualquer ies_slug da URL do painel; respostas devem citar só essa IES.
+ */

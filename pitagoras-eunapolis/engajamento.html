@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel Institucional — Engajamento</title>
+  <script src="/session-fix.js?v=2"></script>
+  <link rel="stylesheet" href="shared.css?v=2">
+  <style>
+    .btn-logout {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px;
+      background: transparent; border: 1px solid #ccc;
+      color: #555; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; font-family: inherit;
+      white-space: nowrap;
+    }
+    .btn-logout:hover { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.5); color: #dc2626; }
+    .btn-logout svg { flex-shrink: 0; }
+  </style>
+</head>
+<body data-page="engagement">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark" data-institution-initials>PT</div>
+        <div class="brand-copy">
+          <div class="brand-title" data-institution-brand>PITÁGORAS EUNÁPOLIS × MedCof</div>
+          <div class="brand-subtitle">Leitura institucional de uso da plataforma</div>
+        </div>
+      </div>
+      <nav class="main-nav" aria-label="Navegação principal">
+        <a class="nav-link" href="index.html">Inicial</a>
+        <a class="nav-link active" href="engajamento.html">Engajamento</a>
+        <a class="nav-link" href="periodo-detalhado.html">Período detalhado</a>
+        <a class="nav-link" href="simulado-personalizado.html">Simulados</a>
+      </nav>
+      <button class="btn-logout" id="btnLogout" onclick="handleLogout()" title="Sair da conta">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sair
+      </button>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero-card hero-strong">
+      <div class="hero-kicker">Página 2</div>
+      <h1>Engajamento dos alunos na plataforma</h1>
+      <p class="hero-sub">Esta página concentra exclusivamente a leitura de uso da plataforma. O objetivo é mostrar ritmo de estudo, constância e intensidade de participação, destacando quem puxa o grupo, quem está estável e onde a coordenação pode agir para fortalecer aderência.</p>
+      <div class="hero-chip-row">
+        <span class="hero-chip">Base oficial de engajamento preservada</span>
+        <span class="hero-chip">Leitura focada em participação e rotina</span>
+        <span class="hero-chip">Sem mistura com os tempos da planilha nova</span>
+      </div>
+    </section>
+
+    <section class="section-shell">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Visão geral</div>
+          <h2>Painel executivo de engajamento do ciclo</h2>
+          <p>Resumo institucional do ciclo consolidado, valorizando volume de questões, tempo histórico de uso, intensidade média do grupo e distribuição de engajamento.</p>
+        </div>
+      </div>
+      <div class="kpi-grid" id="engagementKpis"></div>
+    </section>
+
+    <section class="section-shell">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Evolução do ciclo</div>
+          <h2>Progressão mensal de uso e resolução de questões</h2>
+          <p>O gráfico abaixo facilita a leitura do comportamento do grupo ao longo do tempo, com comparação entre horas de acesso e questões realizadas.</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel-card">
+          <div class="chart-frame" id="engagementMonthlyChart"></div>
+        </div>
+        <div class="panel-card">
+          <div class="section-kicker">Destaques do ciclo</div>
+          <h3>Insights de engajamento</h3>
+          <p class="helper-text">Leitura rápida dos principais pontos de atenção e destaque do comportamento do grupo.</p>
+          <div class="chart-summary" id="engagementInsights" style="margin-top:14px"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-shell">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Destaques do grupo</div>
+          <h2>Quem impulsiona e quem precisa de mais engajamento</h2>
+          <p>Comparativo rápido para apoiar alinhamentos com professores, coordenação e acompanhamento de rotina.</p>
+        </div>
+      </div>
+      <div class="spotlight-grid" id="engagementSpotlight"></div>
+    </section>
+
+    <section class="section-shell">
+      <div class="table-head">
+        <div>
+          <div class="section-kicker">Ranking consolidado</div>
+          <h3>Engajamento acumulado por aluno</h3>
+          <p class="helper-text">Classificação baseada no ciclo consolidado, com destaque para questões realizadas, intensidade média por dia e meses ativos.</p>
+        </div>
+      </div>
+
+      <div id="engagementTurmaSlot"></div>
+
+      <!-- Barra de filtro por período acadêmico — injetada via JS -->
+      <div id="engagementPeriodoBar" style="display:none;margin-bottom:10px"></div>
+
+      <div class="filters">
+        <div class="filter-group">
+          <label for="engagementSearchInput">Buscar aluno</label>
+          <input id="engagementSearchInput" type="text" placeholder="Digite o nome...">
+        </div>
+        <div class="filter-group">
+          <label for="engagementSortSelect">Ordenar por</label>
+          <select id="engagementSortSelect">
+            <option value="questoes_desc">Questões (maior primeiro)</option>
+            <option value="questoes_asc">Questões (menor primeiro)</option>
+            <option value="questoesDia_desc">Questões/dia (maior)</option>
+            <option value="tempo_min_desc">Tempo total (maior)</option>
+            <option value="activeMonths_desc">Meses ativos (maior)</option>
+            <option value="nome_asc">Nome (A→Z)</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="engagementLevelSelect">Filtrar engajamento</label>
+          <select id="engagementLevelSelect">
+            <option value="">Todos os alunos</option>
+            <option value="alta">Alto — 20 ou mais questões/dia</option>
+            <option value="moderada">Médio — 10 a 19,9 questões/dia</option>
+            <option value="baixa">Baixo — menos de 10 questões/dia</option>
+          </select>
+        </div>
+        <div class="results-count" id="engagementResultsCount"></div>
+      </div>
+
+      <div class="ranking-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:42px">#</th>
+              <th>Aluno</th>
+              <th class="num">Período</th>
+              <th class="num">Questões</th>
+              <th class="num">% Acerto</th>
+              <th class="num">Quest./dia</th>
+              <th class="num">Tempo total</th>
+              <th class="num">Meses ativos</th>
+              <th>Engajamento</th>
+            </tr>
+          </thead>
+          <tbody id="engagementRankingBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    Página de <strong data-institution-brand>PITÁGORAS EUNÁPOLIS × MedCof</strong> — leitura de uso da plataforma para coordenação e gestão acadêmica.
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="dashboard-data.js"></script>
+  <script src="shared.js?v=2"></script>
+<script src="/brand-loader.js?v=2"></script>
+</body>
+</html>

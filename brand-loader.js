@@ -31,9 +31,23 @@
     // ── LOGO ─────────────────────────────────────────────────────────
     if (inst.logo_url) {
       const applyLogo = () => {
+        // Atualizar imgs existentes
         document.querySelectorAll(
           '.topbar-institution-logo, .home-institution-logo, img[class*="institution-logo"]'
         ).forEach(img => { img.src = inst.logo_url; });
+
+        // Se shared.js inseriu badge de iniciais (sem img), criar a img no slot
+        const logoSlot = document.getElementById('institutionLogoSlot');
+        if (logoSlot && !logoSlot.querySelector('img')) {
+          logoSlot.innerHTML = `<img class="home-institution-logo" src="${inst.logo_url}" alt="Logo" style="max-width:100%;max-height:100%;object-fit:contain">`;
+        }
+
+        // Se topbar brand-mark não tem img, criar
+        const brandMark = document.querySelector('.brand-mark[data-institution-initials]');
+        if (brandMark && !brandMark.querySelector('img')) {
+          brandMark.innerHTML = `<img class="topbar-institution-logo" src="${inst.logo_url}" alt="Logo" style="max-width:100%;max-height:100%;object-fit:contain">`;
+          brandMark.classList.add('brand-mark-logo');
+        }
       };
       applyLogo();
       window.addEventListener('load', applyLogo);

@@ -20,8 +20,10 @@ const INSTITUTION_THEME_CLASS_PREFIX = "theme-";
 const PAGE_SIZE = 25;
 
 const INSTITUTION_DATASETS = window.INSTITUTION_DATASETS || {};
-const DEFAULT_INSTITUTION_KEY = window.DEFAULT_INSTITUTION_KEY || Object.keys(INSTITUTION_DATASETS)[0] || "unicet";
-const CURRENT_INSTITUTION_KEY = getStoredInstitutionKey();
+// Extrair slug da URL como prioridade máxima (evita carregar dados de outra IES)
+const _URL_SLUG = location.pathname.split('/').filter(Boolean)[0] || '';
+const DEFAULT_INSTITUTION_KEY = _URL_SLUG || window.DEFAULT_INSTITUTION_KEY || Object.keys(INSTITUTION_DATASETS)[0] || "unicet";
+const CURRENT_INSTITUTION_KEY = _URL_SLUG || getStoredInstitutionKey();
 const CURRENT_INSTITUTION = INSTITUTION_DATASETS[CURRENT_INSTITUTION_KEY] || INSTITUTION_DATASETS[DEFAULT_INSTITUTION_KEY] || {
   key: DEFAULT_INSTITUTION_KEY,
   institutionName: "Instituição",
@@ -712,6 +714,11 @@ function renderEngagementPage() {
   if (levelSelect) levelSelect.addEventListener("change", applyEngagementFilters);
 
   applyEngagementFilters();
+
+  // Carregar notas de simulados em paralelo e re-renderizar quando pronto
+  _loadSimNotasForEngagement().then(sims => {
+    if (sims.length > 0) renderEngagementRanking();
+  });
 }
 
 function applyEngagementFilters() {
@@ -740,6 +747,66 @@ function applyEngagementFilters() {
   renderEngagementRanking();
 }
 
+// ── Notas de simulados no engajamento ──
+let _engSimCache = null; // { slug, sims: [{label, notaByName}] }
+async function _loadSimNotasForEngagement() {
+  const slug = CURRENT_INSTITUTION?.key || CURRENT_INSTITUTION_KEY || '';
+  if (!slug) return [];
+  if (_engSimCache && _engSimCache.slug === slug) return _engSimCache.sims;
+  try {
+    const resp = await fetch(`${_SIM_SUPA}/simulado_respostas?select=simulado_ref,aluno_nome,respostas&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=in.(__RANKING__,__BATCH_0__,__BATCH_1__,__BATCH_2__,__BATCH_3__,__BATCH_4__,__BATCH_5__,__BATCH_6__,__BATCH_7__,__BATCH_8__,__BATCH_9__,__BATCH_10__,__BATCH_11__,__BATCH_12__,__BATCH_13__,__BATCH_14__,__BATCH_15__,__BATCH_16__,__BATCH_17__,__BATCH_18__,__BATCH_19__)`, {
+      headers: { 'apikey': _SIM_KEY, 'Authorization': `Bearer ${_SIM_KEY}` }
+    });
+    if (!resp.ok) return [];
+    const rows = await resp.json();
+    // Agrupar por simulado_ref
+    const byRef = {};
+    rows.forEach(r => {
+      if (!byRef[r.simulado_ref]) byRef[r.simulado_ref] = { ranking: null, alunos: [] };
+      if (r.aluno_nome === '__RANKING__') byRef[r.simulado_ref].ranking = r.respostas;
+      else (r.respostas?.alunos || []).forEach(a => byRef[r.simulado_ref].alunos.push(a));
+    });
+    // Montar lista de simulados — apenas completos (com __RANKING__), deduplicar por título
+    const normName = n => (n || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const sims = [];
+    const simEntries = Object.entries(byRef).filter(([, v]) => v.ranking && v.alunos.length > 0);
+    // Ordenar por data de processamento (mais recente último)
+    simEntries.sort((a, b) => {
+      const da = a[1].ranking?.processado_em || '';
+      const db = b[1].ranking?.processado_em || '';
+      return da.localeCompare(db);
+    });
+    // Deduplicar por título — manter o mais recente (último na lista)
+    const byTitulo = {};
+    simEntries.forEach(([ref, data]) => {
+      const titulo = (data.ranking?.simulado_titulo || ref).trim();
+      byTitulo[titulo.toLowerCase()] = { ref, data, titulo };
+    });
+    const uniqueSims = Object.values(byTitulo);
+    uniqueSims.sort((a, b) => {
+      const da = a.data.ranking?.processado_em || '';
+      const db = b.data.ranking?.processado_em || '';
+      return da.localeCompare(db);
+    });
+    let tendCount = 0, persCount = 0;
+    uniqueSims.forEach(({ data, titulo }) => {
+      const isTend = titulo.toLowerCase().includes('tend');
+      if (isTend) tendCount++; else persCount++;
+      const label = isTend ? (tendCount > 1 ? `Tend. ${tendCount}` : 'Tend.') : (persCount > 1 ? `Pers. ${persCount}` : 'Pers.');
+      const notaByName = {};
+      data.alunos.forEach(a => { notaByName[normName(a.nome)] = a.nota; });
+      sims.push({ label, notaByName, titulo, isTend });
+    });
+    // Para a tabela: apenas o último de cada tipo
+    const lastTend = [...sims].reverse().find(s => s.isTend);
+    const lastPers = [...sims].reverse().find(s => !s.isTend);
+    const tableSims = [lastTend, lastPers].filter(Boolean);
+    // Histórico completo: todos os simulados por aluno (para popover)
+    _engSimCache = { slug, sims, tableSims, allSims: sims };
+    return sims;
+  } catch(e) { console.warn('Erro ao carregar notas simulado:', e); return []; }
+}
+
 function renderEngagementRanking() {
   const rankingRoot = document.getElementById("engagementRankingBody");
   const theadRoot = rankingRoot?.closest("table")?.querySelector("thead");
@@ -748,6 +815,9 @@ function renderEngagementRanking() {
 
   const all = ACCUMULATED_DASHBOARD.ranking;
   const hasTurma = all.some(s => s.turma) || Object.keys(TURMA_BY_NAME).length > 0;
+  const tableSims = _engSimCache?.tableSims || [];
+  const allSims = _engSimCache?.allSims || [];
+  const normName = n => (n || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   if (theadRoot) {
     theadRoot.innerHTML = `<tr>
@@ -756,18 +826,18 @@ function renderEngagementRanking() {
       ${hasTurma ? '<th class="num">Turma</th>' : ''}
       <th class="num">Questões</th>
       <th class="num">% Acerto</th>
-      <th class="num">Vídeos</th>
       <th class="num">Aulas</th>
       <th class="num">Flashcards</th>
-      <th class="num">Logins</th>
       <th class="num">Q/dia</th>
       <th class="num">Tempo</th>
       <th class="num">Meses</th>
       <th>Engajamento</th>
+      ${tableSims.map(s => `<th class="num" title="${s.titulo}" style="font-size:0.65rem;white-space:nowrap">${s.label}</th>`).join('')}
     </tr>`;
   }
 
   const fmt0 = v => (v > 0 ? formatNumber(v) : '—');
+  const _notaColor = v => v >= 60 ? '#16a34a' : v >= 50 ? '#eab308' : '#dc2626';
 
   rankingRoot.innerHTML = engagementState.filteredRows.map((student, index) => {
     const rowTurma = student.turma || TURMA_BY_NAME[student.nome.trim().toLowerCase()] || "—";
@@ -776,25 +846,142 @@ function renderEngagementRanking() {
       : student.questoes_acertadas && student.questoes > 0
         ? ((student.questoes_acertadas / student.questoes) * 100).toFixed(1) + '%'
         : '—';
+    const nk = normName(student.nome);
+    const simCells = tableSims.map(s => {
+      const nota = s.notaByName[nk];
+      if (nota == null) return '<td class="num" style="color:var(--text-muted);font-size:0.72rem">—</td>';
+      return `<td class="num" style="color:${_notaColor(nota)};font-weight:700;font-size:0.75rem;cursor:pointer" data-aluno-sim="${encodeURIComponent(student.nome)}">${nota.toFixed(1)}%</td>`;
+    }).join('');
+    // Nome clicável se tem dados de simulado
+    const hasAnySim = allSims.some(s => s.notaByName[nk] != null);
+    const nameStyle = `font-weight:${index < 3 ? "700" : "400"}${hasAnySim ? ';cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px' : ''}`;
     return `
     <tr>
       <td style="font-weight:800;color:${index < 3 ? "var(--green-dark)" : "#7a8b7a"}">${index + 1}</td>
-      <td style="font-weight:${index < 3 ? "700" : "400"}">${student.nome}</td>
+      <td style="${nameStyle}" ${hasAnySim ? `data-aluno-sim="${encodeURIComponent(student.nome)}"` : ''}>${student.nome}</td>
       ${hasTurma ? `<td class="num">${rowTurma}</td>` : ''}
       <td class="num">${formatNumber(student.questoes)}</td>
       <td class="num">${taxaAcerto}</td>
-      <td class="num">${fmt0(student.videos)}</td>
       <td class="num">${fmt0(student.aulas)}</td>
       <td class="num">${fmt0(student.flashcards)}</td>
-      <td class="num">${fmt0(student.logins)}</td>
       <td class="num">${formatDecimal(student.questoesDia)}</td>
       <td class="num">${formatHours(student.tempo_min)}</td>
       <td class="num">${student.activeMonths}</td>
       <td><span class="badge ${student.traction.className}">${student.traction.label}</span></td>
+      ${simCells}
     </tr>`;
   }).join("");
 
   if (count) count.textContent = `${engagementState.filteredRows.length} aluno(s) no filtro`;
+
+  // Attach popover listeners
+  rankingRoot.querySelectorAll('[data-aluno-sim]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nome = decodeURIComponent(el.dataset.alunoSim);
+      _showSimHistoryPopover(nome, e.target);
+    });
+  });
+}
+
+/** Popover com histórico de notas do aluno nos simulados + mini gráfico */
+function _showSimHistoryPopover(nome, anchor) {
+  // Remover popover anterior
+  document.querySelectorAll('._sim-popover').forEach(p => p.remove());
+
+  const allSims = _engSimCache?.allSims || [];
+  const normName = n => (n || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const nk = normName(nome);
+
+  // Coletar notas do aluno em todos os simulados
+  const entries = allSims.map(s => ({
+    label: s.label,
+    titulo: s.titulo,
+    nota: s.notaByName[nk] ?? null
+  }));
+  const withNota = entries.filter(e => e.nota != null);
+  if (!withNota.length) return;
+
+  const _nc = v => v >= 60 ? '#16a34a' : v >= 50 ? '#eab308' : '#dc2626';
+  const media = withNota.reduce((s, e) => s + e.nota, 0) / withNota.length;
+
+  // Mini gráfico de barras
+  const maxNota = Math.max(...withNota.map(e => e.nota), 100);
+  const barW = Math.max(40, Math.min(60, 240 / entries.length));
+  const chartH = 80;
+  const barsHTML = entries.map(e => {
+    if (e.nota == null) return `<div style="width:${barW}px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:${chartH}px">
+      <div style="width:70%;height:4px;background:#2a2f3e;border-radius:2px;opacity:0.3"></div>
+      <div style="font-size:0.58rem;color:#5c6175;margin-top:4px;white-space:nowrap">${e.label}</div>
+    </div>`;
+    const h = Math.max((e.nota / maxNota) * chartH, 6);
+    return `<div style="width:${barW}px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:${chartH}px">
+      <div style="font-size:0.62rem;font-weight:700;color:${_nc(e.nota)};margin-bottom:2px">${e.nota.toFixed(0)}%</div>
+      <div style="width:70%;height:${h}px;background:${_nc(e.nota)};border-radius:4px 4px 0 0;opacity:0.8"></div>
+      <div style="font-size:0.58rem;color:#8b91a5;margin-top:4px;white-space:nowrap">${e.label}</div>
+    </div>`;
+  }).join('');
+
+  // Linha de 60% (proficiência)
+  const line60 = chartH - (60 / maxNota) * chartH;
+
+  // Tabela detalhada
+  const tableRows = entries.map(e => `
+    <tr style="border-bottom:1px solid #2a2f3e;background:#1a1d27 !important">
+      <td style="padding:6px 10px;font-size:0.75rem;font-weight:600;color:#e8eaf0 !important">${e.label}</td>
+      <td style="padding:6px 10px;font-size:0.72rem;color:#8b91a5 !important">${e.titulo}</td>
+      <td style="padding:6px 10px;font-size:0.75rem;font-weight:700;text-align:center;color:${e.nota != null ? _nc(e.nota) : '#5c6175'} !important">
+        ${e.nota != null ? e.nota.toFixed(1) + '%' : '—'}
+      </td>
+    </tr>`).join('');
+
+  const popover = document.createElement('div');
+  popover.className = '_sim-popover';
+  popover.style.cssText = 'position:fixed;z-index:99999;background:#1a1d27;color:#e8eaf0;border:1.5px solid #2a2f3e;border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.6);max-width:380px;width:90vw';
+
+  popover.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div>
+        <div style="font-size:0.9rem;font-weight:800;color:#e8eaf0">${nome}</div>
+        <div style="font-size:0.72rem;color:#8b91a5">${withNota.length} simulado(s) · Média: <strong style="color:${_nc(media)}">${media.toFixed(1)}%</strong></div>
+      </div>
+      <button onclick="this.closest('._sim-popover').remove()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#8b91a5;padding:4px">✕</button>
+    </div>
+    <div style="display:flex;align-items:flex-end;justify-content:center;gap:2px;margin-bottom:16px;position:relative;padding:0 4px">
+      <div style="position:absolute;top:${line60}px;left:0;right:0;border-top:1.5px dashed rgba(22,163,74,0.3);z-index:1"></div>
+      <div style="position:absolute;top:${line60 - 8}px;right:4px;font-size:0.5rem;color:rgba(22,163,74,0.5);z-index:1">60%</div>
+      ${barsHTML}
+    </div>
+    <div style="border:1px solid #2a2f3e;border-radius:10px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#1e2230">
+          <th style="padding:6px 10px;font-size:0.62rem;text-transform:uppercase;font-weight:700;color:#8b91a5;text-align:left">Sim.</th>
+          <th style="padding:6px 10px;font-size:0.62rem;text-transform:uppercase;font-weight:700;color:#8b91a5;text-align:left">Título</th>
+          <th style="padding:6px 10px;font-size:0.62rem;text-transform:uppercase;font-weight:700;color:#8b91a5;text-align:center">Nota</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+
+  document.body.appendChild(popover);
+
+  // Position near anchor
+  const rect = anchor.getBoundingClientRect();
+  let top = rect.bottom + 8;
+  let left = rect.left;
+  if (top + 350 > window.innerHeight) top = rect.top - 350;
+  if (left + 380 > window.innerWidth) left = window.innerWidth - 390;
+  if (left < 10) left = 10;
+  popover.style.top = top + 'px';
+  popover.style.left = left + 'px';
+
+  // Close on outside click
+  setTimeout(() => {
+    const close = (e) => {
+      if (!popover.contains(e.target)) { popover.remove(); document.removeEventListener('click', close); }
+    };
+    document.addEventListener('click', close);
+  }, 100);
 }
 
 function _buildPeriodThead(hasTurma) {
@@ -805,10 +992,8 @@ function _buildPeriodThead(hasTurma) {
     <th class="num">Tempo</th>
     <th class="num">Questões</th>
     <th class="num">% Acerto</th>
-    <th class="num">Vídeos</th>
     <th class="num">Aulas</th>
     <th class="num">Flashcards</th>
-    <th class="num">Logins</th>
     <th class="num" style="text-align:center">Engajamento</th>
   </tr>`;
 }
@@ -1032,10 +1217,8 @@ function renderPeriodTable() {
         <td class="num">${formatHours(row.tempo_min)}</td>
         <td class="num">${formatNumber(row.questoes)}</td>
         <td class="num">${taxaAcerto}</td>
-        <td class="num">${fmt0(row.videos)}</td>
         <td class="num">${formatNumber(row.aulas)}</td>
         <td class="num">${formatNumber(row.flashcards)}</td>
-        <td class="num">${fmt0(row.logins)}</td>
         <td style="text-align:center"><span class="badge ${engagement.className}">${engagement.label}</span></td>
       </tr>
     `;
@@ -1508,7 +1691,7 @@ async function _renderSimuladoHub(root, slug) {
         ${count > 0 ? `
           <div class="sim-card-metrics">
             <div class="sim-card-metric"><div class="sim-card-metric-label">Simulados</div><div class="sim-card-metric-value" style="color:var(--text)">${count}</div></div>
-            <div class="sim-card-metric"><div class="sim-card-metric-label">Última média</div><div class="sim-card-metric-value" style="color:${color}">${fmt(media)}</div></div>
+            <div class="sim-card-metric"><div class="sim-card-metric-label">Última média</div><div class="sim-card-metric-value" style="color:${media >= 60 ? '#16a34a' : media >= 50 ? '#eab308' : '#dc2626'}">${fmt(media)}</div></div>
           </div>
           <div style="font-size:0.76rem;color:var(--text-muted)">Último: <strong>${last}</strong></div>
           <div style="margin-top:8px;font-size:0.78rem;font-weight:700;color:${color};display:flex;align-items:center;gap:4px">Ver resultados <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></div>
@@ -1682,6 +1865,8 @@ async function _renderSimuladoDetail(root, slug, ref) {
   const totalQuestoes = questions.length || (persData && persData.totalQuestoes) || 0;
   const anuladasInfo = (meta && meta.anuladas) || null;
   const anuladasCount = anuladasInfo ? (anuladasInfo.indices || []).length : 0;
+  const _notaSourceMeta = (meta && meta._notaSource) || (ranking && ranking.nota_source) || null;
+  const _anuladasTratMeta = (anuladasInfo && anuladasInfo.tratamento) || (ranking && ranking.anuladas_tratamento) || null;
 
   // ── 3. Compute statistics from alunos ──
   const notas = alunos.map(a => a.nota).filter(n => n != null).sort((a, b) => a - b);
@@ -1778,14 +1963,20 @@ async function _renderSimuladoDetail(root, slug, ref) {
       ? 'Anuladas no upload: <strong>creditadas</strong> (contam como acerto — média tende a ficar acima do Excel com “excluir”).'
       : 'Anuladas no upload: <strong>excluídas do denominador</strong> (alinha ao Remark®).')
     : '';
+  const _notaSourceHint = _notaSourceMeta
+    ? (_notaSourceMeta === 'planilha'
+      ? '<span style=”display:inline-block;margin-top:4px;padding:2px 8px;border-radius:4px;background:rgba(22,163,74,0.1);color:#16a34a;font-size:0.58rem;font-weight:700”>Fonte: planilha</span>'
+      : '<span style=”display:inline-block;margin-top:4px;padding:2px 8px;border-radius:4px;background:rgba(234,179,8,0.1);color:#d97706;font-size:0.58rem;font-weight:700”>Fonte: calculada' + (_anuladasTratMeta ? ' · ' + (_anuladasTratMeta === 'creditar' ? 'anul. creditadas' : 'anul. excluídas') : '') + '</span>')
+    : '';
 
   // ── OVERVIEW ──
   let overviewMetrics = `
-    <div class="sim-metric-card">
-      <div class="sim-metric-label">Média IES</div>
-      <div class="sim-metric-value" style="color:${mediaIES != null ? _faixaColor(mediaIES) : 'var(--text)'}">${fmtPct(mediaIES)}</div>
-      ${mediaIES != null ? `<div style="font-size:0.62rem;font-weight:700;color:${_faixaColor(mediaIES)};margin-top:4px">${_faixaLabel(mediaIES)}</div>` : ''}
-      ${anuladasCount > 0 && anuladasTratHint ? `<div style="font-size:0.58rem;color:var(--text-muted);margin-top:8px;line-height:1.4;max-width:280px">${anuladasTratHint}</div>` : ''}
+    <div class=”sim-metric-card”>
+      <div class=”sim-metric-label”>Média IES</div>
+      <div class=”sim-metric-value” style=”color:${mediaIES != null ? _faixaColor(mediaIES) : 'var(--text)'}”>${fmtPct(mediaIES)}</div>
+      ${mediaIES != null ? `<div style=”font-size:0.62rem;font-weight:700;color:${_faixaColor(mediaIES)};margin-top:4px”>${_faixaLabel(mediaIES)}</div>` : ''}
+      ${_notaSourceHint}
+      ${anuladasCount > 0 && anuladasTratHint ? `<div style=”font-size:0.58rem;color:var(--text-muted);margin-top:8px;line-height:1.4;max-width:280px”>${anuladasTratHint}</div>` : ''}
     </div>
     ${mediaGeral != null ? `<div class="sim-metric-card"><div class="sim-metric-label">Média Geral</div><div class="sim-metric-value" style="color:var(--text-muted)">${fmtPct(mediaGeral)}</div></div>` : ''}
     <div class="sim-metric-card"><div class="sim-metric-label">Alunos</div><div class="sim-metric-value">${totalAlunos}</div></div>
@@ -1795,16 +1986,34 @@ async function _renderSimuladoDetail(root, slug, ref) {
     ${notaMin != null ? `<div class="sim-metric-card"><div class="sim-metric-label">Menor nota</div><div class="sim-metric-value" style="color:#dc2626">${fmtPct(notaMin)}</div></div>` : ''}
   `;
 
-  // Rankings (tendências only)
-  let rankingCards = '';
+  // Rankings (tendências only) — destaque visual
+  let rankingSection = '';
   if (isTend && rankNac != null) {
-    rankingCards = `
-      <div class="sim-metric-card">
-        <div class="sim-metric-label">Ranking Nacional</div>
-        <div class="sim-metric-value">${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span></div>
+    const _rankColor = (pos, total) => {
+      const pct = total > 0 ? pos / total : 1;
+      if (pct <= 0.25) return '#16a34a';
+      if (pct <= 0.50) return '#3b82f6';
+      if (pct <= 0.75) return '#eab308';
+      return '#dc2626';
+    };
+    const nacColor = _rankColor(rankNac, rankNacTotal);
+    const regColor = rankReg != null ? _rankColor(rankReg, rankRegTotal) : null;
+    rankingSection = `
+    <section class="section-shell" style="margin-top:24px">
+      <h2 class="section-title">Posicionamento no ranking</h2>
+      <div style="display:grid;grid-template-columns:${rankReg != null ? '1fr 1fr' : '1fr'};gap:14px">
+        <div style="background:var(--bg-card);border:1.5px solid ${nacColor}33;border-radius:16px;padding:24px;text-align:center">
+          <div style="font-size:0.7rem;text-transform:uppercase;font-weight:700;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px">Ranking Nacional</div>
+          <div style="font-size:2.8rem;font-weight:900;color:${nacColor};line-height:1">${rankNac}<span style="font-size:1.1rem;font-weight:700;color:var(--text-muted)">/${rankNacTotal}</span></div>
+          ${mediaGeral != null ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:10px">Média geral: <strong>${fmtPct(mediaGeral)}</strong></div>` : ''}
+        </div>
+        ${rankReg != null ? `
+        <div style="background:var(--bg-card);border:1.5px solid ${regColor}33;border-radius:16px;padding:24px;text-align:center">
+          <div style="font-size:0.7rem;text-transform:uppercase;font-weight:700;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:10px">Ranking Regional</div>
+          <div style="font-size:2.8rem;font-weight:900;color:${regColor};line-height:1">${rankReg}<span style="font-size:1.1rem;font-weight:700;color:var(--text-muted)">/${rankRegTotal}</span></div>
+        </div>` : ''}
       </div>
-      ${rankReg != null ? `<div class="sim-metric-card"><div class="sim-metric-label">Ranking Regional</div><div class="sim-metric-value">${rankReg}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankRegTotal}</span></div></div>` : ''}
-    `;
+    </section>`;
   }
 
   // ── DISTRIBUTION ──
@@ -1972,13 +2181,30 @@ async function _renderSimuladoDetail(root, slug, ref) {
     });
   } catch (_e) {}
 
+  /** Resolve engajamento por nome exato; se falhar, primeiro+último token (planilha vs painel com grafia diferente). */
+  const _engResolve = (nome) => {
+    const key = _normNome(nome);
+    if (_engMap[key]) return _engMap[key];
+    const parts = key.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return null;
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    const rank = typeof ACCUMULATED_DASHBOARD !== 'undefined' && ACCUMULATED_DASHBOARD.ranking
+      ? ACCUMULATED_DASHBOARD.ranking
+      : [];
+    for (let ri = 0; ri < rank.length; ri++) {
+      const nk = _normNome(rank[ri].nome);
+      if (nk.startsWith(first + ' ') && nk.endsWith(' ' + last) && _engMap[nk]) return _engMap[nk];
+    }
+    return null;
+  };
+
   // ── RANKING ALUNOS com correlação Engajamento x Nota ──
   let rankingHTML = '';
   if (alunosSorted.length > 0) {
     // Engajamento badge: >20 q/dia = alto (verde), >10 = moderado (azul), <10 = baixo (cinza)
     const _engBadge = (nome) => {
-      const key = _normNome(nome);
-      const eng = _engMap[key];
+      const eng = _engResolve(nome);
       if (!eng) {
         const _tip = 'Sem histórico de engajamento na plataforma — participação apenas neste simulado (não integra o cadastro B2B com uso do app).';
         return `<span style="font-size:0.68rem;color:var(--text-muted);display:inline-flex;flex-direction:column;align-items:center;gap:1px;line-height:1.15;max-width:120px;cursor:help" title="${_tip}"><span>—</span><span style="font-size:0.58rem;font-weight:600;opacity:0.9">só simulado</span></span>`;
@@ -1986,7 +2212,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
       const qDia = eng.questoesDia || 0;
       if (qDia >= 20) return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#16a34a;background:rgba(22,163,74,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#16a34a"></span>${qDia.toFixed(0)} q/dia</span>`;
       if (qDia >= 10) return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#d97706;background:rgba(217,119,6,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#d97706"></span>${qDia.toFixed(0)} q/dia</span>`;
-      return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:var(--text-muted);background:var(--bg-elevated);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--text-muted)"></span>${qDia.toFixed(0)} q/dia</span>`;
+      return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,0.1);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#dc2626"></span>${qDia.toFixed(0)} q/dia</span>`;
     };
 
     const alunoRows = alunosSorted.map((a, i) => {
@@ -2006,7 +2232,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
     try {
       let engAlto = 0, engAltoNota = 0, engBaixo = 0, engBaixoNota = 0;
       alunosSorted.forEach(a => {
-        const eng = _engMap[_normNome(a.nome)];
+        const eng = _engResolve(a.nome);
         if (eng && a.nota != null) {
           if ((eng.questoesDia || 0) >= 20) { engAlto++; engAltoNota += a.nota; }
           else { engBaixo++; engBaixoNota += a.nota; }
@@ -2150,7 +2376,8 @@ async function _renderSimuladoDetail(root, slug, ref) {
   heroPills += _pill('Alunos', totalAlunos);
   heroPills += _pill('Questões', totalQuestoes);
   if (mediana != null) heroPills += _pill('Mediana', fmtPct(mediana));
-  if (isTend && rankNac != null) heroPills += _pill('Ranking', `${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span>`);
+  if (isTend && rankNac != null) heroPills += _pill('Nacional', `${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span>`);
+  if (isTend && rankReg != null) heroPills += _pill('Regional', `${rankReg}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankRegTotal}</span>`);
 
   // Gabarito link (stored in __RANKING__.respostas.link_gabarito)
   const linkGabarito = ranking ? ranking.link_gabarito : null;
@@ -2218,6 +2445,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
       </div>
     </section>
 
+    ${rankingSection}
     ${insightsHTML}
     ${distribHTML}
     ${areasHTML}
@@ -2755,6 +2983,44 @@ function _medcofSlugFromPath() {
 }
 
 /**
+ * Remove campos e padrões sensíveis do contexto enviado ao Cofbot (defesa em profundidade — LGPD).
+ * @param {Record<string, unknown>} payload
+ * @returns {Record<string, unknown>}
+ */
+function sanitizeCoordChatContextPayload(payload) {
+  const sensitiveKey = /^(cpf|documento|rg|email|telefone|phone|tel|senha|password)$/i;
+  /**
+   * @param {string} s
+   */
+  function redactString(s) {
+    return s.replace(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, "[omitido]");
+  }
+  /**
+   * @param {unknown} v
+   * @returns {unknown}
+   */
+  function walk(v) {
+    if (v == null) return v;
+    if (Array.isArray(v)) return v.map(walk);
+    if (typeof v === "object") {
+      const o = {};
+      for (const [k, val] of Object.entries(v)) {
+        if (sensitiveKey.test(k)) continue;
+        o[k] = walk(val);
+      }
+      return o;
+    }
+    if (typeof v === "string") return redactString(v);
+    return v;
+  }
+  try {
+    return /** @type {Record<string, unknown>} */ (walk(payload));
+  } catch {
+    return { page: "erro", aviso: "contexto_indisponivel" };
+  }
+}
+
+/**
  * Monta um JSON resumido do que o coordenador está vendo para enviar ao modelo.
  * @returns {Record<string, unknown>}
  */
@@ -2780,6 +3046,8 @@ function buildCoordenadorChatContext() {
     }
   };
 
+  /** @type {Record<string, unknown>} */
+  let out;
   try {
     if (page === "engagement") {
       const rows = engagementState.filteredRows || [];
@@ -2802,7 +3070,7 @@ function buildCoordenadorChatContext() {
           activeMonths: s.activeMonths
         };
       });
-      return {
+      out = {
         ...base,
         engagement: {
           totalNoFiltro: rows.length,
@@ -2815,9 +3083,7 @@ function buildCoordenadorChatContext() {
           totalAlunosBase: ACCUMULATED_DASHBOARD?.ranking?.length || 0
         }
       };
-    }
-
-    if (page === "period") {
+    } else if (page === "period") {
       const period = PERIODS[periodState.currentIndex];
       const rows = periodState.filteredRows || [];
       const days = period?.meta?.days || 1;
@@ -2839,7 +3105,7 @@ function buildCoordenadorChatContext() {
           engajamento: eng.label
         };
       });
-      return {
+      out = {
         ...base,
         periodoDetalhado: {
           periodoLabel: period?.meta?.label || period?.sheet || "",
@@ -2853,22 +3119,22 @@ function buildCoordenadorChatContext() {
           }
         }
       };
-    }
-
-    if (page === "simulados") {
+    } else if (page === "simulados") {
       if (window.__MEDCOF_SIM_CHAT_CTX__) {
-        return { ...base, simuladoNaTela: window.__MEDCOF_SIM_CHAT_CTX__ };
+        out = { ...base, simuladoNaTela: window.__MEDCOF_SIM_CHAT_CTX__ };
+      } else {
+        out = { ...base, simulados: { rotaHash: location.hash || "(início)" } };
       }
-      return { ...base, simulados: { rotaHash: location.hash || "(início)" } };
+    } else {
+      out = {
+        ...base,
+        home: { nota: "Use Engajamento, Período detalhado ou Simulados para dados específicos." }
+      };
     }
-
-    return {
-      ...base,
-      home: { nota: "Use Engajamento, Período detalhado ou Simulados para dados específicos." }
-    };
   } catch (e) {
-    return { ...base, erroContexto: String(e && e.message) };
+    out = { ...base, erroContexto: String(e && e.message) };
   }
+  return sanitizeCoordChatContextPayload(out);
 }
 
 /**
@@ -2879,24 +3145,24 @@ function buildCoordenadorChatContext() {
 function getCoordenadorChatSuggestions(page) {
   const map = {
     home: [
-      "Como a meta de ~20 questões/dia ajuda na preparação para a ENAMED?",
-      "O que priorizar para melhorar a turma neste semestre?",
-      "Como correlacionar hábito de estudo com desempenho em simulados?"
+      "Quais 3 ações eu priorizo na reunião de coordenação esta semana?",
+      "Como explicar a meta de ~20 questões/dia para a turma sem soar genérico?",
+      "O que cruzar entre Engajamento e Simulados antes de falar com um aluno?"
     ],
     engagement: [
-      "Quem está abaixo da meta de 20 questões/dia nesta lista?",
-      "Quais alunos merecem acompanhamento prioritário para a ENAMED?",
-      "Como explicar tempo de plataforma versus volume de questões?"
+      "Quem está abaixo de 20 questões/dia neste filtro — e o que sugerir primeiro?",
+      "Como montar uma lista de acompanhamento semana a semana?",
+      "Tempo na plataforma alto mas poucas questões: como orientar o aluno?"
     ],
     period: [
-      "Quais alunos estão com média diária de questões abaixo do ideal?",
-      "Como este período se compara ao engajamento geral da turma?",
-      "O que significa a faixa de engajamento na tabela?"
+      "Neste período selecionado, quem está mais abaixo da média de questões/dia?",
+      "Com o filtro de turma atual, qual é o recorte mais crítico para agir hoje?",
+      "Como usar a faixa de engajamento do período numa conversa individual?"
     ],
     simulados: [
       "Como relacionar o desempenho deste simulado com o engajamento na plataforma?",
-      "Quais temas ou áreas precisam de reforço para a ENAMED?",
-      "A turma está acima ou abaixo da média geral — o que priorizar?"
+      "Quais temas ou áreas priorizar para a ENAMED com base no que está na tela?",
+      "A turma está acima ou abaixo da referência — qual mensagem passar na próxima aula?"
     ]
   };
   return map[page] || map.home;
@@ -2934,14 +3200,14 @@ function mountCoordenadorChat() {
   const root = document.createElement("div");
   root.id = "medcof-coord-chat-root";
   root.innerHTML = `
-    <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir assistente do coordenador" aria-expanded="false">
+    <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir Cofbot — assistente do coordenador" aria-expanded="false">
       <img class="medcof-coord-chat-fab-icon" src="/assets/coordenador-chat-fab.png" alt="" width="44" height="52" decoding="async" draggable="false" />
     </button>
     <div class="medcof-coord-chat-panel" id="medcofCoordChatPanel" hidden>
       <div class="medcof-coord-chat-head">
         <div>
-          <div class="medcof-coord-chat-title">Assistente</div>
-          <div class="medcof-coord-chat-sub">Com base no que está na tela</div>
+          <div class="medcof-coord-chat-title">Cofbot</div>
+          <div class="medcof-coord-chat-sub">Assistente com base no que está na tela (sem dados sensíveis)</div>
         </div>
         <button type="button" class="medcof-coord-chat-close" id="medcofCoordChatClose" aria-label="Fechar">×</button>
       </div>
@@ -2952,7 +3218,7 @@ function mountCoordenadorChat() {
       <div class="medcof-coord-chat-messages" id="medcofCoordChatMessages"></div>
       <div class="medcof-coord-chat-error" id="medcofCoordChatError" hidden></div>
       <form class="medcof-coord-chat-form" id="medcofCoordChatForm">
-        <input type="text" class="medcof-coord-chat-input" id="medcofCoordChatInput" placeholder="Pergunte sobre alunos, turma ou simulado…" autocomplete="off" maxlength="2000" />
+        <input type="text" class="medcof-coord-chat-input" id="medcofCoordChatInput" placeholder="Ex.: quem precisa de acompanhamento neste período?" autocomplete="off" maxlength="2000" />
         <button type="submit" class="medcof-coord-chat-send" id="medcofCoordChatSend">Enviar</button>
       </form>
     </div>

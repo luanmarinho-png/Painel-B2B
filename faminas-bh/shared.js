@@ -20,8 +20,10 @@ const INSTITUTION_THEME_CLASS_PREFIX = "theme-";
 const PAGE_SIZE = 25;
 
 const INSTITUTION_DATASETS = window.INSTITUTION_DATASETS || {};
-const DEFAULT_INSTITUTION_KEY = window.DEFAULT_INSTITUTION_KEY || Object.keys(INSTITUTION_DATASETS)[0] || "unicet";
-const CURRENT_INSTITUTION_KEY = getStoredInstitutionKey();
+// Extrair slug da URL como prioridade máxima (evita carregar dados de outra IES)
+const _URL_SLUG = location.pathname.split('/').filter(Boolean)[0] || '';
+const DEFAULT_INSTITUTION_KEY = _URL_SLUG || window.DEFAULT_INSTITUTION_KEY || Object.keys(INSTITUTION_DATASETS)[0] || "unicet";
+const CURRENT_INSTITUTION_KEY = _URL_SLUG || getStoredInstitutionKey();
 const CURRENT_INSTITUTION = INSTITUTION_DATASETS[CURRENT_INSTITUTION_KEY] || INSTITUTION_DATASETS[DEFAULT_INSTITUTION_KEY] || {
   key: DEFAULT_INSTITUTION_KEY,
   institutionName: "Instituição",
@@ -430,7 +432,8 @@ function buildPeriodSummary(rows, days) {
   const totalLogins = rows.reduce((sum, row) => sum + (row.logins || 0), 0);
   const totalQuestAcertadas = rows.reduce((sum, row) => sum + (row.questoes_acertadas || 0), 0);
   const taxaAcertoMedia = totalQuestions > 0 ? (totalQuestAcertadas / totalQuestions * 100) : null;
-  const topStudent = [...rows].sort((a, b) => (b.questoes - a.questoes) || (b.tempo_min - a.tempo_min))[0];
+  const _topRaw = [...rows].sort((a, b) => (b.questoes - a.questoes) || (b.tempo_min - a.tempo_min))[0];
+  const topStudent = _topRaw ? { ..._topRaw, questoesDia: (_topRaw.questoes || 0) / safeDays } : null;
   return {
     safeDays,
     activeStudents: activeRows.length,
@@ -1125,7 +1128,7 @@ function selectPeriod(index) {
       {
         label: "Melhor desempenho do recorte",
         value: period.summary.topStudent ? formatNumber(period.summary.topStudent.questoes) : "0",
-        meta: period.summary.topStudent ? `${period.summary.topStudent.nome} · ${formatHours(period.summary.topStudent.tempo_min)}` : "Sem dados"
+        meta: period.summary.topStudent ? `${period.summary.topStudent.nome} · ${formatDecimal(period.summary.topStudent.questoesDia)} q/dia · ${formatHours(period.summary.topStudent.tempo_min)}` : "Sem dados"
       },
       {
         label: "Ritmo do grupo",
@@ -2179,13 +2182,30 @@ async function _renderSimuladoDetail(root, slug, ref) {
     });
   } catch (_e) {}
 
+  /** Resolve engajamento por nome exato; se falhar, primeiro+último token (planilha vs painel com grafia diferente). */
+  const _engResolve = (nome) => {
+    const key = _normNome(nome);
+    if (_engMap[key]) return _engMap[key];
+    const parts = key.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return null;
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    const rank = typeof ACCUMULATED_DASHBOARD !== 'undefined' && ACCUMULATED_DASHBOARD.ranking
+      ? ACCUMULATED_DASHBOARD.ranking
+      : [];
+    for (let ri = 0; ri < rank.length; ri++) {
+      const nk = _normNome(rank[ri].nome);
+      if (nk.startsWith(first + ' ') && nk.endsWith(' ' + last) && _engMap[nk]) return _engMap[nk];
+    }
+    return null;
+  };
+
   // ── RANKING ALUNOS com correlação Engajamento x Nota ──
   let rankingHTML = '';
   if (alunosSorted.length > 0) {
     // Engajamento badge: >20 q/dia = alto (verde), >10 = moderado (azul), <10 = baixo (cinza)
     const _engBadge = (nome) => {
-      const key = _normNome(nome);
-      const eng = _engMap[key];
+      const eng = _engResolve(nome);
       if (!eng) {
         const _tip = 'Sem histórico de engajamento na plataforma — participação apenas neste simulado (não integra o cadastro B2B com uso do app).';
         return `<span style="font-size:0.68rem;color:var(--text-muted);display:inline-flex;flex-direction:column;align-items:center;gap:1px;line-height:1.15;max-width:120px;cursor:help" title="${_tip}"><span>—</span><span style="font-size:0.58rem;font-weight:600;opacity:0.9">só simulado</span></span>`;
@@ -2213,7 +2233,7 @@ async function _renderSimuladoDetail(root, slug, ref) {
     try {
       let engAlto = 0, engAltoNota = 0, engBaixo = 0, engBaixoNota = 0;
       alunosSorted.forEach(a => {
-        const eng = _engMap[_normNome(a.nome)];
+        const eng = _engResolve(a.nome);
         if (eng && a.nota != null) {
           if ((eng.questoesDia || 0) >= 20) { engAlto++; engAltoNota += a.nota; }
           else { engBaixo++; engBaixoNota += a.nota; }
@@ -2964,6 +2984,44 @@ function _medcofSlugFromPath() {
 }
 
 /**
+ * Remove campos e padrões sensíveis do contexto enviado ao Cofbot (defesa em profundidade — LGPD).
+ * @param {Record<string, unknown>} payload
+ * @returns {Record<string, unknown>}
+ */
+function sanitizeCoordChatContextPayload(payload) {
+  const sensitiveKey = /^(cpf|documento|rg|email|telefone|phone|tel|senha|password)$/i;
+  /**
+   * @param {string} s
+   */
+  function redactString(s) {
+    return s.replace(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, "[omitido]");
+  }
+  /**
+   * @param {unknown} v
+   * @returns {unknown}
+   */
+  function walk(v) {
+    if (v == null) return v;
+    if (Array.isArray(v)) return v.map(walk);
+    if (typeof v === "object") {
+      const o = {};
+      for (const [k, val] of Object.entries(v)) {
+        if (sensitiveKey.test(k)) continue;
+        o[k] = walk(val);
+      }
+      return o;
+    }
+    if (typeof v === "string") return redactString(v);
+    return v;
+  }
+  try {
+    return /** @type {Record<string, unknown>} */ (walk(payload));
+  } catch {
+    return { page: "erro", aviso: "contexto_indisponivel" };
+  }
+}
+
+/**
  * Monta um JSON resumido do que o coordenador está vendo para enviar ao modelo.
  * @returns {Record<string, unknown>}
  */
@@ -2989,6 +3047,8 @@ function buildCoordenadorChatContext() {
     }
   };
 
+  /** @type {Record<string, unknown>} */
+  let out;
   try {
     if (page === "engagement") {
       const rows = engagementState.filteredRows || [];
@@ -3011,7 +3071,7 @@ function buildCoordenadorChatContext() {
           activeMonths: s.activeMonths
         };
       });
-      return {
+      out = {
         ...base,
         engagement: {
           totalNoFiltro: rows.length,
@@ -3024,9 +3084,7 @@ function buildCoordenadorChatContext() {
           totalAlunosBase: ACCUMULATED_DASHBOARD?.ranking?.length || 0
         }
       };
-    }
-
-    if (page === "period") {
+    } else if (page === "period") {
       const period = PERIODS[periodState.currentIndex];
       const rows = periodState.filteredRows || [];
       const days = period?.meta?.days || 1;
@@ -3048,7 +3106,7 @@ function buildCoordenadorChatContext() {
           engajamento: eng.label
         };
       });
-      return {
+      out = {
         ...base,
         periodoDetalhado: {
           periodoLabel: period?.meta?.label || period?.sheet || "",
@@ -3062,22 +3120,22 @@ function buildCoordenadorChatContext() {
           }
         }
       };
-    }
-
-    if (page === "simulados") {
+    } else if (page === "simulados") {
       if (window.__MEDCOF_SIM_CHAT_CTX__) {
-        return { ...base, simuladoNaTela: window.__MEDCOF_SIM_CHAT_CTX__ };
+        out = { ...base, simuladoNaTela: window.__MEDCOF_SIM_CHAT_CTX__ };
+      } else {
+        out = { ...base, simulados: { rotaHash: location.hash || "(início)" } };
       }
-      return { ...base, simulados: { rotaHash: location.hash || "(início)" } };
+    } else {
+      out = {
+        ...base,
+        home: { nota: "Use Engajamento, Período detalhado ou Simulados para dados específicos." }
+      };
     }
-
-    return {
-      ...base,
-      home: { nota: "Use Engajamento, Período detalhado ou Simulados para dados específicos." }
-    };
   } catch (e) {
-    return { ...base, erroContexto: String(e && e.message) };
+    out = { ...base, erroContexto: String(e && e.message) };
   }
+  return sanitizeCoordChatContextPayload(out);
 }
 
 /**
@@ -3088,24 +3146,24 @@ function buildCoordenadorChatContext() {
 function getCoordenadorChatSuggestions(page) {
   const map = {
     home: [
-      "Como a meta de ~20 questões/dia ajuda na preparação para a ENAMED?",
-      "O que priorizar para melhorar a turma neste semestre?",
-      "Como correlacionar hábito de estudo com desempenho em simulados?"
+      "Quais 3 ações eu priorizo na reunião de coordenação esta semana?",
+      "Como explicar a meta de ~20 questões/dia para a turma sem soar genérico?",
+      "O que cruzar entre Engajamento e Simulados antes de falar com um aluno?"
     ],
     engagement: [
-      "Quem está abaixo da meta de 20 questões/dia nesta lista?",
-      "Quais alunos merecem acompanhamento prioritário para a ENAMED?",
-      "Como explicar tempo de plataforma versus volume de questões?"
+      "Quem está abaixo de 20 questões/dia neste filtro — e o que sugerir primeiro?",
+      "Como montar uma lista de acompanhamento semana a semana?",
+      "Tempo na plataforma alto mas poucas questões: como orientar o aluno?"
     ],
     period: [
-      "Quais alunos estão com média diária de questões abaixo do ideal?",
-      "Como este período se compara ao engajamento geral da turma?",
-      "O que significa a faixa de engajamento na tabela?"
+      "Neste período selecionado, quem está mais abaixo da média de questões/dia?",
+      "Com o filtro de turma atual, qual é o recorte mais crítico para agir hoje?",
+      "Como usar a faixa de engajamento do período numa conversa individual?"
     ],
     simulados: [
       "Como relacionar o desempenho deste simulado com o engajamento na plataforma?",
-      "Quais temas ou áreas precisam de reforço para a ENAMED?",
-      "A turma está acima ou abaixo da média geral — o que priorizar?"
+      "Quais temas ou áreas priorizar para a ENAMED com base no que está na tela?",
+      "A turma está acima ou abaixo da referência — qual mensagem passar na próxima aula?"
     ]
   };
   return map[page] || map.home;
@@ -3143,14 +3201,14 @@ function mountCoordenadorChat() {
   const root = document.createElement("div");
   root.id = "medcof-coord-chat-root";
   root.innerHTML = `
-    <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir assistente do coordenador" aria-expanded="false">
+    <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir Cofbot — assistente do coordenador" aria-expanded="false">
       <img class="medcof-coord-chat-fab-icon" src="/assets/coordenador-chat-fab.png" alt="" width="44" height="52" decoding="async" draggable="false" />
     </button>
     <div class="medcof-coord-chat-panel" id="medcofCoordChatPanel" hidden>
       <div class="medcof-coord-chat-head">
         <div>
-          <div class="medcof-coord-chat-title">Assistente</div>
-          <div class="medcof-coord-chat-sub">Com base no que está na tela</div>
+          <div class="medcof-coord-chat-title">Cofbot</div>
+          <div class="medcof-coord-chat-sub">Assistente com base no que está na tela (sem dados sensíveis)</div>
         </div>
         <button type="button" class="medcof-coord-chat-close" id="medcofCoordChatClose" aria-label="Fechar">×</button>
       </div>
@@ -3161,7 +3219,7 @@ function mountCoordenadorChat() {
       <div class="medcof-coord-chat-messages" id="medcofCoordChatMessages"></div>
       <div class="medcof-coord-chat-error" id="medcofCoordChatError" hidden></div>
       <form class="medcof-coord-chat-form" id="medcofCoordChatForm">
-        <input type="text" class="medcof-coord-chat-input" id="medcofCoordChatInput" placeholder="Pergunte sobre alunos, turma ou simulado…" autocomplete="off" maxlength="2000" />
+        <input type="text" class="medcof-coord-chat-input" id="medcofCoordChatInput" placeholder="Ex.: quem precisa de acompanhamento neste período?" autocomplete="off" maxlength="2000" />
         <button type="submit" class="medcof-coord-chat-send" id="medcofCoordChatSend">Enviar</button>
       </form>
     </div>
