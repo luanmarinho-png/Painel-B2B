@@ -3,6 +3,6 @@ Este é um painel admin B2B (MedCof × IES) com:
 - panel-core/shared.js + shared.css: fonte única do dashboard do coordenador (replicar com: python3 scripts/sync-panel-core.py)
 - server/: backend em Clean Architecture (use cases, auth, config Supabase); netlify/functions/*.js são adapters HTTP finos
 - netlify/functions/: Netlify Functions (admin-proxy, create-user, coordenador-chat, etc.)
-- Dados: Supabase (dashboard_engajamento, alunos_master, excluidos_master)
-- Deploy: Netlify (estático) + Supabase (dinâmico)
+- Dados (app): MongoDB Atlas quando DATA_BACKEND=mongo (coleções espelhando tabelas: dashboard_engajamento, alunos_master, instituicoes, simulados_*, etc.) — leituras públicas via anon-data-proxy; admin via admin-proxy. Supabase Auth + (opcional) Storage permanecem.
+- Deploy: Netlify (estático + Functions) + variáveis MONGODB_URI / DATA_BACKEND no Netlify
 - Service role key foi REMOVIDA do frontend — todas operações admin passam pelo admin-proxy

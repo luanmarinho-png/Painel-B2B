@@ -11,6 +11,10 @@
   NODE_VERSION = "20"
 
 [functions]
+  # esbuild em [functions] (não só em [functions."*"]) para o bundler aplicar em deploys Git/CI.
+  node_bundler = "esbuild"
+  # Garante server/ ao lado do handler quando o zip não preserva ../../ (Lambda: /var/task).
+  included_files = ["server/**"]
 
   [functions.deploy-ies]
     timeout = 60
@@ -20,9 +24,6 @@
 
   [functions.send-boletim-email]
     timeout = 60
-
-  [functions."*"]
-    node_bundler = "esbuild"
 
 [[headers]]
   for = "/.netlify/functions/*"

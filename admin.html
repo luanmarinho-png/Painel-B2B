@@ -44,11 +44,14 @@ window._SUPA_SVC_KEY = 'REMOVED_FOR_SECURITY';
 window._SUPA_ADMIN_HDRS = { ...window._SUPA_REST_HDRS }; // fallback para anon (leitura pública)
 
 /**
- * Supabase REST query pública (usa anon key — para dados públicos)
+ * Leitura pública de dados — servidor (anon-data-proxy): Mongo com DATA_BACKEND=mongo ou Supabase anon.
  */
 window._supaRest = async function(table, query) {
-  const sep = query ? '?' : '';
-  const resp = await fetch(`${window._SUPA_REST_URL}/${table}${sep}${query}`, { headers: window._SUPA_REST_HDRS });
+  const resp = await fetch('/.netlify/functions/anon-data-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ table, query: query || '' })
+  });
   if (!resp.ok) {
     const txt = await resp.text();
     throw new Error(txt || `HTTP ${resp.status}`);
@@ -4195,10 +4198,7 @@ window._detectUploadMode = async function(slug) {
   try {
     const [masterByCpf, engInfo] = await Promise.all([
       window._fetchAlunosMasterByCpf ? window._fetchAlunosMasterByCpf(slug) : Promise.resolve({}),
-      // Buscar data + quem fez a última atualização do dashboard_engajamento
-      fetch(`https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1/dashboard_engajamento?select=updated_at,payload&ies_slug=eq.${encodeURIComponent(slug)}&limit=1`, {
-        headers: { 'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI', 'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI' }
-      }).then(r => r.ok ? r.json() : []).catch(() => [])
+      window._supaRest('dashboard_engajamento', `select=updated_at,payload&ies_slug=eq.${encodeURIComponent(slug)}&limit=1`).catch(() => [])
     ]);
     window._masterByCpf = masterByCpf;
     const count = Object.keys(masterByCpf).length;
@@ -5078,22 +5078,16 @@ window._confirmProfExclListBeforeUpload = function(slugHint) {
       let loaded = false;
       // 1. Tentar Supabase primeiro (fonte primária — dados mais recentes)
       try {
-        log("📡 Buscando dados existentes do Supabase...", "ok");
-        const supaResp = await fetch(
-          `https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1/dashboard_engajamento?select=payload,updated_at&ies_slug=eq.${encodeURIComponent(slug)}&limit=1`,
-          { headers: { 'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI', 'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI' } }
-        );
-        if (supaResp.ok) {
-          const rows = await supaResp.json();
-          const allData = rows[0]?.payload?.allData;
-          if (Array.isArray(allData) && allData.length) {
-            window.INSTITUTION_DATASETS = window.INSTITUTION_DATASETS || {};
-            window.INSTITUTION_DATASETS[slug] = { ...(window.INSTITUTION_DATASETS[slug]||{}), allData };
-            log(`✅ ${allData.length} período(s) existentes carregados do Supabase`, "ok");
-            loaded = true;
-          }
+        log("📡 Buscando dados existentes (servidor)...", "ok");
+        const rows = await window._supaRest('dashboard_engajamento', `select=payload,updated_at&ies_slug=eq.${encodeURIComponent(slug)}&limit=1`);
+        const allData = rows[0]?.payload?.allData;
+        if (Array.isArray(allData) && allData.length) {
+          window.INSTITUTION_DATASETS = window.INSTITUTION_DATASETS || {};
+          window.INSTITUTION_DATASETS[slug] = { ...(window.INSTITUTION_DATASETS[slug]||{}), allData };
+          log(`✅ ${allData.length} período(s) existentes carregados`, "ok");
+          loaded = true;
         }
-      } catch(e) { log("⚠️ Supabase indisponível, tentando fallback...", "warn"); }
+      } catch(e) { log("⚠️ Fonte de dados indisponível, tentando fallback...", "warn"); }
 
       // 2. Fallback: Netlify (dashboard-data.js estático)
       if (!loaded) {
@@ -11724,13 +11718,7 @@ window._bqImportSubmit = async function() {
   if(btn){btn.disabled=true;btn.textContent='⏳ Criando simulado...';}
 
   try {
-    // 1. Create simulado (REST — SDK trava)
-    const _BQ_SUPA = window._SUPA_REST_URL;
-    const _BQ_H    = window._SUPA_REST_HDRS;
-    const simResp = await fetch(`${_BQ_SUPA}/simulados_banco`, {
-      method: 'POST',
-      headers: { ..._BQ_H, 'Prefer': 'return=representation' },
-      body: JSON.stringify({
+    const simResp = await window._supaWrite('simulados_banco', 'POST', {
         titulo,
         edital_num: ($b('bqImpEdt')?.value||'').trim(),
         deadline: $b('bqImpDl')?.value || null,
@@ -11744,8 +11732,7 @@ window._bqImportSubmit = async function() {
         instituicoes_destino: iesDestino,
         status: 'aberto',
         criado_por: _curEmail
-      })
-    });
+      }, { prefer: 'return=representation' });
     if (!simResp.ok) throw new Error('Erro ao criar simulado: ' + await simResp.text());
     const simData = await simResp.json();
     const simId = simData[0].id;
@@ -11773,10 +11760,7 @@ window._bqImportSubmit = async function() {
     let imported = 0;
     for (let i = 0; i < questoes.length; i += 50) {
       const batch = questoes.slice(i, i + 50);
-      const qResp = await fetch(`${_BQ_SUPA}/simulados_questoes`, {
-        method: 'POST', headers: { ..._BQ_H, 'Prefer': 'return=minimal' },
-        body: JSON.stringify(batch)
-      });
+      const qResp = await window._supaWrite('simulados_questoes', 'POST', batch, { prefer: 'return=minimal' });
       if (!qResp.ok) throw new Error(`Erro no lote ${i}: ` + await qResp.text());
       imported += batch.length;
       if(btn) btn.textContent = `⏳ ${imported}/${questoes.length} questões importadas...`;
@@ -11931,15 +11915,9 @@ window.bqSaveSim = async function() {
   const btn = document.querySelector('.bq-modal-footer .bq-btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Criando...'; }
 
-  // Criar simulado (REST — SDK trava)
-  const _BQ_SUPA = window._SUPA_REST_URL;
-  const _BQ_H    = window._SUPA_REST_HDRS;
   let simData;
   try {
-    const simResp = await fetch(`${_BQ_SUPA}/simulados_banco`, {
-      method: 'POST',
-      headers: { ..._BQ_H, 'Prefer': 'return=representation' },
-      body: JSON.stringify({
+    const simResp = await window._supaWrite('simulados_banco', 'POST', {
         titulo,
         edital_num: ($b('bqCrEdt')?.value||'').trim(),
         deadline: $b('bqCrDl')?.value || null,
@@ -11953,8 +11931,7 @@ window.bqSaveSim = async function() {
         instituicoes_destino: iesDestino,
         status: 'aberto',
         criado_por: _curEmail
-      })
-    });
+      }, { prefer: 'return=representation' });
     if (!simResp.ok) throw new Error(await simResp.text());
     simData = await simResp.json();
   } catch(e) {
@@ -11987,21 +11964,13 @@ window.bqSaveSim = async function() {
     const insertedIds = [];
     for (let i = 0; i < questoes.length; i += 50) {
       const batch = questoes.slice(i, i + 50);
-      const qResp = await fetch(`${_BQ_SUPA}/simulados_questoes`, {
-        method: 'POST', headers: { ..._BQ_H, 'Prefer': 'return=representation', 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch)
-      });
+      const qResp = await window._supaWrite('simulados_questoes', 'POST', batch, { prefer: 'return=representation' });
       if (!qResp.ok) { console.error('Erro ao importar questões (batch ' + i + '):', await qResp.text()); continue; }
       const inserted = await qResp.json();
       inserted.forEach(q => insertedIds.push(q.id));
     }
-    // Auto-popular composicao_final com a ordem original da planilha
     if (insertedIds.length > 0) {
-      await fetch(`${_BQ_SUPA}/simulados_banco?id=eq.${simId}`, {
-        method: 'PATCH',
-        headers: { ..._BQ_H, 'Prefer': 'return=minimal', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ composicao_final: insertedIds })
-      });
+      await window._supaWrite(`simulados_banco?id=eq.${encodeURIComponent(simId)}`, 'PATCH', { composicao_final: insertedIds }, { prefer: 'return=minimal' });
     }
     _bqCrParsedRows = [];
   }
@@ -12012,16 +11981,12 @@ window.bqSaveSim = async function() {
   // Invalidar cache e atualizar gestão de simulados imediatamente
   try { localStorage.removeItem('_admc_sims'); } catch(e) {}
   try {
-    let freshResp = await fetch(
-      `${_BQ_SUPA}/simulados_banco?select=id,titulo,status,instituicoes_destino,tipo,ciclo,data_padrao,ano,composicao_final,questoes_anuladas,questoes_anuladas_tratamento&order=created_at.desc`,
-      { headers: _BQ_H }
-    );
-    if (!freshResp.ok) freshResp = await fetch(
-      `${_BQ_SUPA}/simulados_banco?select=id,titulo,status,instituicoes_destino,tipo,ciclo,data_padrao,ano,composicao_final&order=created_at.desc`,
-      { headers: _BQ_H }
-    );
-    if (freshResp.ok) {
-      window._allSimsBanco = await freshResp.json();
+    let rows = await window._supaRest('simulados_banco', 'select=id,titulo,status,instituicoes_destino,tipo,ciclo,data_padrao,ano,composicao_final,questoes_anuladas,questoes_anuladas_tratamento&order=created_at.desc').catch(() => null);
+    if (!rows || !rows.length) {
+      rows = await window._supaRest('simulados_banco', 'select=id,titulo,status,instituicoes_destino,tipo,ciclo,data_padrao,ano,composicao_final&order=created_at.desc').catch(() => []);
+    }
+    if (rows && rows.length) {
+      window._allSimsBanco = rows;
       if (typeof window._renderGestaoGrid === 'function') window._renderGestaoGrid();
     }
   } catch(e) { console.warn('Gestão grid refresh failed:', e); }
@@ -12263,19 +12228,11 @@ window.bqSaveQ = async function(simId) {
   // Salvar questão via REST (SDK trava)
   try {
     if (_editingQId) {
-      // Edição: NÃO altera status — preserva aprovada/pendente/rejeitada
-      const r = await fetch(`${window._SUPA_REST_URL}/simulados_questoes?id=eq.${_editingQId}`, {
-        method: 'PATCH', headers: { ...window._SUPA_REST_HDRS, 'Prefer': 'return=minimal' },
-        body: JSON.stringify(payload)
-      });
+      const r = await window._supaWrite(`simulados_questoes?id=eq.${encodeURIComponent(_editingQId)}`, 'PATCH', payload, { prefer: 'return=minimal' });
       if (!r.ok) throw new Error(await r.text());
     } else {
-      // Criação: status começa como pendente
       payload.status = 'pendente';
-      const r = await fetch(`${window._SUPA_REST_URL}/simulados_questoes`, {
-        method: 'POST', headers: { ...window._SUPA_REST_HDRS, 'Prefer': 'return=minimal' },
-        body: JSON.stringify(payload)
-      });
+      const r = await window._supaWrite('simulados_questoes', 'POST', payload, { prefer: 'return=minimal' });
       if (!r.ok) throw new Error(await r.text());
     }
   } catch(e) { alert('Erro ao salvar: ' + e.message); return; }
@@ -12285,10 +12242,7 @@ window.bqSaveQ = async function(simId) {
 
 // ── Review actions ────────────────────────────────────────────────
 window.bqApproveQ = async function(qId) {
-  const r = await fetch(`${window._SUPA_REST_URL}/simulados_questoes?id=eq.${qId}`, {
-    method: 'PATCH', headers: { ...window._SUPA_REST_HDRS, 'Prefer': 'return=minimal' },
-    body: JSON.stringify({ status: 'aprovada', revisado_por: _curEmail, revisado_at: new Date().toISOString(), revisor_comentario: '' })
-  });
+  const r = await window._supaWrite(`simulados_questoes?id=eq.${encodeURIComponent(qId)}`, 'PATCH', { status: 'aprovada', revisado_por: _curEmail, revisado_at: new Date().toISOString(), revisor_comentario: '' }, { prefer: 'return=minimal' });
   if (!r.ok) { alert('Erro: ' + await r.text()); return; }
   await bqInit();
 };
@@ -12296,10 +12250,7 @@ window.bqApproveQ = async function(qId) {
 window.bqRejectQ = async function(qId) {
   const motivo = prompt('Motivo da rejeição (opcional):') ?? '';
   if (motivo === null) return;
-  const r = await fetch(`${window._SUPA_REST_URL}/simulados_questoes?id=eq.${qId}`, {
-    method: 'PATCH', headers: { ...window._SUPA_REST_HDRS, 'Prefer': 'return=minimal' },
-    body: JSON.stringify({ status: 'rejeitada', revisado_por: _curEmail, revisado_at: new Date().toISOString(), revisor_comentario: motivo })
-  });
+  const r = await window._supaWrite(`simulados_questoes?id=eq.${encodeURIComponent(qId)}`, 'PATCH', { status: 'rejeitada', revisado_por: _curEmail, revisado_at: new Date().toISOString(), revisor_comentario: motivo }, { prefer: 'return=minimal' });
   if (!r.ok) { alert('Erro: ' + await r.text()); return; }
   await bqInit();
 };
@@ -12365,16 +12316,14 @@ window.bqViewQ = function(qId) {
 // ── Delete ────────────────────────────────────────────────────────
 window.bqDeleteQ = async function(qId) {
   if (!confirm('Excluir esta questão?')) return;
-  const r = await fetch(`${window._SUPA_REST_URL}/simulados_questoes?id=eq.${qId}`,
-    { method: 'DELETE', headers: window._SUPA_REST_HDRS });
+  const r = await window._supaWrite(`simulados_questoes?id=eq.${encodeURIComponent(qId)}`, 'DELETE', null);
   if (!r.ok) { alert('Erro: ' + await r.text()); return; }
   await bqInit();
 };
 
 window.bqDeleteSim = async function(simId) {
   if (!confirm('Excluir este simulado e todas as suas questões? Esta ação não pode ser desfeita.')) return;
-  const r = await fetch(`${window._SUPA_REST_URL}/simulados_banco?id=eq.${simId}`,
-    { method: 'DELETE', headers: window._SUPA_REST_HDRS });
+  const r = await window._supaWrite(`simulados_banco?id=eq.${encodeURIComponent(simId)}`, 'DELETE', null);
   if (!r.ok) { alert('Erro: ' + await r.text()); return; }
   // Limpar cache de simulados para forçar recarga da central
   try { localStorage.removeItem('_admc_sims'); } catch(e) {}
@@ -12546,11 +12495,7 @@ window.bqSaveAllGabaritos = async function(simId) {
   let ok = 0, fail = 0;
   for (const u of updates) {
     try {
-      const r = await fetch(`${window._SUPA_REST_URL}/simulados_questoes?id=eq.${u.id}`, {
-        method: 'PATCH',
-        headers: { ...window._SUPA_REST_HDRS, 'Prefer': 'return=minimal' },
-        body: JSON.stringify({ gabarito: u.gabarito })
-      });
+      const r = await window._supaWrite(`simulados_questoes?id=eq.${encodeURIComponent(u.id)}`, 'PATCH', { gabarito: u.gabarito }, { prefer: 'return=minimal' });
       if (r.ok) ok++; else fail++;
     } catch(e) { fail++; }
   }
@@ -12576,11 +12521,7 @@ window.bqApproveAllQs = async function(simId) {
   // Batch PATCH único em vez de N requests sequenciais
   const idList = ids.join(',');
   try {
-    const r = await fetch(`${window._SUPA_REST_URL}/simulados_questoes?id=in.(${idList})`, {
-      method: 'PATCH',
-      headers: { ...window._SUPA_REST_HDRS, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ status: 'aprovada', revisado_por: _curEmail, revisado_at: now })
-    });
+    const r = await window._supaWrite(`simulados_questoes?id=in.(${idList})`, 'PATCH', { status: 'aprovada', revisado_por: _curEmail, revisado_at: now }, { prefer: 'return=minimal' });
     if (!r.ok) { alert('Erro ao aprovar: ' + await r.text()); }
   } catch(e) { alert('Erro: ' + e.message); }
 

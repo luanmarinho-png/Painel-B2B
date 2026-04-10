@@ -7,9 +7,12 @@
  *   resumir dashboard_engajamento e amostra de alunos_master da IES; sem ela o chat usa só contextoDaTela.
  * - COFBOT_KNOWLEDGE_SNIPPET (opcional): texto fixo (ex.: referências ENAMED, conceito 5) até ~6k caracteres.
  * - OPENAI_CHAT_MODEL (opcional): padrão gpt-4o-mini.
+ * - COFBOT_OPENAI_TIMEOUT_MS (opcional): timeout da chamada OpenAI em ms (padrão 52000, máx. 58000).
  */
 
-const { getSupabaseEnv } = require('../../server/infrastructure/config/supabaseEnv');
+const { getSupabaseEnv } = require('./server/infrastructure/config/supabaseEnv');
+const { isMongoDataBackend } = require('./server/infrastructure/mongo/isMongoData');
+const { executePostgrestMongo } = require('./server/infrastructure/mongo/postgrestMongoAdapter');
 const { url: SUPABASE_URL, anonKey: ANON_KEY } = getSupabaseEnv();
 
 const CORS = {
@@ -68,6 +71,28 @@ function redactSensitiveContextString(s) {
 }
 
 /**
+ * Traduz mensagens técnicas da OpenAI para o tom MedCof (claro para o coordenador).
+ * @param {string} raw
+ * @returns {string}
+ */
+function friendlyOpenAiApiError(raw) {
+  const s = String(raw || '').toLowerCase();
+  if (s.includes('rate limit') || s.includes('too many requests')) {
+    return 'O Cofbot está com alta demanda no momento. Aguarde um instante e envie de novo — estamos com você.';
+  }
+  if (s.includes('insufficient_quota') || s.includes('billing hard limit')) {
+    return 'Cofbot está temporariamente indisponível. Fale com o time MedCof para retomarmos o suporte à sua instituição.';
+  }
+  if (s.includes('invalid_api_key') || s.includes('incorrect api key')) {
+    return 'Cofbot não pôde ser ativado. O time MedCof vai ajustar a configuração técnica.';
+  }
+  if (s.includes('context_length') || s.includes('maximum context')) {
+    return 'Sua pergunta ou os dados da tela ficaram extensos demais. Tente ser mais objetivo ou atualize a página.';
+  }
+  return String(raw).slice(0, 500);
+}
+
+/**
  * Valida JWT do usuário e permissão (coordenador da IES ou admin).
  * @param {string} userToken
  * @param {string} iesSlug
@@ -75,34 +100,64 @@ function redactSensitiveContextString(s) {
  */
 async function validateCoordinatorAccess(userToken, iesSlug) {
   if (!userToken) {
-    return { ok: false, status: 401, error: 'Token não fornecido' };
+    return {
+      ok: false,
+      status: 401,
+      error: 'Para usar o Cofbot ao lado dos dados da sua instituição, entre no painel com seu usuário MedCof.'
+    };
   }
 
-  const userResp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: {
-      apikey: ANON_KEY,
-      Authorization: `Bearer ${userToken}`
+  try {
+    const userResp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        apikey: ANON_KEY,
+        Authorization: `Bearer ${userToken}`
+      }
+    });
+
+    if (!userResp.ok) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'Sua sessão MedCof encerrou. Faça login de novo no painel para continuar acompanhando sua turma.'
+      };
     }
-  });
 
-  if (!userResp.ok) {
-    return { ok: false, status: 401, error: 'Sessão inválida ou expirada' };
+    const user = await userResp.json().catch(() => null);
+    if (!user || typeof user !== 'object') {
+      return {
+        ok: false,
+        status: 401,
+        error: 'Não conseguimos confirmar seu acesso. Atualize a página e entre novamente no painel.'
+      };
+    }
+
+    const meta = user.user_metadata || {};
+    const role = meta.role;
+    const inst = (meta.instituicao || '').trim();
+
+    if (role === 'admin' || role === 'superadmin') {
+      return { ok: true, role: role === 'superadmin' ? 'superadmin' : 'admin' };
+    }
+
+    if (role === 'coordenador' && iesSlug && inst === iesSlug) {
+      return { ok: true, role: 'coordenador' };
+    }
+
+    return {
+      ok: false,
+      status: 403,
+      error:
+        'O Cofbot acompanha coordenadores autorizados neste painel MedCof — use o mesmo acesso da sua instituição.'
+    };
+  } catch (e) {
+    console.error('[coordenador-chat] validateCoordinatorAccess', e);
+    return {
+      ok: false,
+      status: 503,
+      error: 'Não conseguimos validar seu acesso agora. Confira sua conexão e tente de novo em instantes.'
+    };
   }
-
-  const user = await userResp.json();
-  const meta = user.user_metadata || {};
-  const role = meta.role;
-  const inst = (meta.instituicao || '').trim();
-
-  if (role === 'admin' || role === 'superadmin') {
-    return { ok: true, role: role === 'superadmin' ? 'superadmin' : 'admin' };
-  }
-
-  if (role === 'coordenador' && iesSlug && inst === iesSlug) {
-    return { ok: true, role: 'coordenador' };
-  }
-
-  return { ok: false, status: 403, error: 'Acesso negado — apenas coordenadores autenticados' };
 }
 
 /**
@@ -137,6 +192,59 @@ function summarizeDashboardEngajamentoRow(row) {
  * @returns {Promise<Record<string, unknown>>}
  */
 async function fetchCofbotIesData(slug, institutionName) {
+  if (isMongoDataBackend()) {
+    /** @type {Record<string, unknown>} */
+    const out = { disponivel: true, ies_slug: slug };
+    try {
+      const eng = await executePostgrestMongo({
+        table: 'dashboard_engajamento',
+        query: `select=payload,updated_at&ies_slug=eq.${encodeURIComponent(slug)}&limit=1`,
+        method: 'GET',
+        body: null,
+        prefer: null,
+        range: null,
+        maskSensitive: false
+      });
+      if (eng.statusCode === 200 && eng.body) {
+        const rows = JSON.parse(eng.body);
+        const row = Array.isArray(rows) ? rows[0] : null;
+        if (row) out.engajamentoResumo = summarizeDashboardEngajamentoRow(row);
+      } else {
+        out.erroEngajamento = `http_${eng.statusCode}`;
+      }
+    } catch (e) {
+      out.erroEngajamento = String(e && e.message ? e.message : e);
+    }
+    try {
+      const name = (institutionName || '').trim();
+      let q = `select=nome,turma,codigo_aluno,instituicao&limit=500`;
+      if (name && name !== slug) {
+        q += `&or=(instituicao.eq.${encodeURIComponent(slug)},instituicao.eq.${encodeURIComponent(name)})`;
+      } else {
+        q += `&instituicao=eq.${encodeURIComponent(slug)}`;
+      }
+      const al = await executePostgrestMongo({
+        table: 'alunos_master',
+        query: q,
+        method: 'GET',
+        body: null,
+        prefer: null,
+        range: null,
+        maskSensitive: false
+      });
+      if (al.statusCode === 200 && al.body) {
+        const rows = JSON.parse(al.body);
+        const list = Array.isArray(rows) ? rows : [];
+        out.cadastroAlunos = { totalRetornado: list.length, amostra: list.slice(0, 120) };
+      } else {
+        out.erroAlunos = `http_${al.statusCode}`;
+      }
+    } catch (e) {
+      out.erroAlunos = String(e && e.message ? e.message : e);
+    }
+    return out;
+  }
+
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
   if (!serviceKey || !slug) {
     return { disponivel: false, motivo: serviceKey ? 'slug_vazio' : 'SUPABASE_SERVICE_ROLE_KEY não configurada' };
@@ -148,54 +256,62 @@ async function fetchCofbotIesData(slug, institutionName) {
     'Content-Type': 'application/json'
   };
 
-  /** @type {Record<string, unknown>} */
-  const out = {
-    disponivel: true,
-    ies_slug: slug,
-    engajamentoResumo: null,
-    cadastroAlunos: null
+  const fetchEngajamento = async () => {
+    /** @type {Record<string, unknown>} */
+    const partial = {};
+    try {
+      const u = `${SUPABASE_URL}/rest/v1/dashboard_engajamento?select=payload,updated_at&ies_slug=eq.${encodeURIComponent(
+        slug
+      )}&limit=1`;
+      const r = await fetch(u, { headers });
+      if (r.ok) {
+        const rows = await r.json();
+        const row = rows[0];
+        if (row) partial.engajamentoResumo = summarizeDashboardEngajamentoRow(row);
+      } else {
+        partial.erroEngajamento = `http_${r.status}`;
+      }
+    } catch (e) {
+      partial.erroEngajamento = String(e && e.message ? e.message : e);
+    }
+    return partial;
   };
 
-  try {
-    const u = `${SUPABASE_URL}/rest/v1/dashboard_engajamento?select=payload,updated_at&ies_slug=eq.${encodeURIComponent(
-      slug
-    )}&limit=1`;
-    const r = await fetch(u, { headers });
-    if (r.ok) {
-      const rows = await r.json();
-      const row = rows[0];
-      if (row) out.engajamentoResumo = summarizeDashboardEngajamentoRow(row);
-    } else {
-      out.erroEngajamento = `http_${r.status}`;
+  const fetchAlunos = async () => {
+    /** @type {Record<string, unknown>} */
+    const partial = {};
+    try {
+      const name = (institutionName || '').trim();
+      let url = `${SUPABASE_URL}/rest/v1/alunos_master?select=nome,turma,codigo_aluno,instituicao&limit=500`;
+      if (name && name !== slug) {
+        url += `&or=(instituicao.eq.${encodeURIComponent(slug)},instituicao.eq.${encodeURIComponent(name)})`;
+      } else {
+        url += `&instituicao=eq.${encodeURIComponent(slug)}`;
+      }
+      const r2 = await fetch(url, { headers });
+      if (r2.ok) {
+        const rows = await r2.json();
+        const list = Array.isArray(rows) ? rows : [];
+        partial.cadastroAlunos = {
+          totalRetornado: list.length,
+          amostra: list.slice(0, 120)
+        };
+      } else {
+        partial.erroAlunos = `http_${r2.status}`;
+      }
+    } catch (e) {
+      partial.erroAlunos = String(e && e.message ? e.message : e);
     }
-  } catch (e) {
-    out.erroEngajamento = String(e && e.message ? e.message : e);
-  }
+    return partial;
+  };
 
-  try {
-    const name = (institutionName || '').trim();
-    let url = `${SUPABASE_URL}/rest/v1/alunos_master?select=nome,turma,codigo_aluno,instituicao&limit=500`;
-    if (name && name !== slug) {
-      url += `&or=(instituicao.eq.${encodeURIComponent(slug)},instituicao.eq.${encodeURIComponent(name)})`;
-    } else {
-      url += `&instituicao=eq.${encodeURIComponent(slug)}`;
-    }
-    const r2 = await fetch(url, { headers });
-    if (r2.ok) {
-      const rows = await r2.json();
-      const list = Array.isArray(rows) ? rows : [];
-      out.cadastroAlunos = {
-        totalRetornado: list.length,
-        amostra: list.slice(0, 120)
-      };
-    } else {
-      out.erroAlunos = `http_${r2.status}`;
-    }
-  } catch (e) {
-    out.erroAlunos = String(e && e.message ? e.message : e);
-  }
-
-  return out;
+  const [e1, e2] = await Promise.all([fetchEngajamento(), fetchAlunos()]);
+  return {
+    disponivel: true,
+    ies_slug: slug,
+    ...e1,
+    ...e2
+  };
 }
 
 exports.handler = async (event) => {
@@ -221,9 +337,14 @@ exports.handler = async (event) => {
   }
 
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: CORS, body: JSON.stringify({ error: 'Method not allowed' }) };
+    return {
+      statusCode: 405,
+      headers: CORS,
+      body: JSON.stringify({ error: 'Esta operação não está disponível por aqui.' })
+    };
   }
 
+  try {
   const apiKey = process.env.OPENAI_API_KEY || process.env.openai_api_key;
   if (!apiKey) {
     return {
@@ -231,7 +352,7 @@ exports.handler = async (event) => {
       headers: CORS,
       body: JSON.stringify({
         error:
-          'OPENAI_API_KEY não chegou na function. No Netlify: Site → Environment variables → edite OPENAI_API_KEY e marque o escopo Functions (ou “All scopes”). Só “Builds” não injeta nas serverless functions. Depois faça um novo deploy. Teste: GET /.netlify/functions/coordenador-chat deve mostrar openaiKeyConfigured:true.'
+          'Cofbot ainda não foi habilitado neste ambiente. O time MedCof cuida da integração no deploy — se precisar, fale conosco pelo canal de suporte.'
       })
     };
   }
@@ -241,7 +362,7 @@ exports.handler = async (event) => {
       headers: CORS,
       body: JSON.stringify({
         error:
-          'OPENAI_API_KEY incorreta: use uma chave secreta da OpenAI (começa com sk-), criada em https://platform.openai.com/api-keys . Não use chave do Supabase nem JWT.'
+          'A integração do Cofbot precisa de um ajuste técnico no servidor. O time MedCof corrige isso na configuração do painel.'
       })
     };
   }
@@ -250,7 +371,13 @@ exports.handler = async (event) => {
   try {
     payload = JSON.parse(event.body || '{}');
   } catch {
-    return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'JSON inválido' }) };
+    return {
+      statusCode: 400,
+      headers: CORS,
+      body: JSON.stringify({
+        error: 'Algo saiu do esperado ao enviar sua mensagem. Atualize a página e tente outra vez.'
+      })
+    };
   }
 
   const authHeader = event.headers.authorization || event.headers.Authorization || '';
@@ -262,7 +389,13 @@ exports.handler = async (event) => {
 
   const { messages, context: clientContext, ies_slug: iesSlug } = payload;
   if (!Array.isArray(messages) || !messages.length) {
-    return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'messages é obrigatório' }) };
+    return {
+      statusCode: 400,
+      headers: CORS,
+      body: JSON.stringify({
+        error: 'Escreva uma pergunta para o Cofbot — ele usa o que você vê no painel para orientar sua gestão.'
+      })
+    };
   }
 
   const slug = typeof iesSlug === 'string' ? iesSlug.trim() : '';
@@ -271,7 +404,11 @@ exports.handler = async (event) => {
     return {
       statusCode: access.status || 403,
       headers: CORS,
-      body: JSON.stringify({ error: access.error || 'Acesso negado' })
+      body: JSON.stringify({
+        error:
+          access.error ||
+          'Não foi possível liberar o Cofbot neste acesso. Confirme que está no painel correto da sua instituição.'
+      })
     };
   }
 
@@ -297,7 +434,13 @@ exports.handler = async (event) => {
     .map((m) => ({ role: m.role, content: m.content.trim().slice(0, 12000) }));
 
   if (!safeMessages.length) {
-    return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Nenhuma mensagem válida' }) };
+    return {
+      statusCode: 400,
+      headers: CORS,
+      body: JSON.stringify({
+        error: 'Envie sua dúvida em texto para o Cofbot analisar com base na tela atual.'
+      })
+    };
   }
 
   let contextStr = '';
@@ -346,7 +489,7 @@ ${regraAdmin}- Se um dado não existir nesses JSONs, diga que não há na base e
 - Não invente nomes de alunos nem números que não apareçam nos JSONs.
 - Não revele detalhes técnicos de implementação nem mencione "prompt" ou "API".
 
-Responda em português do Brasil, tom profissional, acolhedor e objetivo.
+Responda em português do Brasil, no tom MedCof: profissional, acolhedor e objetivo, como no painel institucional da sua parceria com a plataforma.
 
 Você DEVE responder em JSON válido (objeto) com exatamente estas chaves:
 - "reply": string, resposta principal ao coordenador (pode usar parágrafos curtos).
@@ -360,10 +503,19 @@ dadosSupabaseIES (JSON — resumo da mesma IES no servidor; pode estar parcial s
 ${supabaseStr || '{}'}
 ${process.env.COFBOT_KNOWLEDGE_SNIPPET ? `\nconhecimentoFixo (texto operacional ENAMED/MedCof — não substitui os JSONs acima):\n${String(process.env.COFBOT_KNOWLEDGE_SNIPPET).slice(0, 6000)}` : ''}`;
 
+  const rawTimeout = Number(process.env.COFBOT_OPENAI_TIMEOUT_MS);
+  const openaiTimeoutMs = Number.isFinite(rawTimeout)
+    ? Math.min(Math.max(rawTimeout, 15000), 58000)
+    : 52000;
+  const openaiSignal =
+    typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(openaiTimeoutMs)
+      : undefined;
+
   const openaiBody = {
     model: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
     messages: [{ role: 'system', content: systemPrompt }, ...safeMessages],
-    max_tokens: 1400,
+    max_tokens: 1000,
     temperature: 0.35,
     response_format: { type: 'json_object' }
   };
@@ -376,13 +528,23 @@ ${process.env.COFBOT_KNOWLEDGE_SNIPPET ? `\nconhecimentoFixo (texto operacional 
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(openaiBody)
+      body: JSON.stringify(openaiBody),
+      signal: openaiSignal
     });
   } catch (e) {
+    const aborted =
+      e &&
+      (e.name === 'AbortError' ||
+        e.name === 'TimeoutError' ||
+        (typeof e.code === 'string' && e.code === 'ABORT_ERR'));
     return {
-      statusCode: 502,
-      headers: CORS,
-      body: JSON.stringify({ error: 'Falha ao contatar o serviço de IA' })
+      statusCode: aborted ? 504 : 502,
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: aborted
+          ? 'A resposta do Cofbot levou mais tempo que o esperado. Tente uma pergunta mais direta ou envie de novo em instantes.'
+          : 'Não conseguimos conectar ao Cofbot agora. Confira sua internet e tente novamente — estamos por aqui.'
+      })
     };
   }
 
@@ -390,20 +552,28 @@ ${process.env.COFBOT_KNOWLEDGE_SNIPPET ? `\nconhecimentoFixo (texto operacional 
   if (!openaiRes.ok) {
     let errMsg = data?.error?.message || data?.error || 'Erro OpenAI';
     if (String(errMsg).includes('valid issuer')) {
-      errMsg =
-        'Chave da OpenAI inválida (a API espera sk-..., não um JWT). Ajuste OPENAI_API_KEY no Netlify com uma secret key de https://platform.openai.com/api-keys';
+      errMsg = 'A configuração técnica do Cofbot precisa de um ajuste no time MedCof.';
+    } else {
+      errMsg = friendlyOpenAiApiError(errMsg);
     }
     return {
       statusCode: 502,
-      headers: CORS,
-      body: JSON.stringify({ error: String(errMsg).slice(0, 500) })
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: errMsg })
     };
   }
 
   const rawContent = data?.choices?.[0]?.message?.content?.trim() || '';
   const parsed = parseAssistantPayload(rawContent);
   if (!parsed.reply) {
-    return { statusCode: 502, headers: CORS, body: JSON.stringify({ error: 'Resposta vazia da IA' }) };
+    return {
+      statusCode: 502,
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error:
+          'O Cofbot não conseguiu montar uma resposta agora. Reformule a pergunta ou envie de novo — vamos tentar juntos.'
+      })
+    };
   }
 
   return {
@@ -415,6 +585,17 @@ ${process.env.COFBOT_KNOWLEDGE_SNIPPET ? `\nconhecimentoFixo (texto operacional 
       insight: parsed.insight || undefined
     })
   };
+  } catch (e) {
+    console.error('[coordenador-chat] handler', e);
+    return {
+      statusCode: 500,
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error:
+          'Encontramos uma instabilidade por aqui. Tente novamente em instantes — se persistir, o time MedCof ajuda pelo canal de suporte.'
+      })
+    };
+  }
 };
 
 /**

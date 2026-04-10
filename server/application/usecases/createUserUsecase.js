@@ -3,6 +3,8 @@
  */
 
 const { getSupabaseEnv } = require('../../infrastructure/config/supabaseEnv');
+const { isMongoDataBackend } = require('../../infrastructure/mongo/isMongoData');
+const { executePostgrestMongo } = require('../../infrastructure/mongo/postgrestMongoAdapter');
 const { isSuperadmin } = require('../../domain/userRoles');
 
 /**
@@ -93,9 +95,28 @@ async function executeCreateUser({ callerRole, body, corsHeaders }) {
       }
     }
 
-    const whitelistResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/usuarios_autorizados?on_conflict=email,instituicao`,
-      {
+    let whitelistOk = false;
+    /** @type {unknown} */
+    let whitelistData = [];
+    if (isMongoDataBackend()) {
+      const mr = await executePostgrestMongo({
+        table: 'usuarios_autorizados?on_conflict=email,instituicao',
+        query: '',
+        method: 'POST',
+        body: { email, nome, instituicao, role, ativo: true },
+        prefer: 'return=representation,resolution=merge-duplicates',
+        range: null,
+        maskSensitive: false
+      });
+      whitelistOk = mr.statusCode >= 200 && mr.statusCode < 300;
+      try {
+        const parsed = JSON.parse(mr.body || '[]');
+        whitelistData = Array.isArray(parsed) ? parsed : [parsed];
+      } catch (_) {
+        whitelistData = [];
+      }
+    } else {
+      const whitelistResp = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_autorizados?on_conflict=email,instituicao`, {
         method: 'POST',
         headers: {
           apikey: SERVICE_KEY,
@@ -104,17 +125,16 @@ async function executeCreateUser({ callerRole, body, corsHeaders }) {
           Prefer: 'resolution=merge-duplicates,return=representation'
         },
         body: JSON.stringify({ email, nome, instituicao, role, ativo: true })
+      });
+      whitelistOk = whitelistResp.ok;
+      try {
+        whitelistData = await whitelistResp.json();
+      } catch (_) {
+        whitelistData = [];
       }
-    );
-
-    let whitelistData;
-    try {
-      whitelistData = await whitelistResp.json();
-    } catch (_) {
-      whitelistData = [];
     }
 
-    if (!whitelistResp.ok) {
+    if (!whitelistOk) {
       return {
         statusCode: 400,
         headers: corsHeaders,

@@ -1,8 +1,8 @@
 // Netlify Function: reset-password — adapter fino (Clean Architecture)
 // Lógica: server/application/usecases/resetPasswordUsecase.js
 
-const { corsResetPassword } = require('../../server/presentation/http/corsPresets');
-const { executeResetPassword } = require('../../server/application/usecases/resetPasswordUsecase');
+const { corsResetPassword } = require('./server/presentation/http/corsPresets');
+const { executeResetPassword } = require('./server/application/usecases/resetPasswordUsecase');
 
 exports.handler = async (event) => {
   const CORS = corsResetPassword;

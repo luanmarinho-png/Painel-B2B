@@ -4,7 +4,7 @@
  * Template canônico: templates/email-boletim-individual.html (manter placeholders alinhados ao HTML embutido abaixo).
  */
 
-const { getSupabaseEnv } = require('../../server/infrastructure/config/supabaseEnv');
+const { getSupabaseEnv } = require('./server/infrastructure/config/supabaseEnv');
 const { url: SUPABASE_URL, anonKey: ANON_KEY } = getSupabaseEnv();
 
 const DEFAULT_FROM_EMAIL = 'Nao-responda@grupomedcof.com.br';

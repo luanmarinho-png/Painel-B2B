@@ -2,9 +2,9 @@
 // Lógica: server/application/usecases/deleteUserUsecase.js
 // Requer sessão admin/superadmin (mesmo fluxo das demais funções de gestão).
 
-const { corsAdminJson } = require('../../server/presentation/http/corsPresets');
-const { requireAdminSession } = require('../../server/application/auth/requireAdminSession');
-const { executeDeleteUser } = require('../../server/application/usecases/deleteUserUsecase');
+const { corsAdminJson } = require('./server/presentation/http/corsPresets');
+const { requireAdminSession } = require('./server/application/auth/requireAdminSession');
+const { executeDeleteUser } = require('./server/application/usecases/deleteUserUsecase');
 
 exports.handler = async (event) => {
   const CORS = corsAdminJson;

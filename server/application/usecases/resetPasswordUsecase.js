@@ -3,6 +3,8 @@
  */
 
 const { getSupabaseEnv } = require('../../infrastructure/config/supabaseEnv');
+const { isMongoDataBackend } = require('../../infrastructure/mongo/isMongoData');
+const { executePostgrestMongo } = require('../../infrastructure/mongo/postgrestMongoAdapter');
 
 const REDIRECT_TO = process.env.PASSWORD_RESET_REDIRECT_URL || 'https://grupomedcof.org/nova-senha.html';
 
@@ -40,18 +42,43 @@ async function executeResetPassword({ email, corsHeaders }) {
     const isAdmin = role === 'superadmin' || role === 'admin';
 
     if (!isAdmin) {
-      const wlResp = await fetch(
-        `${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}&ativo=eq.true&select=email`,
-        { headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` } }
-      );
-      if (!wlResp.ok) {
-        return {
-          statusCode: 500,
-          headers: corsHeaders,
-          body: JSON.stringify({ error: 'Erro interno ao verificar cadastro.' })
-        };
+      let wlData = [];
+      if (isMongoDataBackend()) {
+        const mr = await executePostgrestMongo({
+          table: 'usuarios_autorizados',
+          query: `select=email&email=eq.${encodeURIComponent(email)}&ativo=eq.true`,
+          method: 'GET',
+          body: null,
+          prefer: null,
+          range: null,
+          maskSensitive: false
+        });
+        if (mr.statusCode !== 200) {
+          return {
+            statusCode: 500,
+            headers: corsHeaders,
+            body: JSON.stringify({ error: 'Erro interno ao verificar cadastro.' })
+          };
+        }
+        try {
+          wlData = JSON.parse(mr.body || '[]');
+        } catch {
+          wlData = [];
+        }
+      } else {
+        const wlResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}&ativo=eq.true&select=email`,
+          { headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` } }
+        );
+        if (!wlResp.ok) {
+          return {
+            statusCode: 500,
+            headers: corsHeaders,
+            body: JSON.stringify({ error: 'Erro interno ao verificar cadastro.' })
+          };
+        }
+        wlData = await wlResp.json();
       }
-      const wlData = await wlResp.json();
       if (!Array.isArray(wlData) || wlData.length === 0) return notFoundResponse;
     }
 

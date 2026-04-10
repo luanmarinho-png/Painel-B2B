@@ -3,6 +3,8 @@
  */
 
 const { getSupabaseEnv } = require('../../infrastructure/config/supabaseEnv');
+const { getMongoEnv } = require('../../infrastructure/mongo/mongoEnv');
+const { executePostgrestMongo } = require('../../infrastructure/mongo/postgrestMongoAdapter');
 const { fetchAuthUser } = require('../../infrastructure/supabase/fetchAuthUser');
 const { isPrivilegedAdmin, isSuperadmin } = require('../../domain/userRoles');
 const { corsAdminProxy } = require('../../presentation/http/corsPresets');
@@ -14,6 +16,7 @@ const ALLOWED_TABLES = new Set([
   'simulado_respostas',
   'simulados_banco',
   'simulados_envios',
+  'simulados_questoes',
   'instituicoes',
   'dashboard_engajamento',
   'atividades_contrato',
@@ -135,8 +138,42 @@ async function executeAdminProxy({ authHeader, rawBody }) {
     };
   }
 
-  const { url: SUPABASE_URL, serviceRoleKey: SERVICE_KEY } = env;
   const httpMethod = (method || 'GET').toUpperCase();
+
+  if (process.env.DATA_BACKEND === 'mongo') {
+    const { uri: mongoUri } = getMongoEnv();
+    if (!mongoUri) {
+      return {
+        statusCode: 503,
+        headers: CORS,
+        body: JSON.stringify({ error: 'DATA_BACKEND=mongo mas MONGODB_URI não está configurada' })
+      };
+    }
+    try {
+      const mongoResp = await executePostgrestMongo({
+        table,
+        query: query || '',
+        method: httpMethod,
+        body,
+        prefer,
+        range,
+        maskSensitive
+      });
+      return {
+        statusCode: mongoResp.statusCode,
+        headers: { ...CORS, ...mongoResp.headers },
+        body: mongoResp.body
+      };
+    } catch (err) {
+      return {
+        statusCode: 500,
+        headers: CORS,
+        body: JSON.stringify({ error: 'MongoDB: ' + (err && err.message ? err.message : String(err)) })
+      };
+    }
+  }
+
+  const { url: SUPABASE_URL, serviceRoleKey: SERVICE_KEY } = env;
   const url = `${SUPABASE_URL}/rest/v1/${table}${query ? (table.includes('?') ? '&' : '?') + query : ''}`;
 
   const headers = {

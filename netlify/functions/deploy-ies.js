@@ -9,7 +9,9 @@ const crypto = require('crypto');
 const NETLIFY_TOKEN  = process.env.NETLIFY_TOKEN;
 const SITE_ID        = process.env.NETLIFY_SITE_ID;
 const API            = 'https://api.netlify.com/api/v1';
-const { getSupabaseEnv } = require('../../server/infrastructure/config/supabaseEnv');
+const { getSupabaseEnv } = require('./server/infrastructure/config/supabaseEnv');
+const { isMongoDataBackend } = require('./server/infrastructure/mongo/isMongoData');
+const { executePostgrestMongo } = require('./server/infrastructure/mongo/postgrestMongoAdapter');
 const { url: SUPABASE_URL, serviceRoleKey: SUPABASE_KEY } = getSupabaseEnv();
 
 // SHAs SHA256 dos zips de cada function (mesma regra do deploy-safe.py: zip com um único .js).
@@ -17,10 +19,10 @@ const { url: SUPABASE_URL, serviceRoleKey: SUPABASE_KEY } = getSupabaseEnv();
 // essa function segue a versão já publicada no deploy base até um deploy completo (Git/CLI/deploy-safe).
 // Atualizar estes quatro sempre que alterar create/update/delete/reset-password.
 const FN_SHAS = {
-  'create-user':    'cc3f0aa3b0804b2404e7cbc0c17b4f31e337dc4dbce7467d632f5b1950468a27',
-  'delete-user':    '94c6887d6759b4081789faf36a259b0d9e1687e9d8f041d267a3dcfc1e9d2813',
-  'update-user':    'c3f0c408d79eac19e3f6851696df2e5ab193f3387bf05a64bd2853237382ab33',
-  'reset-password': '1832c7efe342e037ddec6310c95c45270b1d5881c4ee0f23cae01ca448e23aa8',
+  'create-user':    '8d840131471e66a4ade904f3eae569c8e111e6f03c81485a48cf562156958e2b',
+  'delete-user':    'e1cc9a4ee63438890ad785aea53e4d92dfaf4d92d9b7fc873f1f7c863bfdf236',
+  'update-user':    'e2220a019b31fc0cc7d4deaa24a006e18ccf7b9b228aef6895df289f0f3fe01d',
+  'reset-password': '0656b558ca8e6ab4ce44dc6347bd63aed9afbf9b717f5e6d5fea3e731a109c8f',
 };
 
 const CORS = {
@@ -131,28 +133,39 @@ exports.handler = async (event) => {
     let iesRegistered = false;
     if (slugDetected) {
       try {
-        const upsertResp = await fetch(
-          `${SUPABASE_URL}/rest/v1/instituicoes?on_conflict=slug`,
-          {
-            method:  'POST',
+        const row = {
+          slug: slugDetected,
+          path: `/${slugDetected}/`,
+          ativo: true,
+          wip: wip === true ? true : false,
+          ...(nome ? { nome } : {}),
+          ...(cidade ? { cidade } : {}),
+          ...(stripe ? { stripe } : {})
+        };
+        if (isMongoDataBackend()) {
+          const mr = await executePostgrestMongo({
+            table: 'instituicoes?on_conflict=slug',
+            query: '',
+            method: 'POST',
+            body: row,
+            prefer: 'return=representation,resolution=merge-duplicates',
+            range: null,
+            maskSensitive: false
+          });
+          iesRegistered = mr.statusCode >= 200 && mr.statusCode < 300;
+        } else {
+          const upsertResp = await fetch(`${SUPABASE_URL}/rest/v1/instituicoes?on_conflict=slug`, {
+            method: 'POST',
             headers: {
-              'apikey':       SUPABASE_KEY,
-              'Authorization': `Bearer ${SUPABASE_KEY}`,
-              'Content-Type':  'application/json',
-              'Prefer':        'resolution=merge-duplicates',
+              apikey: SUPABASE_KEY,
+              Authorization: `Bearer ${SUPABASE_KEY}`,
+              'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates'
             },
-            body: JSON.stringify({
-              slug:   slugDetected,
-              path:   `/${slugDetected}/`,
-              ativo:  true,
-              wip:    wip === true ? true : false,
-              ...(nome   ? { nome }   : {}),
-              ...(cidade ? { cidade } : {}),
-              ...(stripe ? { stripe } : {}),
-            }),
-          }
-        );
-        iesRegistered = upsertResp.ok;
+            body: JSON.stringify(row)
+          });
+          iesRegistered = upsertResp.ok;
+        }
       } catch (_) { /* não bloquear o deploy se o upsert falhar */ }
     }
 

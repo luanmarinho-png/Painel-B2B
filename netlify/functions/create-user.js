@@ -1,9 +1,9 @@
 // Netlify Function: create-user — adapter fino (Clean Architecture)
 // Lógica: server/application/usecases/createUserUsecase.js
 
-const { corsAdminJson } = require('../../server/presentation/http/corsPresets');
-const { requireAdminSession } = require('../../server/application/auth/requireAdminSession');
-const { executeCreateUser } = require('../../server/application/usecases/createUserUsecase');
+const { corsAdminJson } = require('./server/presentation/http/corsPresets');
+const { requireAdminSession } = require('./server/application/auth/requireAdminSession');
+const { executeCreateUser } = require('./server/application/usecases/createUserUsecase');
 
 exports.handler = async (event) => {
   const CORS = corsAdminJson;

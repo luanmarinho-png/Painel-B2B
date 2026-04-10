@@ -3,6 +3,8 @@
  */
 
 const { getSupabaseEnv } = require('../../infrastructure/config/supabaseEnv');
+const { isMongoDataBackend } = require('../../infrastructure/mongo/isMongoData');
+const { executePostgrestMongo } = require('../../infrastructure/mongo/postgrestMongoAdapter');
 const { isSuperadmin } = require('../../domain/userRoles');
 
 /**
@@ -88,40 +90,51 @@ async function executeUpdateUser({ callerRole, body, corsHeaders }) {
     if (ativo !== undefined) updateFields.ativo = ativo;
     if (nome !== undefined) updateFields.nome = nome;
 
-    const whitelistResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}`,
-      {
+    const mongoPatch = { ...updateFields };
+    if (instituicoes_responsavel !== undefined) mongoPatch.instituicoes_responsavel = instituicoes_responsavel;
+
+    let whitelistOk = false;
+    /** @type {unknown} */
+    let whitelistData = [];
+    if (isMongoDataBackend()) {
+      const mr = await executePostgrestMongo({
+        table: `usuarios_autorizados?email=eq.${encodeURIComponent(email)}`,
+        query: '',
         method: 'PATCH',
-        headers: {
-          apikey: SERVICE_KEY,
-          Authorization: `Bearer ${SERVICE_KEY}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation'
-        },
-        body: JSON.stringify(updateFields)
-      }
-    );
-
-    let whitelistData;
-    try {
-      whitelistData = await whitelistResp.json();
-    } catch (_) {
-      whitelistData = [];
-    }
-
-    if (!whitelistResp.ok) {
-      return {
-        statusCode: 400,
-        headers: corsHeaders,
-        body: JSON.stringify({ error: 'Erro na whitelist: ' + JSON.stringify(whitelistData) })
-      };
-    }
-
-    if (instituicoes_responsavel !== undefined) {
+        body: mongoPatch,
+        prefer: 'return=representation',
+        range: null,
+        maskSensitive: false
+      });
+      whitelistOk = mr.statusCode >= 200 && mr.statusCode < 300;
       try {
-        await fetch(
-          `${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}`,
-          {
+        whitelistData = JSON.parse(mr.body || '[]');
+      } catch (_) {
+        whitelistData = [];
+      }
+    } else {
+      const whitelistResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: SERVICE_KEY,
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=representation'
+          },
+          body: JSON.stringify(updateFields)
+        }
+      );
+      whitelistOk = whitelistResp.ok;
+      try {
+        whitelistData = await whitelistResp.json();
+      } catch (_) {
+        whitelistData = [];
+      }
+      if (instituicoes_responsavel !== undefined) {
+        try {
+          await fetch(`${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}`, {
             method: 'PATCH',
             headers: {
               apikey: SERVICE_KEY,
@@ -130,11 +143,19 @@ async function executeUpdateUser({ callerRole, body, corsHeaders }) {
               Prefer: 'return=minimal'
             },
             body: JSON.stringify({ instituicoes_responsavel })
-          }
-        );
-      } catch (_) {
-        /* coluna pode não existir */
+          });
+        } catch (_) {
+          /* coluna pode não existir */
+        }
       }
+    }
+
+    if (!whitelistOk) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({ error: 'Erro na whitelist: ' + JSON.stringify(whitelistData) })
+      };
     }
 
     return {

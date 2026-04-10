@@ -15,15 +15,15 @@
     sessionStorage.removeItem('medcof_admin_bypass');
   }
 
-  // ── Buscar dados do Supabase ───────────────────────────────────────
-  const SUPA_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
-  const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
-
   try {
-    const resp = await fetch(
-      `${SUPA_URL}/rest/v1/instituicoes?select=logo_url,theme_hex&slug=eq.${slug}&ativo=eq.true`,
-      { headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` } }
-    );
+    const resp = await fetch('/.netlify/functions/anon-data-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        table: 'instituicoes',
+        query: `select=logo_url,theme_hex&slug=eq.${encodeURIComponent(slug)}&ativo=eq.true`
+      })
+    });
     if (!resp.ok) return;
     const [inst] = await resp.json();
     if (!inst) return;
@@ -265,10 +265,14 @@ body {
     // ── AVISOS ÀS COORDENAÇÕES ────────────────────────────────────
     try {
       const now = new Date().toISOString();
-      const avisoResp = await fetch(
-        `${SUPA_URL}/rest/v1/avisos?select=id,titulo,mensagem,expira_em,ies_slug&ativo=eq.true&expira_em=gt.${now}&or=(ies_slug.eq.${slug},ies_slug.eq.all)&order=created_at.desc&limit=5`,
-        { headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` } }
-      );
+      const avisoResp = await fetch('/.netlify/functions/anon-data-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          table: 'avisos',
+          query: `select=id,titulo,mensagem,expira_em,ies_slug&ativo=eq.true&expira_em=gt.${encodeURIComponent(now)}&or=(ies_slug.eq.${encodeURIComponent(slug)},ies_slug.eq.all)&order=created_at.desc&limit=5`
+        })
+      });
       const avisos = avisoResp.ok ? await avisoResp.json() : [];
       // Filtrar apenas os não vistos ainda (localStorage por ID)
       const unseen = (avisos || []).filter(a => !localStorage.getItem(`aviso_seen_${a.id}`));

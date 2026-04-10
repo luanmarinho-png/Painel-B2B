@@ -8,14 +8,52 @@ Pode usar export no shell ou variáveis no arquivo .env (não commitado).
 
 Uso: python3 deploy-safe.py
 """
-import json, urllib.request, urllib.error, hashlib, time, sys, os, zipfile, io, hashlib
+import json, urllib.request, urllib.error, hashlib, time, sys, os, zipfile, io, hashlib, subprocess
 
 SITE_ID = os.environ.get("NETLIFY_SITE_ID") or "9a61aead-5bfa-4efb-a3f8-fe3431c2c684"
 API = "https://api.netlify.com/api/v1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FN_DIR = os.path.join(BASE_DIR, "netlify", "functions")
+BUNDLE_DIR = os.path.join(BASE_DIR, ".netlify-fn-bundle")
 
 MIN_FILES = 100  # Safety: minimum files for a "good" deploy
+
+def _esbuild_bin():
+    """Caminho do binário esbuild (necessário para incluir server/ no zip da function)."""
+    p = os.path.join(BASE_DIR, "node_modules", "esbuild", "bin", "esbuild")
+    if os.path.isfile(p):
+        return p
+    return None
+
+def bundle_functions_to_dir():
+    """
+    Empacota cada netlify/functions/*.js com esbuild (inclui ../../server e mongodb).
+    O upload via API só envia um .js por function; sem bundle o runtime não acha os requires.
+    """
+    esbuild = _esbuild_bin()
+    if not esbuild:
+        print("ERRO: esbuild não encontrado. Rode: npm install")
+        sys.exit(1)
+    os.makedirs(BUNDLE_DIR, exist_ok=True)
+    for fn in os.listdir(FN_DIR):
+        if not fn.endswith(".js"):
+            continue
+        src = os.path.join(FN_DIR, fn)
+        out = os.path.join(BUNDLE_DIR, fn)
+        subprocess.run(
+            [
+                esbuild,
+                src,
+                "--bundle",
+                "--platform=node",
+                "--target=node20",
+                "--format=cjs",
+                f"--outfile={out}",
+                "--log-level=warning",
+            ],
+            check=True,
+            cwd=BASE_DIR,
+        )
 
 def _load_dotenv():
     """Preenche os.environ a partir de .env na raiz. Sobrescreve se a variável no ambiente estiver vazia."""
@@ -70,21 +108,35 @@ def api_get(path):
         raise SystemExit(1) from e
 
 def make_fn_zip(js_path):
-    """Zip a single JS function file for Netlify upload."""
+    """
+    Zip um único .js para upload Netlify.
+    Metadados fixos (data 1980-01-01) para SHA256 estável — zipfile.write() usa horário atual e
+    mudava o hash a cada execução, quebrando FN_SHAS em deploy-ies e o merge de functions.
+    """
+    arcname = os.path.basename(js_path)
+    with open(js_path, "rb") as f:
+        payload = f.read()
     buf = io.BytesIO()
+    zi = zipfile.ZipInfo(arcname)
+    zi.date_time = (1980, 1, 1, 0, 0, 0)
+    zi.compress_type = zipfile.ZIP_DEFLATED
+    zi.external_attr = 0o644 << 16
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(js_path, os.path.basename(js_path))
+        z.writestr(zi, payload)
     return buf.getvalue()
 
 def build_fn_data():
     """Compute SHA256 of each function zip (Netlify uses SHA256 for functions)."""
+    bundle_functions_to_dir()
     shas = {}
     zips = {}
     for fn_file in sorted(os.listdir(FN_DIR)):
         if not fn_file.endswith(".js"):
             continue
         name = fn_file[:-3]
-        full_path = os.path.join(FN_DIR, fn_file)
+        full_path = os.path.join(BUNDLE_DIR, fn_file)
+        if not os.path.isfile(full_path):
+            raise FileNotFoundError(full_path)
         zipped = make_fn_zip(full_path)
         sha = hashlib.sha256(zipped).hexdigest()
         shas[name] = sha
@@ -128,6 +180,11 @@ def deploy(admin_path=None):
     fn_shas, fn_zips = build_fn_data()
     for name, sha in fn_shas.items():
         print(f"   {name}: {sha[:12]}...")
+    deploy_ies_keys = ("create-user", "delete-user", "update-user", "reset-password")
+    if all(k in fn_shas for k in deploy_ies_keys):
+        print("\n📋 FN_SHAS em netlify/functions/deploy-ies.js (alinhar com deploy IES pela API):")
+        for k in deploy_ies_keys:
+            print(f"   '{k}': '{fn_shas[k]}',")
 
     # Update admin.html + any extra local files
     uploads = {}
@@ -282,6 +339,18 @@ def deploy(admin_path=None):
 
 if __name__ == "__main__":
     _load_dotenv()
+    if "--fn-shas-only" in sys.argv:
+        fn_shas, _ = build_fn_data()
+        print("\nSHA256 dos zips (Netlify functions):")
+        for name, sha in sorted(fn_shas.items()):
+            print(f"  {name}: {sha}")
+        deploy_ies_keys = ("create-user", "delete-user", "update-user", "reset-password")
+        print("\n📋 Cole em netlify/functions/deploy-ies.js → FN_SHAS:")
+        print("const FN_SHAS = {")
+        for k in deploy_ies_keys:
+            print(f"  '{k}':    '{fn_shas[k]}',")
+        print("};")
+        sys.exit(0)
     admin = os.path.join(BASE_DIR, "admin.html")
     if not os.path.exists(admin):
         print(f"admin.html não encontrado em {admin}")

@@ -1,9 +1,9 @@
 // Netlify Function: update-user — adapter fino (Clean Architecture)
 // Lógica: server/application/usecases/updateUserUsecase.js
 
-const { corsAdminJson } = require('../../server/presentation/http/corsPresets');
-const { requireAdminSession } = require('../../server/application/auth/requireAdminSession');
-const { executeUpdateUser } = require('../../server/application/usecases/updateUserUsecase');
+const { corsAdminJson } = require('./server/presentation/http/corsPresets');
+const { requireAdminSession } = require('./server/application/auth/requireAdminSession');
+const { executeUpdateUser } = require('./server/application/usecases/updateUserUsecase');
 
 exports.handler = async (event) => {
   const CORS = corsAdminJson;

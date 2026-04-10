@@ -3,6 +3,8 @@
  */
 
 const { getSupabaseEnv } = require('../../infrastructure/config/supabaseEnv');
+const { isMongoDataBackend } = require('../../infrastructure/mongo/isMongoData');
+const { executePostgrestMongo } = require('../../infrastructure/mongo/postgrestMongoAdapter');
 
 /**
  * @param {object} params
@@ -49,25 +51,46 @@ async function executeDeleteUser({ body, corsHeaders }) {
       }
     }
 
-    const deleteWhitelistResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}`,
-      {
+    let whitelistOk = false;
+    if (isMongoDataBackend()) {
+      const dr = await executePostgrestMongo({
+        table: `usuarios_autorizados?email=eq.${encodeURIComponent(email)}`,
+        query: '',
         method: 'DELETE',
-        headers: {
-          apikey: SERVICE_KEY,
-          Authorization: `Bearer ${SERVICE_KEY}`,
-          Prefer: 'return=representation'
-        }
+        body: null,
+        prefer: null,
+        range: null,
+        maskSensitive: false
+      });
+      whitelistOk = dr.statusCode >= 200 && dr.statusCode < 300;
+      if (!whitelistOk) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Erro ao remover da whitelist: MongoDB ' + dr.statusCode })
+        };
       }
-    );
-
-    if (!deleteWhitelistResp.ok) {
-      const errData = await deleteWhitelistResp.json();
-      return {
-        statusCode: 400,
-        headers: corsHeaders,
-        body: JSON.stringify({ error: 'Erro ao remover da whitelist: ' + JSON.stringify(errData) })
-      };
+    } else {
+      const deleteWhitelistResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/usuarios_autorizados?email=eq.${encodeURIComponent(email)}`,
+        {
+          method: 'DELETE',
+          headers: {
+            apikey: SERVICE_KEY,
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            Prefer: 'return=representation'
+          }
+        }
+      );
+      whitelistOk = deleteWhitelistResp.ok;
+      if (!whitelistOk) {
+        const errData = await deleteWhitelistResp.json();
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Erro ao remover da whitelist: ' + JSON.stringify(errData) })
+        };
+      }
     }
 
     return {

@@ -43,6 +43,21 @@ let CURRENT_BENCHMARK = {};
 const _SUPA_ENGAJAMENTO_URL = "https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1";
 const _SUPA_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI";
 
+/** Leitura pública via Netlify (Mongo ou Supabase conforme DATA_BACKEND no servidor). */
+async function _anonDataProxyRead(table, query) {
+  try {
+    const resp = await fetch("/.netlify/functions/anon-data-proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table, query: query || "" })
+    });
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch {
+    return [];
+  }
+}
+
 // ── Funções de cálculo reutilizáveis (chamadas na init e no refresh) ──
 function _buildAllDashboards(allData) {
   const periods = allData
@@ -99,12 +114,11 @@ async function _loadEngajamentoFromSupabase() {
   const slug = CURRENT_INSTITUTION?.key || CURRENT_INSTITUTION_KEY || DEFAULT_INSTITUTION_KEY || "";
   if (!slug) return null;
   try {
-    const url = `${_SUPA_ENGAJAMENTO_URL}/dashboard_engajamento?select=payload,updated_at&ies_slug=eq.${encodeURIComponent(slug)}&limit=1`;
-    const resp = await fetch(url, {
-      headers: { 'apikey': _SUPA_ANON_KEY, 'Authorization': `Bearer ${_SUPA_ANON_KEY}` }
-    });
-    if (!resp.ok) return null;
-    const rows = await resp.json();
+    const rows = await _anonDataProxyRead(
+      "dashboard_engajamento",
+      `select=payload,updated_at&ies_slug=eq.${encodeURIComponent(slug)}&limit=1`
+    );
+    if (!Array.isArray(rows) || !rows.length) return null;
     const payload = rows[0]?.payload;
     const allData = payload?.allData;
     if (!Array.isArray(allData) || !allData.length) return null;
@@ -432,7 +446,8 @@ function buildPeriodSummary(rows, days) {
   const totalLogins = rows.reduce((sum, row) => sum + (row.logins || 0), 0);
   const totalQuestAcertadas = rows.reduce((sum, row) => sum + (row.questoes_acertadas || 0), 0);
   const taxaAcertoMedia = totalQuestions > 0 ? (totalQuestAcertadas / totalQuestions * 100) : null;
-  const topStudent = [...rows].sort((a, b) => (b.questoes - a.questoes) || (b.tempo_min - a.tempo_min))[0];
+  const _topRaw = [...rows].sort((a, b) => (b.questoes - a.questoes) || (b.tempo_min - a.tempo_min))[0];
+  const topStudent = _topRaw ? { ..._topRaw, questoesDia: (_topRaw.questoes || 0) / safeDays } : null;
   return {
     safeDays,
     activeStudents: activeRows.length,
@@ -754,11 +769,11 @@ async function _loadSimNotasForEngagement() {
   if (!slug) return [];
   if (_engSimCache && _engSimCache.slug === slug) return _engSimCache.sims;
   try {
-    const resp = await fetch(`${_SIM_SUPA}/simulado_respostas?select=simulado_ref,aluno_nome,respostas&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=in.(__RANKING__,__BATCH_0__,__BATCH_1__,__BATCH_2__,__BATCH_3__,__BATCH_4__,__BATCH_5__,__BATCH_6__,__BATCH_7__,__BATCH_8__,__BATCH_9__,__BATCH_10__,__BATCH_11__,__BATCH_12__,__BATCH_13__,__BATCH_14__,__BATCH_15__,__BATCH_16__,__BATCH_17__,__BATCH_18__,__BATCH_19__)`, {
-      headers: { 'apikey': _SIM_KEY, 'Authorization': `Bearer ${_SIM_KEY}` }
-    });
-    if (!resp.ok) return [];
-    const rows = await resp.json();
+    const rows = await _anonDataProxyRead(
+      "simulado_respostas",
+      `select=simulado_ref,aluno_nome,respostas&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=in.(__RANKING__,__BATCH_0__,__BATCH_1__,__BATCH_2__,__BATCH_3__,__BATCH_4__,__BATCH_5__,__BATCH_6__,__BATCH_7__,__BATCH_8__,__BATCH_9__,__BATCH_10__,__BATCH_11__,__BATCH_12__,__BATCH_13__,__BATCH_14__,__BATCH_15__,__BATCH_16__,__BATCH_17__,__BATCH_18__,__BATCH_19__)`
+    );
+    if (!Array.isArray(rows) || !rows.length) return [];
     // Agrupar por simulado_ref
     const byRef = {};
     rows.forEach(r => {
@@ -1127,7 +1142,7 @@ function selectPeriod(index) {
       {
         label: "Melhor desempenho do recorte",
         value: period.summary.topStudent ? formatNumber(period.summary.topStudent.questoes) : "0",
-        meta: period.summary.topStudent ? `${period.summary.topStudent.nome} · ${formatHours(period.summary.topStudent.tempo_min)}` : "Sem dados"
+        meta: period.summary.topStudent ? `${period.summary.topStudent.nome} · ${formatDecimal(period.summary.topStudent.questoesDia)} q/dia · ${formatHours(period.summary.topStudent.tempo_min)}` : "Sem dados"
       },
       {
         label: "Ritmo do grupo",
@@ -1420,9 +1435,6 @@ function switchTurma(key) {
 //   #personalizado    → Grid de simulados personalizados + evolução
 //   #sim=<ref>        → Detalhe de um simulado específico
 
-const _SIM_SUPA = 'https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1';
-const _SIM_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
-
 // ── Cores de especialidade (idênticas ao boletim do aluno) ──
 const _AREA_COLORS = {
   'ginecologia e obstetrícia':'#ec4899','ginecologia':'#ec4899','obstetrícia':'#ec4899',
@@ -1459,10 +1471,7 @@ function _faixaLabel(pct) {
 }
 
 async function _simFetch(query) {
-  const resp = await fetch(`${_SIM_SUPA}/simulado_respostas?${query}`, {
-    headers: { apikey: _SIM_KEY, Authorization: `Bearer ${_SIM_KEY}` }
-  });
-  return resp.ok ? resp.json() : [];
+  return _anonDataProxyRead("simulado_respostas", query);
 }
 
 // Cache de dados já carregados na sessão
@@ -1490,10 +1499,7 @@ async function _simBancoContextForSlug(slug) {
   if (_simCache[ck]) return _simCache[ck];
   const out = { validRefs: new Set(), tipoById8: new Map() };
   try {
-    const resp = await fetch(`${_SIM_SUPA}/simulados_banco?select=id,tipo,instituicoes_destino`, {
-      headers: { apikey: _SIM_KEY, Authorization: `Bearer ${_SIM_KEY}` }
-    });
-    const sims = resp.ok ? await resp.json() : [];
+    const sims = await _anonDataProxyRead("simulados_banco", "select=id,tipo,instituicoes_destino");
     sims.forEach((s) => {
       let dest = s.instituicoes_destino;
       if (!Array.isArray(dest)) {
@@ -3207,7 +3213,7 @@ function mountCoordenadorChat() {
       <div class="medcof-coord-chat-head">
         <div>
           <div class="medcof-coord-chat-title">Cofbot</div>
-          <div class="medcof-coord-chat-sub">Assistente com base no que está na tela (sem dados sensíveis)</div>
+          <div class="medcof-coord-chat-sub">Assistente MedCof com base no que você vê no painel — sem dados sensíveis</div>
         </div>
         <button type="button" class="medcof-coord-chat-close" id="medcofCoordChatClose" aria-label="Fechar">×</button>
       </div>
@@ -3348,7 +3354,9 @@ function mountCoordenadorChat() {
       const { data } = await sb.auth.getSession();
       const token = data?.session?.access_token;
       if (!token) {
-        throw new Error("Faça login no painel para usar o assistente.");
+        throw new Error(
+          "Para conversar com o Cofbot ao lado dos dados da sua turma, entre no painel com seu usuário MedCof."
+        );
       }
       const ies_slug = _medcofSlugFromPath();
       const context = buildCoordenadorChatContext();
@@ -3367,13 +3375,21 @@ function mountCoordenadorChat() {
       const body = await res.json().catch(() => ({}));
       loading.remove();
       if (!res.ok) {
-        let msg = body.error || `Erro HTTP ${res.status}`;
+        let msg =
+          body.error ||
+          "Não conseguimos resposta do Cofbot neste momento. Tente de novo em instantes — se continuar, fale com o time MedCof.";
         if (res.status === 501 || res.status === 405) {
           msg =
-            "Servidor local simples (ex.: python -m http.server) não executa Netlify Functions — por isso o POST retorna 501. Na pasta do projeto rode: npx netlify-cli dev e use a URL indicada (ex.: http://localhost:8888). Em produção, confira o deploy no Netlify.";
+            "Para testar o Cofbot no seu computador, use o fluxo de desenvolvimento MedCof com Netlify CLI — um servidor de arquivos simples não executa o assistente do painel.";
         } else if (res.status === 404) {
           msg =
-            "Function coordenador-chat não encontrada. Verifique se o deploy inclui netlify/functions e a variável OPENAI_API_KEY no Netlify.";
+            "Cofbot não está disponível neste endereço. O time MedCof pode conferir o deploy do painel institucional.";
+        } else if (res.status === 502 && !body.error) {
+          msg =
+            "Cofbot não respondeu a tempo. Tente de novo; se repetir, avise o time MedCof — estamos para ajudar sua instituição.";
+        } else if (res.status === 504 && !body.error) {
+          msg =
+            "A leitura dos dados levou mais tempo que o esperado. Tente uma pergunta mais curta ou aguarde um instante e envie de novo.";
         }
         throw new Error(msg);
       }
@@ -3383,7 +3399,7 @@ function mountCoordenadorChat() {
       applyCoordFollowUps(body.insight, body.follow_up_questions);
     } catch (err) {
       loading.remove();
-      errorEl.textContent = err.message || "Erro ao enviar.";
+      errorEl.textContent = err.message || "Não foi possível enviar agora. Tente de novo ou fale com o time MedCof.";
       errorEl.hidden = false;
     } finally {
       sendBtn.disabled = false;

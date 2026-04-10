@@ -1,9 +1,9 @@
 // Netlify Function: list-auth-users — adapter fino (Clean Architecture)
 // Lógica: server/application/usecases/listAuthUsersUsecase.js
 
-const { corsAdminJson } = require('../../server/presentation/http/corsPresets');
-const { requireAdminSession } = require('../../server/application/auth/requireAdminSession');
-const { executeListAuthUsers } = require('../../server/application/usecases/listAuthUsersUsecase');
+const { corsAdminJson } = require('./server/presentation/http/corsPresets');
+const { requireAdminSession } = require('./server/application/auth/requireAdminSession');
+const { executeListAuthUsers } = require('./server/application/usecases/listAuthUsersUsecase');
 
 exports.handler = async (event) => {
   const CORS = corsAdminJson;

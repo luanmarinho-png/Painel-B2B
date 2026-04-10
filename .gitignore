@@ -2,6 +2,7 @@ node_modules/
 .DS_Store
 .claude/
 .netlify/
+.netlify-fn-bundle/
 .env
 .env.*
 !.env.example

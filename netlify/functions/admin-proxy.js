@@ -1,8 +1,8 @@
 // Netlify Function: admin-proxy — adapter fino (Clean Architecture)
 // Lógica: server/application/usecases/adminProxyUsecase.js
 
-const { corsAdminProxy } = require('../../server/presentation/http/corsPresets');
-const { executeAdminProxy } = require('../../server/application/usecases/adminProxyUsecase');
+const { corsAdminProxy } = require('./server/presentation/http/corsPresets');
+const { executeAdminProxy } = require('./server/application/usecases/adminProxyUsecase');
 
 exports.handler = async (event) => {
   const CORS = corsAdminProxy;
