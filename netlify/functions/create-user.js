@@ -1,19 +1,12 @@
-// Netlify Function: create-user
-// Cria usuário no Supabase Auth e insere na tabela usuarios_autorizados
-// Usa service_role key no servidor — nunca exposta no frontend
+// Netlify Function: create-user — adapter fino (Clean Architecture)
+// Lógica: server/application/usecases/createUserUsecase.js
 
-const SUPABASE_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
-const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
-const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTMwMjEzOCwiZXhwIjoyMDkwODc4MTM4fQ.M6ZGpySPaj1ecL9rXS3q9UM4FnfD6Cz3eA0tFWqHi4c';
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Content-Type': 'application/json'
-};
+const { corsAdminJson } = require('../../server/presentation/http/corsPresets');
+const { requireAdminSession } = require('../../server/application/auth/requireAdminSession');
+const { executeCreateUser } = require('../../server/application/usecases/createUserUsecase');
 
 exports.handler = async (event) => {
+  const CORS = corsAdminJson;
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS, body: '' };
   }
@@ -30,101 +23,8 @@ exports.handler = async (event) => {
   }
 
   const authHeader = event.headers.authorization || event.headers.Authorization || '';
-  const userToken = authHeader.replace(/^Bearer\s+/i, '');
-  if (!userToken) {
-    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Token não fornecido' }) };
-  }
+  const session = await requireAdminSession(authHeader, CORS);
+  if (!session.ok) return session.response;
 
-  let callerRole;
-  try {
-    const userResp = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { apikey: ANON_KEY, Authorization: `Bearer ${userToken}` }
-    });
-    if (!userResp.ok) {
-      return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Token inválido' }) };
-    }
-    const caller = await userResp.json();
-    callerRole = caller.user_metadata?.role;
-    if (callerRole !== 'admin' && callerRole !== 'superadmin') {
-      return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Acesso negado' }) };
-    }
-  } catch (e) {
-    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'Falha ao validar sessão' }) };
-  }
-
-  const { email, nome, role, instituicao, senha } = body;
-
-  if (role === 'admin' && callerRole !== 'superadmin') {
-    return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'Apenas superadmin pode atribuir a função admin.' }) };
-  }
-
-  if (!email || !nome || !role || !senha) {
-    return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Campos obrigatórios: email, nome, role, senha' }) };
-  }
-  if (role === 'coordenador' && !instituicao) {
-    return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Coordenador precisa de uma instituição vinculada.' }) };
-  }
-
-  try {
-    // 1. Criar usuário no Supabase Auth
-    const authResp = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
-      method: 'POST',
-      headers: {
-        'apikey': SERVICE_KEY,
-        'Authorization': `Bearer ${SERVICE_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        email,
-        password: senha,
-        email_confirm: true,
-        user_metadata: { role, instituicao, nome, must_change_password: true }
-      })
-    });
-
-    const authData = await authResp.json();
-
-    if (!authResp.ok) {
-      if (authData.msg && authData.msg.includes('already been registered')) {
-        const listResp = await fetch(`${SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(email)}`, {
-          headers: { 'apikey': SERVICE_KEY, 'Authorization': `Bearer ${SERVICE_KEY}` }
-        });
-        const listData = await listResp.json();
-        const existingUser = listData.users?.[0];
-        if (existingUser) {
-          await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${existingUser.id}`, {
-            method: 'PUT',
-            headers: { 'apikey': SERVICE_KEY, 'Authorization': `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_metadata: { role, instituicao, nome, must_change_password: true } })
-          });
-        }
-      } else {
-        return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: authData.msg || authData.error_description || 'Erro ao criar usuário no Auth' }) };
-      }
-    }
-
-    // 2. Inserir na whitelist
-    const whitelistResp = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_autorizados?on_conflict=email,instituicao`, {
-      method: 'POST',
-      headers: {
-        'apikey': SERVICE_KEY,
-        'Authorization': `Bearer ${SERVICE_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates,return=representation'
-      },
-      body: JSON.stringify({ email, nome, instituicao, role, ativo: true })
-    });
-
-    let whitelistData;
-    try { whitelistData = await whitelistResp.json(); } catch(_) { whitelistData = []; }
-
-    if (!whitelistResp.ok) {
-      return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Usuário criado no Auth mas erro na whitelist: ' + JSON.stringify(whitelistData) }) };
-    }
-
-    return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: `Usuário ${email} criado com sucesso!` }) };
-
-  } catch (err) {
-    return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: 'Erro interno: ' + err.message }) };
-  }
+  return executeCreateUser({ callerRole: session.callerRole, body, corsHeaders: CORS });
 };

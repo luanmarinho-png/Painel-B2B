@@ -58,14 +58,17 @@ window._supaRest = async function(table, query) {
 
 /**
  * Leitura admin — via Netlify Function (segura, valida JWT + role)
+ * @param {{ maskSensitive?: boolean }} [opts] — se true, o proxy mascara campo `cpf` na resposta (listagens)
  */
-window._supaRestAdmin = async function(table, query) {
+window._supaRestAdmin = async function(table, query, opts) {
   const token = await window._getAdminToken();
   if (!token) throw new Error('Sessão expirada — faça login novamente');
+  const payload = { table, method: 'GET', query: query || '' };
+  if (opts && opts.maskSensitive) payload.maskSensitive = true;
   const resp = await fetch('/.netlify/functions/admin-proxy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    body: JSON.stringify({ table, method: 'GET', query: query || '' })
+    body: JSON.stringify(payload)
   });
   if (resp.status === 401) {
     // Token rejeitado pelo servidor — forçar re-login
@@ -81,11 +84,21 @@ window._supaRestAdmin = async function(table, query) {
 };
 
 /**
+ * Uma linha de alunos_master com CPF completo (sem máscara de listagem). Uso: ações que precisam do CPF real.
+ * @param {string|number} id
+ * @returns {Promise<{ cpf?: string }|null>}
+ */
+window._fetchAlunoMasterRowUnmasked = async function(id) {
+  const rows = await window._supaRestAdmin('alunos_master', `id=eq.${encodeURIComponent(id)}&select=cpf`);
+  return rows && rows[0] ? rows[0] : null;
+};
+
+/**
  * Supabase REST write — via Netlify Function (segura)
  * @param {string} table - nome da tabela + filtros (ex: "alunos_master?on_conflict=cpf,instituicao")
  * @param {string} method - POST, PATCH, DELETE, GET
  * @param {object} body - dados para POST/PATCH
- * @param {{ requireSuperadmin?: boolean, prefer?: string }} [extra] - requireSuperadmin restringe no proxy; prefer sobrescreve cabeçalho Prefer
+ * @param {{ requireSuperadmin?: boolean, prefer?: string, maskSensitive?: boolean }} [extra] - requireSuperadmin restringe no proxy; prefer sobrescreve cabeçalho Prefer; maskSensitive mascara `cpf` em GET
  * @returns {Promise<Response>} — callers check resp.ok themselves
  */
 window._supaWrite = async function(table, method, body, extra) {
@@ -97,6 +110,7 @@ window._supaWrite = async function(table, method, body, extra) {
 
   const payload = { table, method, body, prefer };
   if (extra && extra.requireSuperadmin) payload.requireSuperadmin = true;
+  if (extra && extra.maskSensitive) payload.maskSensitive = true;
 
   const resp = await fetch('/.netlify/functions/admin-proxy', {
     method: 'POST',
@@ -3914,10 +3928,12 @@ function _queryInstituicaoIES(slug) {
 }
 
 // ── Busca professores excluídos por IES no Supabase ──
-window._fetchExcluidosMaster = async function(instituicao) {
+// opts.maskSensitive: mascara CPF na resposta (tabela na UI); não use para uploads — cpfs no retorno ficam vazios.
+window._fetchExcluidosMaster = async function(instituicao, opts) {
   try {
     let q = "excluidos_master?select=id,cpf,nome,email,instituicao&limit=2000" + _queryInstituicaoIES(instituicao);
-    const resp = await window._supaWrite(q, "GET", null);
+    const maskSensitive = opts && opts.maskSensitive === true;
+    const resp = await window._supaWrite(q, "GET", null, maskSensitive ? { maskSensitive: true } : undefined);
     if (!resp.ok) return { cpfs: new Set(), nomes: new Set(), rows: [] };
     const rows = await resp.json();
     const normCpf = c => {
@@ -3925,7 +3941,7 @@ window._fetchExcluidosMaster = async function(instituicao) {
       return d.length === 11 ? d : "";
     };
     return {
-      cpfs: new Set(rows.map(r => normCpf(r.cpf)).filter(Boolean)),
+      cpfs: maskSensitive ? new Set() : new Set(rows.map(r => normCpf(r.cpf)).filter(Boolean)),
       nomes: new Set(rows.map(r => (r.nome||"").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ")).filter(Boolean)),
       rows
     };
@@ -4257,7 +4273,7 @@ window._loadProfExclTable = async function() {
     return;
   }
   if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text-muted)">Carregando...</td></tr>';
-  const { rows } = await window._fetchExcluidosMaster(slug);
+  const { rows } = await window._fetchExcluidosMaster(slug, { maskSensitive: true });
   if (cnt) cnt.textContent = rows.length ? rows.length + ' cad.' : '';
   const esc = s => String(s || '').replace(/</g, '&lt;');
   if (!rows.length) {
@@ -4266,8 +4282,11 @@ window._loadProfExclTable = async function() {
   }
   tbody.innerHTML = rows.map(r => {
     const id = r.id;
-    const cpf = String(r.cpf || '').replace(/\D/g, '');
-    const cpfFmt = cpf.length === 11 ? cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4') : esc(r.cpf);
+    const cpfStr = String(r.cpf || '');
+    const cpf = cpfStr.replace(/\D/g, '');
+    const cpfFmt = cpfStr.includes('*')
+      ? esc(cpfStr)
+      : (cpf.length === 11 ? cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4') : esc(r.cpf));
     return `<tr>
       <td style="padding:8px 12px">${esc(r.nome)}</td>
       <td style="padding:8px 12px;font-family:monospace;font-size:0.78rem">${cpfFmt}</td>
@@ -6770,10 +6789,10 @@ window._onAlunosFilterChange = async function() {
 
     let data;
     try {
-      data = await _supaRestAdmin('alunos_master', _alunosQuery(true));
+      data = await _supaRestAdmin('alunos_master', _alunosQuery(true), { maskSensitive: true });
     } catch(e1) {
       if (term) {
-        data = await _supaRestAdmin('alunos_master', _alunosQuery(false));
+        data = await _supaRestAdmin('alunos_master', _alunosQuery(false), { maskSensitive: true });
       } else {
         throw e1;
       }
@@ -6895,6 +6914,40 @@ setTimeout(() => {
   if (allUsers.length === 0) loadUsers();
 }, 800);
 
+/**
+ * Boletim: busca CPF real só no clique (listagem vem mascarada no proxy).
+ */
+window._gerarBoletimIndividualByAlunoId = async function(id, nome, instParam) {
+  try {
+    const row = await window._fetchAlunoMasterRowUnmasked(id);
+    const cpf = row && row.cpf ? String(row.cpf).replace(/\D/g, '') : '';
+    if (cpf.length !== 11) {
+      showToast('Não foi possível obter o CPF para gerar o boletim.', 'error');
+      return;
+    }
+    await window._gerarBoletimIndividual(nome, instParam, cpf);
+  } catch (e) {
+    showToast(e.message || 'Erro ao obter CPF', 'error');
+  }
+};
+
+/**
+ * Enviar boletim por e-mail: CPF completo só após clique.
+ */
+window._openEnviarBoletimAlunoModalByAlunoId = async function(id, nome, instParam, iesSlug, email) {
+  try {
+    const row = await window._fetchAlunoMasterRowUnmasked(id);
+    const cpf = row && row.cpf ? String(row.cpf).replace(/\D/g, '') : '';
+    if (cpf.length !== 11) {
+      showToast('CPF necessário para o boletim.', 'warn');
+      return;
+    }
+    window._openEnviarBoletimAlunoModal(nome, instParam, iesSlug, cpf, email);
+  } catch (e) {
+    showToast(e.message || 'Erro ao obter CPF', 'error');
+  }
+};
+
 window._renderAlunosMaster = function() {
   const tbody = document.getElementById('alunosTableBody');
   const counter = document.getElementById('alunosCount');
@@ -6908,8 +6961,10 @@ window._renderAlunosMaster = function() {
   // Verificar quais IES têm boletim disponível (dados em simulado_respostas)
   const iesComBoletim = window._boletimIESSet || new Set();
   const _fmtCpfCell = (c) => {
-    const d = String(c || '').replace(/\D/g, '');
-    if (d.length !== 11) return esc(c || '—');
+    const s = String(c || '');
+    if (s.includes('*')) return esc(s);
+    const d = s.replace(/\D/g, '');
+    if (d.length !== 11) return esc(s || '—');
     return esc(`${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`);
   };
   tbody.innerHTML = show.map(a => {
@@ -6918,7 +6973,7 @@ window._renderAlunosMaster = function() {
     const temBoletim = iesComBoletim.has(instSlug) || iesComBoletim.has(instRaw) || iesComBoletim.has(instRaw.toLowerCase());
     const instParam = iesComBoletim.has(instSlug) ? instSlug : instRaw;
     const nomeVis = String(a.nome || '').trim();
-    const nomeBoletim = nomeVis || ('CPF ' + String(a.cpf || ''));
+    const nomeBoletim = nomeVis || 'Aluno (sem nome)';
     const nomeCell = nomeVis
       ? esc(nomeVis)
       : '<span style="color:var(--text-muted);font-style:italic">— pendente</span>';
@@ -6926,12 +6981,12 @@ window._renderAlunosMaster = function() {
       a.cadastro_origem === 'simulado'
         ? '<span style="font-size:0.68rem;padding:2px 8px;border-radius:6px;background:rgba(59,130,246,0.15);color:#93c5fd">Simulado</span>'
         : '<span style="font-size:0.68rem;padding:2px 8px;border-radius:6px;background:rgba(34,197,94,0.12);color:#86efac">B2B</span>';
-    const boletimBtn = temBoletim
-      ? `<button type="button" onclick="window._gerarBoletimIndividual('${esc(nomeBoletim).replace(/'/g, "\\'")}','${esc(instParam)}','${esc(a.cpf || '').replace(/'/g, "\\'")}')" style="padding:4px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap" title="Gerar boletim PDF">📄</button>`
-      : `<span style="color:var(--text-muted);font-size:0.7rem">—</span>`;
-    const emailBoletimBtn = temBoletim && a.email
-      ? `<button type="button" onclick="window._openEnviarBoletimAlunoModal(${JSON.stringify(nomeBoletim)},${JSON.stringify(instParam)},${JSON.stringify(instSlug)},${JSON.stringify(a.cpf || '')},${JSON.stringify(a.email)})" style="padding:4px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap" title="Enviar boletim por e-mail — confirme o simulado">📧</button>`
-      : (temBoletim ? `<span style="font-size:0.65rem;color:var(--text-muted)" title="Cadastre e-mail do aluno">—</span>` : '');
+    const boletimBtn = temBoletim && a.id != null
+      ? `<button type="button" onclick="window._gerarBoletimIndividualByAlunoId(${a.id},${JSON.stringify(nomeBoletim)},${JSON.stringify(instParam)})" style="padding:4px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap" title="Gerar boletim PDF">📄</button>`
+      : (temBoletim ? `<span style="color:var(--text-muted);font-size:0.7rem" title="Sem id de cadastro">—</span>` : `<span style="color:var(--text-muted);font-size:0.7rem">—</span>`);
+    const emailBoletimBtn = temBoletim && a.email && a.id != null
+      ? `<button type="button" onclick="window._openEnviarBoletimAlunoModalByAlunoId(${a.id},${JSON.stringify(nomeBoletim)},${JSON.stringify(instParam)},${JSON.stringify(instSlug)},${JSON.stringify(a.email)})" style="padding:4px 10px;border-radius:6px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap" title="Enviar boletim por e-mail — confirme o simulado">📧</button>`
+      : (temBoletim && a.email ? `<span style="font-size:0.65rem;color:var(--text-muted)" title="Registro sem id — recarregue a lista">—</span>` : (temBoletim ? `<span style="font-size:0.65rem;color:var(--text-muted)" title="Cadastre e-mail do aluno">—</span>` : ''));
     const editBtn =
       a.id != null
         ? `<button type="button" onclick="window._openAlunoEditModal(${a.id})" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.68rem;font-weight:600;cursor:pointer" title="Editar nome">✎</button>`
@@ -6955,16 +7010,24 @@ window._alunoEditRowId = null;
  * Abre modal para editar nome do aluno (alunos_master).
  * @param {number|string} rowId
  */
-window._openAlunoEditModal = function(rowId) {
+window._openAlunoEditModal = async function(rowId) {
   const a = (window._allAlunos || []).find(x => String(x.id) === String(rowId));
   if (!a) return;
   window._alunoEditRowId = a.id;
   const cpfEl = document.getElementById('alunoEditCpf');
   const nomeEl = document.getElementById('alunoEditNome');
   const fb = document.getElementById('alunoEditFeedback');
-  if (cpfEl) cpfEl.value = String(a.cpf || '').replace(/\D/g, '').length === 11
-    ? String(a.cpf || '').replace(/\D/g, '').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
-    : (a.cpf || '');
+  let cpfSrc = String(a.cpf || '');
+  if (cpfSrc.includes('*') && a.id != null) {
+    try {
+      const row = await window._fetchAlunoMasterRowUnmasked(a.id);
+      if (row && row.cpf != null) cpfSrc = String(row.cpf);
+    } catch (_) {}
+  }
+  const d = cpfSrc.replace(/\D/g, '');
+  if (cpfEl) cpfEl.value = d.length === 11
+    ? d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+    : cpfSrc;
   if (nomeEl) nomeEl.value = String(a.nome || '').trim();
   if (fb) fb.textContent = '';
   const m = document.getElementById('alunoEditModal');

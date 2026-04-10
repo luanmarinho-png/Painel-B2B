@@ -9,17 +9,18 @@ const crypto = require('crypto');
 const NETLIFY_TOKEN  = process.env.NETLIFY_TOKEN;
 const SITE_ID        = process.env.NETLIFY_SITE_ID;
 const API            = 'https://api.netlify.com/api/v1';
-const SUPABASE_URL   = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
-const SUPABASE_KEY   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTMwMjEzOCwiZXhwIjoyMDkwODc4MTM4fQ.M6ZGpySPaj1ecL9rXS3q9UM4FnfD6Cz3eA0tFWqHi4c';
+const { getSupabaseEnv } = require('../../server/infrastructure/config/supabaseEnv');
+const { url: SUPABASE_URL, serviceRoleKey: SUPABASE_KEY } = getSupabaseEnv();
 
-// SHAs dos bundles das Netlify Functions (gerados pelo CLI com esbuild).
-// Atualizar sempre que uma function for modificada e redeploy via CLI for feito.
+// SHAs SHA256 dos zips de cada function (mesma regra do deploy-safe.py: zip com um único .js).
+// Não incluir deploy-ies aqui: o hash do bundle não pode ser embutido no próprio ficheiro sem inconsistência;
+// essa function segue a versão já publicada no deploy base até um deploy completo (Git/CLI/deploy-safe).
+// Atualizar estes quatro sempre que alterar create/update/delete/reset-password.
 const FN_SHAS = {
-  'create-user':    '0c0011637ff6aaeccf4c40a33789c1a0fc458600f7db90fae772b21cb3d8d272',
-  'delete-user':    'a6c417792ea45343c919da296ddfefc7e95f2834a2f63a5a98dc35c9780bbb99',
-  'deploy-ies':     'c87e92140a7a5cd65b251fc9d43cac9efffb1f6e32b618df13e1281d0b57e7f1',
-  'update-user':    'a98ce2957a65bc0ffb25d38c1a847f755ff398685ca451d6d1744d1ac7d75014',
-  'reset-password': '099fe139874e4847b39773dfa069156346cada081090dc5ebc784fcb18cc0f3e',
+  'create-user':    'cc3f0aa3b0804b2404e7cbc0c17b4f31e337dc4dbce7467d632f5b1950468a27',
+  'delete-user':    '94c6887d6759b4081789faf36a259b0d9e1687e9d8f041d267a3dcfc1e9d2813',
+  'update-user':    'c3f0c408d79eac19e3f6851696df2e5ab193f3387bf05a64bd2853237382ab33',
+  'reset-password': '1832c7efe342e037ddec6310c95c45270b1d5881c4ee0f23cae01ca448e23aa8',
 };
 
 const CORS = {

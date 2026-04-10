@@ -4,9 +4,8 @@
  * Template canônico: templates/email-boletim-individual.html (manter placeholders alinhados ao HTML embutido abaixo).
  */
 
-const SUPABASE_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
-const ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
+const { getSupabaseEnv } = require('../../server/infrastructure/config/supabaseEnv');
+const { url: SUPABASE_URL, anonKey: ANON_KEY } = getSupabaseEnv();
 
 const DEFAULT_FROM_EMAIL = 'Nao-responda@grupomedcof.com.br';
 

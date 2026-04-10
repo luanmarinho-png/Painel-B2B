@@ -1,6 +1,7 @@
 Este é um painel admin B2B (MedCof × IES) com:
 - admin.html: painel admin (741KB, monolítico)
 - panel-core/shared.js + shared.css: fonte única do dashboard do coordenador (replicar com: python3 scripts/sync-panel-core.py)
+- server/: backend em Clean Architecture (use cases, auth, config Supabase); netlify/functions/*.js são adapters HTTP finos
 - netlify/functions/: Netlify Functions (admin-proxy, create-user, coordenador-chat, etc.)
 - Dados: Supabase (dashboard_engajamento, alunos_master, excluidos_master)
 - Deploy: Netlify (estático) + Supabase (dinâmico)
