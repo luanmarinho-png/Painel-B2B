@@ -136,6 +136,14 @@ async function validateCoordinatorAccess(userToken, iesSlug) {
     const role = meta.role;
     const inst = (meta.instituicao || '').trim();
 
+    if (role === 'coordenador' && meta.access_approved === false) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'Seu acesso ao painel ainda não foi liberado pelo administrador.'
+      };
+    }
+
     if (role === 'admin' || role === 'superadmin') {
       return { ok: true, role: role === 'superadmin' ? 'superadmin' : 'admin' };
     }

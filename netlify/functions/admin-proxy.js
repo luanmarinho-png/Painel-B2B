@@ -15,5 +15,12 @@ exports.handler = async (event) => {
   }
 
   const authHeader = event.headers.authorization || event.headers.Authorization || '';
-  return executeAdminProxy({ authHeader, rawBody: event.body || '{}' });
+  const forwardedFor =
+    event.headers['x-forwarded-for'] || event.headers['X-Forwarded-For'] || '';
+  const userAgent = event.headers['user-agent'] || event.headers['User-Agent'] || '';
+  return executeAdminProxy({
+    authHeader,
+    rawBody: event.body || '{}',
+    requestMeta: { forwardedFor, userAgent }
+  });
 };

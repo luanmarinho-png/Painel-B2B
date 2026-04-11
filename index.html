@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>MedCof B2B — Painéis Institucionais</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
@@ -136,6 +137,31 @@
   .btn-login:hover:not(:disabled) { background: var(--accent-hover); }
   .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
 
+  .btn-google {
+    width: 100%; padding: 12px;
+    background: var(--bg-elevated); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 0.88rem; font-weight: 600;
+    cursor: pointer; margin-top: 12px;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    transition: border-color 0.2s, background 0.2s;
+    font-family: inherit;
+  }
+  .btn-google:hover:not(:disabled) {
+    border-color: var(--text-muted);
+    background: rgba(255,255,255,0.04);
+  }
+  .btn-google:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-google svg { flex-shrink: 0; }
+
+  .login-or {
+    display: flex; align-items: center; gap: 12px; margin: 18px 0 12px;
+    font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .login-or::before, .login-or::after {
+    content: ''; flex: 1; height: 1px; background: var(--border-subtle);
+  }
+
   .login-error {
     display: none; margin-top: 14px;
     background: rgba(220,38,38,0.1); border: 1px solid rgba(220,38,38,0.3);
@@ -222,6 +248,13 @@
       <a href="/recuperar-senha.html" class="form-forgot">Esqueci minha senha</a>
     </div>
     <button type="submit" class="btn-login" id="btnLogin">Entrar</button>
+
+    <div class="login-or">ou</div>
+    <button type="button" class="btn-google" id="btnGoogle" title="Use o mesmo e-mail cadastrado pelo administrador">
+      <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="m6.306 14.691 6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>
+      Entrar com Google
+    </button>
+
     <div class="login-error" id="loginError"></div>
     <div class="login-loading" id="loginLoading">Verificando credenciais...</div>
   </form>
@@ -254,6 +287,14 @@
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
 
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  /**
+   * Coordenador com acesso explícito bloqueado (aguardando liberação do admin).
+   * Contas antigas sem a chave continuam liberadas (undefined !== false).
+   */
+  function isCoordenadorAccessBlocked(meta) {
+    return meta && meta.role === 'coordenador' && meta.access_approved === false;
+  }
 
   // Fallback estático (usado se a tabela Supabase não responder)
   const INSTITUTION_MAP_FALLBACK = {
@@ -310,12 +351,26 @@
   (async () => {
     await loadInstitutions();
     const { data: { session } } = await sb.auth.getSession();
-    if (session) redirectByRole(session.user);
+    if (session) await redirectByRole(session.user);
   })();
 
-  function redirectByRole(user) {
-    const role = user.user_metadata?.role || '';
-    const instituicao = user.user_metadata?.instituicao || '';
+  function isGoogleIdentityUser(user) {
+    const am = user.app_metadata || {};
+    if (am.provider === 'google') return true;
+    const ids = user.identities || [];
+    return Array.isArray(ids) && ids.some((i) => i && i.provider === 'google');
+  }
+
+  async function redirectByRole(user) {
+    const meta = user.user_metadata || {};
+    const role = meta.role || '';
+    const instituicao = meta.instituicao || '';
+
+    if (isCoordenadorAccessBlocked(meta)) {
+      await sb.auth.signOut();
+      showError('Seu acesso ainda não foi liberado pelo administrador da plataforma. Entre em contato com a sua instituição.');
+      return;
+    }
 
     // Verificar URL salva para redirecionar após login (apenas para coordenadores)
     const savedRedirect = sessionStorage.getItem('medcof_redirect_after_login');
@@ -324,6 +379,12 @@
     // Superadmin e admin: SEMPRE vão para o painel admin, sem exceção
     if (role === 'superadmin' || role === 'admin') {
       window.location.href = '/admin.html';
+      return;
+    }
+
+    // Pré-cadastro (ex.: primeiro login Google) — sem painel até aprovação
+    if (role === 'pendente') {
+      window.location.href = '/aguardando-aprovacao.html';
       return;
     }
 
@@ -342,9 +403,49 @@
         window.location.href = '/em-construcao.html';
         return;
       }
+      showError('A instituição vinculada à sua conta não está disponível neste ambiente. Entre em contato com o suporte MedCof.');
+      return;
     }
 
-    // Role não reconhecida ou instituição não mapeada
+    // Login Google sem perfil completo: cria pré-cadastro e notifica admins
+    if (isGoogleIdentityUser(user)) {
+      setLoading(true);
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        const token = session?.access_token;
+        if (!token) {
+          showError('Sessão inválida. Entre novamente.');
+          return;
+        }
+        const r = await fetch('/.netlify/functions/register-pre-cadastro', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok && j.error === 'not_google') {
+          showError('Seu acesso ainda não foi configurado. Entre em contato com o suporte MedCof.');
+          return;
+        }
+        if (!r.ok || !j.ok) {
+          showError(j.message || j.error || 'Não foi possível concluir o pré-cadastro. Tente novamente.');
+          return;
+        }
+        if (j.state === 'skipped') {
+          await sb.auth.refreshSession();
+          const { data: { session: s2 } } = await sb.auth.getSession();
+          if (s2?.user) {
+            await redirectByRole(s2.user);
+            return;
+          }
+        }
+        await sb.auth.refreshSession();
+        window.location.href = '/aguardando-aprovacao.html';
+        return;
+      } finally {
+        setLoading(false);
+      }
+    }
+
     showError('Seu acesso ainda não foi configurado. Entre em contato com o suporte MedCof.');
   }
 
@@ -360,9 +461,27 @@
 
   function setLoading(on) {
     document.getElementById('btnLogin').disabled = on;
+    const g = document.getElementById('btnGoogle');
+    if (g) g.disabled = on;
     const ld = document.getElementById('loginLoading');
     if (on) ld.classList.add('visible'); else ld.classList.remove('visible');
   }
+
+  document.getElementById('btnGoogle').addEventListener('click', async () => {
+    hideError();
+    setLoading(true);
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin + '/index.html',
+        queryParams: { prompt: 'select_account' }
+      }
+    });
+    setLoading(false);
+    if (error) {
+      showError('Não foi possível iniciar o login com Google. Tente de novo ou use e-mail e senha.');
+    }
+  });
 
   document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -381,7 +500,7 @@
       return;
     }
 
-    redirectByRole(data.user);
+    await redirectByRole(data.user);
   });
 </script>
 

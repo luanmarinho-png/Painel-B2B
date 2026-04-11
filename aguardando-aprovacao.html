@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>MedCof B2B — Cadastro em análise</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg-card: #181b23;
+    --border: #2a2f3e;
+    --text: #e8eaf0;
+    --text-soft: #8b91a5;
+    --accent: #dc2626;
+    --radius: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: min(100%, 440px);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 36px 32px;
+    text-align: center;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.45);
+  }
+  h1 { font-size: 1.15rem; font-weight: 700; margin-bottom: 12px; line-height: 1.35; }
+  p { font-size: 0.88rem; color: var(--text-soft); line-height: 1.6; margin-bottom: 22px; }
+  .btn {
+    display: inline-block;
+    padding: 11px 22px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--text); }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Cadastro recebido</h1>
+  <p>Seu acesso ainda não foi liberado. Um administrador MedCof precisa aprovar seu cadastro e vincular sua instituição. Você receberá acesso ao painel após essa etapa.</p>
+  <button type="button" class="btn" id="btnSair">Sair</button>
+</div>
+<script>
+  const SUPABASE_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  (async () => {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      window.location.replace('/index.html');
+      return;
+    }
+    const role = session.user.user_metadata?.role || '';
+    if (role === 'superadmin' || role === 'admin') {
+      window.location.replace('/admin.html');
+      return;
+    }
+    if (role !== 'pendente') {
+      window.location.replace('/index.html');
+      return;
+    }
+  })();
+
+  document.getElementById('btnSair').addEventListener('click', async () => {
+    await sb.auth.signOut();
+    window.location.href = '/index.html';
+  });
+</script>
+</body>
+</html>

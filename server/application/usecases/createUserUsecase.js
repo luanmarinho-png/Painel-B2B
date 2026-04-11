@@ -16,6 +16,8 @@ const { isSuperadmin } = require('../../domain/userRoles');
  */
 async function executeCreateUser({ callerRole, body, corsHeaders }) {
   const { email, nome, role, instituicao, senha } = body;
+  /** @type {boolean} Coordenador pendente até admin liberar; admin/superadmin sempre liberados. */
+  const accessApproved = role === 'coordenador' ? body.access_approved !== false : true;
 
   if (role === 'admin' && !isSuperadmin(callerRole)) {
     return {
@@ -55,7 +57,7 @@ async function executeCreateUser({ callerRole, body, corsHeaders }) {
         email,
         password: senha,
         email_confirm: true,
-        user_metadata: { role, instituicao, nome, must_change_password: true }
+        user_metadata: { role, instituicao, nome, must_change_password: true, access_approved: accessApproved }
       })
     });
 
@@ -80,7 +82,14 @@ async function executeCreateUser({ callerRole, body, corsHeaders }) {
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              user_metadata: { role, instituicao, nome, must_change_password: true }
+              user_metadata: {
+                ...(existingUser.user_metadata || {}),
+                role,
+                instituicao,
+                nome,
+                must_change_password: true,
+                access_approved: accessApproved
+              }
             })
           });
         }

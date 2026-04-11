@@ -3850,6 +3850,12 @@ body.theme-univassouras .btn-select-all {
   color: var(--text, #455245);
   border: 1px solid var(--line-soft, #e9f1ea);
 }
+.medcof-coord-chat-msg--assistant strong {
+  font-weight: 700;
+}
+.medcof-coord-chat-insight strong {
+  font-weight: 700;
+}
 .medcof-coord-chat-loading {
   opacity: 0.7;
   font-style: italic;

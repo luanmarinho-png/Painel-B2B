@@ -189,6 +189,8 @@ def deploy(admin_path=None):
     # Update admin.html + any extra local files
     uploads = {}
     extra_files = [
+        "index.html",
+        "admin-contrato.html",
         "favicon.svg",
         "brand-loader.js",
         "session-fix.js",

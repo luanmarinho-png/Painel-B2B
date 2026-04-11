@@ -952,13 +952,37 @@ function _showSimHistoryPopover(nome, anchor) {
 
   const popover = document.createElement('div');
   popover.className = '_sim-popover';
-  popover.style.cssText = 'position:fixed;z-index:99999;background:#1a1d27;color:#e8eaf0;border:1.5px solid #2a2f3e;border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.6);max-width:380px;width:90vw';
+  popover.style.cssText = 'position:fixed;z-index:99999;background:#1a1d27;color:#e8eaf0;border:1.5px solid #2a2f3e;border-radius:16px;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,0.6);max-width:500px;width:92vw';
+
+  // Buscar engajamento (q/dia) do aluno
+  let engBadgeHTML = '';
+  try {
+    const _normEng = n => (n || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+    const nomeKey = _normEng(nome);
+    const accRanking = typeof ACCUMULATED_DASHBOARD !== 'undefined' ? ACCUMULATED_DASHBOARD.ranking : [];
+    const student = accRanking.find(s => _normEng(s.nome) === nomeKey);
+    if (student) {
+      const qDia = student.questoesDia || 0;
+      if (qDia >= 20) {
+        engBadgeHTML = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#16a34a;background:rgba(22,163,74,0.15);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#16a34a"></span>${qDia.toFixed(0)} q/dia</span>`;
+      } else if (qDia >= 10) {
+        engBadgeHTML = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#d97706;background:rgba(217,119,6,0.15);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#d97706"></span>${qDia.toFixed(0)} q/dia</span>`;
+      } else {
+        engBadgeHTML = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,0.15);padding:3px 10px;border-radius:6px"><span style="width:6px;height:6px;border-radius:50%;background:#dc2626"></span>${qDia.toFixed(0)} q/dia</span>`;
+      }
+    } else {
+      engBadgeHTML = `<span style="font-size:0.65rem;color:#5c6175">só simulado</span>`;
+    }
+  } catch(_) {}
 
   popover.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div>
-        <div style="font-size:0.9rem;font-weight:800;color:#e8eaf0">${nome}</div>
-        <div style="font-size:0.72rem;color:#8b91a5">${withNota.length} simulado(s) · Média: <strong style="color:${_nc(media)}">${media.toFixed(1)}%</strong></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+          <span style="font-size:1rem;font-weight:800;color:#e8eaf0">${nome}</span>
+          ${engBadgeHTML}
+        </div>
+        <div style="font-size:0.75rem;color:#8b91a5">${withNota.length} simulado(s) · Média: <strong style="color:${_nc(media)}">${media.toFixed(1)}%</strong></div>
       </div>
       <button onclick="this.closest('._sim-popover').remove()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#8b91a5;padding:4px">✕</button>
     </div>
@@ -984,8 +1008,8 @@ function _showSimHistoryPopover(nome, anchor) {
   const rect = anchor.getBoundingClientRect();
   let top = rect.bottom + 8;
   let left = rect.left;
-  if (top + 350 > window.innerHeight) top = rect.top - 350;
-  if (left + 380 > window.innerWidth) left = window.innerWidth - 390;
+  if (top + 400 > window.innerHeight) top = rect.top - 400;
+  if (left + 500 > window.innerWidth) left = window.innerWidth - 510;
   if (left < 10) left = 10;
   popover.style.top = top + 'px';
   popover.style.left = left + 'px';
@@ -2394,6 +2418,15 @@ async function _renderSimuladoDetail(root, slug, ref) {
   const _linkBol = ranking ? ranking.link_boletins : null;
   const boletinsBtn = _linkBol ? `<a href="${_linkBol}" target="_blank" rel="noopener" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Baixar boletins</a>` : '';
 
+  // Contexto de exportação PDF/Excel
+  window.__MEDCOF_SIM_EXPORT__ = {
+    titulo, tipoLabel, slug, ref,
+    totalAlunos, totalQuestoes, anuladasCount,
+    mediaIES, mediaGeral, mediana, notaMax, notaMin,
+    rankNac, rankNacTotal, rankReg, rankRegTotal,
+    alunosSorted, areaList, temaList, qStats, questions
+  };
+
   window.__MEDCOF_SIM_CHAT_CTX__ = {
     ref,
     titulo,
@@ -2441,6 +2474,8 @@ async function _renderSimuladoDetail(root, slug, ref) {
           <p style="font-size:0.82rem;color:rgba(255,255,255,0.5);margin:0">${totalAlunos} alunos · ${totalQuestoes} questões${notaMax != null ? ` · Amplitude: ${fmtPct(notaMin)} — ${fmtPct(notaMax)}` : ''}</p>
           ${gabaritoBtn}
           ${boletinsBtn}
+          <button onclick="window._exportSimPDF()" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar PDF</button>
+          <button onclick="window._exportSimExcel()" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Exportar Excel</button>
         </div>
       </div>
     </section>
@@ -2513,6 +2548,10 @@ async function mountAccessGate() {
       const { data } = await _sb.auth.getSession();
       if (data?.session) {
         const meta = data.session.user.user_metadata || {};
+        if (meta.role === 'coordenador' && meta.access_approved === false) {
+          window.location.href = '/index.html';
+          return;
+        }
         const ok = (meta.role === 'coordenador' && meta.instituicao === slug)
                 || meta.role === 'admin' || meta.role === 'superadmin';
         if (ok) {
@@ -3260,7 +3299,7 @@ function mountCoordenadorChat() {
       return;
     }
     insightEl.hidden = false;
-    insightEl.textContent = t;
+    insightEl.innerHTML = renderCofbotAssistantHtml(t);
   }
 
   /**
@@ -3290,6 +3329,19 @@ function mountCoordenadorChat() {
   }
 
   /**
+   * Escapa HTML e aplica negrito Markdown (`**texto**`) nas mensagens do assistente.
+   * @param {string} text
+   * @returns {string}
+   */
+  function renderCofbotAssistantHtml(text) {
+    return String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>");
+  }
+
+  /**
    * Após resposta do assistente: insight opcional e chips dinâmicos (ou fallback estático).
    * @param {string} [insight]
    * @param {string[]} [followUps]
@@ -3304,7 +3356,11 @@ function mountCoordenadorChat() {
   function appendMessage(role, text) {
     const div = document.createElement("div");
     div.className = `medcof-coord-chat-msg medcof-coord-chat-msg--${role}`;
-    div.textContent = text;
+    if (role === "assistant") {
+      div.innerHTML = renderCofbotAssistantHtml(text);
+    } else {
+      div.textContent = text;
+    }
     messagesEl.appendChild(div);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
@@ -3410,3 +3466,95 @@ function mountCoordenadorChat() {
     if (ev.key === "Escape" && panelOpen) setPanel(false);
   });
 }
+
+// ── Exportar resultado do simulado como PDF (via print) ──
+window._exportSimPDF = function() {
+  const ctx = window.__MEDCOF_SIM_EXPORT__;
+  if (!ctx) return;
+  const w = window.open('', '_blank');
+  if (!w) { alert('Permita popups para gerar o PDF.'); return; }
+  const fmtPct = v => v != null ? Number(v).toFixed(1) + '%' : '—';
+  const fmtNome = nome => {
+    if (!nome || nome.startsWith('CPF:')) return nome || '—';
+    const lower = ['da','de','do','dos','das','e'];
+    return nome.trim().split(/\s+/).map(p => { const l = p.toLowerCase(); return lower.includes(l) ? l : l.charAt(0).toUpperCase() + l.slice(1); }).join(' ');
+  };
+  const alunoRows = ctx.alunosSorted.map((a, i) =>
+    `<tr><td style="text-align:center;padding:6px 10px">${i+1}</td><td style="padding:6px 10px">${fmtNome(a.nome)}</td><td style="text-align:center;padding:6px 10px">${a.turma || '—'}</td><td style="text-align:right;padding:6px 10px;font-weight:700">${fmtPct(a.nota)}</td></tr>`
+  ).join('');
+  const areaRows = ctx.areaList.map(a =>
+    `<tr><td style="padding:6px 10px">${a.label}</td><td style="text-align:right;padding:6px 10px;font-weight:700">${a.media.toFixed(1)}%</td></tr>`
+  ).join('');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${ctx.titulo} — Resultado</title>
+  <style>body{font-family:-apple-system,sans-serif;padding:32px;color:#1e293b;font-size:12px;line-height:1.5}
+  h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:24px 0 8px;border-bottom:1px solid #e2e8f0;padding-bottom:4px}
+  table{width:100%;border-collapse:collapse;margin-bottom:16px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left}
+  th{background:#f1f5f9;font-size:11px;text-transform:uppercase;font-weight:700}
+  .meta{display:flex;gap:24px;margin:12px 0 20px;flex-wrap:wrap}.meta-item{text-align:center}.meta-label{font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700}.meta-value{font-size:20px;font-weight:800}
+  @media print{body{padding:16px}}</style></head><body>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <div><span style="font-size:11px;padding:3px 10px;border-radius:4px;background:${ctx.tipoLabel==='Tendências'?'#16a34a':'#3b82f6'};color:#fff;font-weight:700">${ctx.tipoLabel.toUpperCase()}</span></div>
+    <div style="font-size:10px;color:#94a3b8">Gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
+  </div>
+  <h1>${ctx.titulo}</h1>
+  <p style="color:#64748b;margin:0 0 16px">${ctx.totalAlunos} alunos · ${ctx.totalQuestoes} questões${ctx.anuladasCount ? ' · ' + ctx.anuladasCount + ' anulada(s)' : ''}</p>
+  <div class="meta">
+    <div class="meta-item"><div class="meta-label">Média IES</div><div class="meta-value">${fmtPct(ctx.mediaIES)}</div></div>
+    ${ctx.mediaGeral != null ? `<div class="meta-item"><div class="meta-label">Média Geral</div><div class="meta-value">${fmtPct(ctx.mediaGeral)}</div></div>` : ''}
+    <div class="meta-item"><div class="meta-label">Mediana</div><div class="meta-value">${fmtPct(ctx.mediana)}</div></div>
+    <div class="meta-item"><div class="meta-label">Maior</div><div class="meta-value">${fmtPct(ctx.notaMax)}</div></div>
+    <div class="meta-item"><div class="meta-label">Menor</div><div class="meta-value">${fmtPct(ctx.notaMin)}</div></div>
+    ${ctx.rankNac != null ? `<div class="meta-item"><div class="meta-label">Nacional</div><div class="meta-value">${ctx.rankNac}/${ctx.rankNacTotal}</div></div>` : ''}
+    ${ctx.rankReg != null ? `<div class="meta-item"><div class="meta-label">Regional</div><div class="meta-value">${ctx.rankReg}/${ctx.rankRegTotal}</div></div>` : ''}
+  </div>
+  ${ctx.areaList.length ? `<h2>Desempenho por Área</h2><table><thead><tr><th>Área</th><th style="text-align:right">Média</th></tr></thead><tbody>${areaRows}</tbody></table>` : ''}
+  <h2>Ranking de Alunos</h2>
+  <table><thead><tr><th style="text-align:center;width:40px">#</th><th>Aluno</th><th style="text-align:center">Turma</th><th style="text-align:right">Nota</th></tr></thead><tbody>${alunoRows}</tbody></table>
+  <script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+};
+
+// ── Exportar resultado do simulado como Excel (CSV) ──
+window._exportSimExcel = function() {
+  const ctx = window.__MEDCOF_SIM_EXPORT__;
+  if (!ctx) return;
+  const fmtNome = nome => {
+    if (!nome || nome.startsWith('CPF:')) return nome || '—';
+    const lower = ['da','de','do','dos','das','e'];
+    return nome.trim().split(/\s+/).map(p => { const l = p.toLowerCase(); return lower.includes(l) ? l : l.charAt(0).toUpperCase() + l.slice(1); }).join(' ');
+  };
+  const sep = ';';
+  const lines = [];
+  lines.push(`Simulado${sep}${ctx.titulo}`);
+  lines.push(`Tipo${sep}${ctx.tipoLabel}`);
+  lines.push(`Total Alunos${sep}${ctx.totalAlunos}`);
+  lines.push(`Total Questões${sep}${ctx.totalQuestoes}`);
+  lines.push(`Média IES${sep}${ctx.mediaIES != null ? ctx.mediaIES.toFixed(1) : ''}`);
+  if (ctx.mediaGeral != null) lines.push(`Média Geral${sep}${ctx.mediaGeral.toFixed(1)}`);
+  if (ctx.mediana != null) lines.push(`Mediana${sep}${ctx.mediana.toFixed(1)}`);
+  if (ctx.rankNac != null) lines.push(`Ranking Nacional${sep}${ctx.rankNac}/${ctx.rankNacTotal}`);
+  lines.push('');
+  lines.push(`#${sep}Aluno${sep}Turma${sep}Nota (%)`);
+  ctx.alunosSorted.forEach((a, i) => {
+    const nota = a.nota != null ? a.nota.toFixed(1) : '';
+    lines.push(`${i+1}${sep}${fmtNome(a.nome)}${sep}${a.turma || ''}${sep}${nota}`);
+  });
+  if (ctx.areaList.length) {
+    lines.push('');
+    lines.push(`Área${sep}Média (%)`);
+    ctx.areaList.forEach(a => lines.push(`${a.label}${sep}${a.media.toFixed(1)}`));
+  }
+  if (ctx.temaList.length) {
+    lines.push('');
+    lines.push(`Tema${sep}Área${sep}% Acerto`);
+    ctx.temaList.forEach(t => lines.push(`${t.tema}${sep}${t.area}${sep}${t.pct.toFixed(1)}`));
+  }
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${ctx.titulo.replace(/[^a-zA-Z0-9À-ÿ ]/g, '').trim()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};

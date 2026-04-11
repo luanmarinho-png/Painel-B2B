@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>MedCof B2B — Recuperar Senha</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/supabase-config.js"></script>
@@ -91,7 +92,15 @@
     <a href="/admin.html" class="back-link">← Voltar para o login</a>
   </div>
 
-  <!-- Etapa 2: Redirecionando -->
+  <!-- Etapa 2a: E-mail enviado (SendGrid) -->
+  <div id="stepEmailSent" style="display:none; text-align:center">
+    <div style="font-size:3rem;margin-bottom:16px">📧</div>
+    <h2 class="title">Confira seu e-mail</h2>
+    <p class="subtitle">Se o endereço estiver cadastrado, enviamos um link para criar uma nova senha. Verifique também a pasta de spam.</p>
+    <a href="/admin.html" class="back-link" style="margin-top:8px">← Voltar ao login</a>
+  </div>
+
+  <!-- Etapa 2b: Redirecionando (fallback sem SendGrid — link na resposta) -->
   <div id="stepSent" style="display:none; text-align:center">
     <div style="font-size:3rem;margin-bottom:16px">🔐</div>
     <h2 class="title">Redirecionando...</h2>
@@ -136,21 +145,23 @@
         return;
       }
 
-      // Mostrar tela de carregamento
-      document.getElementById('stepEmail').style.display = 'none';
-      document.getElementById('stepSent').style.display = 'block';
+      if (data.sent === true && data.ok) {
+        document.getElementById('stepEmail').style.display = 'none';
+        document.getElementById('stepEmailSent').style.display = 'block';
+        return;
+      }
 
       if (data.link) {
-        // Redirecionar direto para o link de recuperação (sem precisar de e-mail)
+        document.getElementById('stepEmail').style.display = 'none';
+        document.getElementById('stepSent').style.display = 'block';
         setTimeout(() => { window.location.href = data.link; }, 800);
-      } else {
-        // E-mail não encontrado no sistema
-        document.getElementById('stepEmail').style.display = 'block';
-        document.getElementById('stepSent').style.display = 'none';
-        emailError.textContent = 'E-mail não encontrado ou sem acesso ao sistema.';
-        sendBtn.disabled = false;
-        sendBtn.textContent = 'Enviar link de recuperação';
+        return;
       }
+
+      document.getElementById('stepEmail').style.display = 'block';
+      emailError.textContent = 'Se o e-mail estiver cadastrado, você receberá o link em instantes.';
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Enviar link de recuperação';
 
     } catch(e) {
       emailError.textContent = 'Erro ao conectar. Verifique sua conexão e tente novamente.';

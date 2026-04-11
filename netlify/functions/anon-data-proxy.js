@@ -15,7 +15,10 @@ const ALLOWED_TABLES = new Set([
   'simulado_respostas',
   'simulados_envios',
   'simulados_questoes',
-  'avisos'
+  'avisos',
+  'atividades_contrato',
+  'contratos_ies',
+  'notificacoes_admin'
 ]);
 
 const CORS = {

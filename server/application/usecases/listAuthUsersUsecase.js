@@ -34,6 +34,7 @@ async function executeListAuthUsers({ emailFilter, corsHeaders }) {
       role: u.user_metadata?.role || '',
       instituicao: u.user_metadata?.instituicao || '',
       nome: u.user_metadata?.nome || '',
+      access_approved: u.user_metadata?.access_approved,
       instituicoes_responsavel: u.user_metadata?.instituicoes_responsavel || [],
       created_at: u.created_at
     }));

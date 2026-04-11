@@ -8,6 +8,7 @@ const { executePostgrestMongo } = require('../../infrastructure/mongo/postgrestM
 const { fetchAuthUser } = require('../../infrastructure/supabase/fetchAuthUser');
 const { isPrivilegedAdmin, isSuperadmin } = require('../../domain/userRoles');
 const { corsAdminProxy } = require('../../presentation/http/corsPresets');
+const { appendAdminAuditLog } = require('./appendAdminAuditLog');
 
 const ALLOWED_TABLES = new Set([
   'alunos_master',
@@ -20,8 +21,10 @@ const ALLOWED_TABLES = new Set([
   'instituicoes',
   'dashboard_engajamento',
   'atividades_contrato',
+  'contratos_ies',
   'alunos_faltantes_simulado',
-  'avisos'
+  'avisos',
+  'notificacoes_admin'
 ]);
 
 /**
@@ -62,9 +65,10 @@ function maskCpfInJson(data) {
  * @param {object} params
  * @param {string} params.authHeader
  * @param {string} params.rawBody
+ * @param {{ forwardedFor?: string, userAgent?: string }} [params.requestMeta]
  * @returns {Promise<{ statusCode: number, headers: Record<string, string>, body: string }>}
  */
-async function executeAdminProxy({ authHeader, rawBody }) {
+async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
   const CORS = corsAdminProxy;
 
   const userToken = (authHeader || '').replace(/^Bearer\s+/i, '');
@@ -140,6 +144,39 @@ async function executeAdminProxy({ authHeader, rawBody }) {
 
   const httpMethod = (method || 'GET').toUpperCase();
 
+  const meta = requestMeta || {};
+  const clientIp = String(meta.forwardedFor || '')
+    .split(',')[0]
+    .trim() || undefined;
+  const userAgent = meta.userAgent ? String(meta.userAgent) : undefined;
+
+  /**
+   * @param {number} statusCode
+   * @param {boolean} responseOk
+   * @param {string} [errorSummary]
+   * @returns {Promise<void>}
+   */
+  async function tryAudit(statusCode, responseOk, errorSummary) {
+    try {
+      await appendAdminAuditLog({
+        user: session.user,
+        role,
+        resourceTable: tableName,
+        httpMethod,
+        query: query || '',
+        body,
+        statusCode,
+        responseOk,
+        errorSummary,
+        clientIp,
+        userAgent
+      });
+    } catch (err) {
+      const msg = err && typeof err.message === 'string' ? err.message : String(err);
+      console.error('[appendAdminAuditLog]', msg);
+    }
+  }
+
   if (process.env.DATA_BACKEND === 'mongo') {
     const { uri: mongoUri } = getMongoEnv();
     if (!mongoUri) {
@@ -159,16 +196,20 @@ async function executeAdminProxy({ authHeader, rawBody }) {
         range,
         maskSensitive
       });
+      const ok = mongoResp.statusCode >= 200 && mongoResp.statusCode < 400;
+      await tryAudit(mongoResp.statusCode, ok, ok ? undefined : mongoResp.body?.slice?.(0, 300));
       return {
         statusCode: mongoResp.statusCode,
         headers: { ...CORS, ...mongoResp.headers },
         body: mongoResp.body
       };
     } catch (err) {
+      const em = err && err.message ? err.message : String(err);
+      await tryAudit(500, false, 'MongoDB: ' + em);
       return {
         statusCode: 500,
         headers: CORS,
-        body: JSON.stringify({ error: 'MongoDB: ' + (err && err.message ? err.message : String(err)) })
+        body: JSON.stringify({ error: 'MongoDB: ' + em })
       };
     }
   }
@@ -212,6 +253,20 @@ async function executeAdminProxy({ authHeader, rawBody }) {
       }
     }
 
+    let errorSummary;
+    if (!supaResp.ok && supaBody) {
+      try {
+        const parsed = JSON.parse(supaBody);
+        if (parsed && typeof parsed === 'object' && parsed.error != null) {
+          errorSummary = String(parsed.error).slice(0, 500);
+        }
+      } catch (_) {
+        errorSummary = supaBody.slice(0, 300);
+      }
+    }
+    const ok = supaResp.status >= 200 && supaResp.status < 400;
+    await tryAudit(supaResp.status, ok, errorSummary);
+
     const respHeaders = {
       ...CORS,
       'Content-Type': 'application/json'
@@ -225,6 +280,7 @@ async function executeAdminProxy({ authHeader, rawBody }) {
       body: supaBody
     };
   } catch (err) {
+    await tryAudit(500, false, err && err.message ? err.message : String(err));
     return {
       statusCode: 500,
       headers: CORS,

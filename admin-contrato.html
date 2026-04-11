@@ -3,15 +3,71 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>MedCof B2B — Dados do Contrato</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/supabase-config.js"></script>
+<script>
+window._SUPA_REST_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1';
+window._getAdminToken = async function() {
+  try {
+    const sb = typeof getSupabaseClient === 'function' ? getSupabaseClient() : null;
+    if (!sb) return '';
+    let { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) {
+      const { data: refreshData, error } = await sb.auth.refreshSession();
+      if (error || !refreshData?.session) return '';
+      session = refreshData.session;
+    }
+    return session?.access_token || '';
+  } catch (_) {}
+  return '';
+};
+window._SUPA_REST_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2d3d1Y3hqcnBzZm94YXJzaXByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMDIxMzgsImV4cCI6MjA5MDg3ODEzOH0.GdpReqo9giSC607JQge8HA9CmZWi-2TcVggU4jCwZhI';
+window._supaRest = async function(table, query) {
+  const resp = await fetch('/.netlify/functions/anon-data-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ table, query: query || '' })
+  });
+  if (!resp.ok) throw new Error(await resp.text() || `HTTP ${resp.status}`);
+  return resp.json();
+};
+window._supaRestAdmin = async function(table, query, opts) {
+  const token = await window._getAdminToken();
+  if (!token) throw new Error('Sessão expirada — faça login no painel admin e abra esta página novamente.');
+  const payload = { table, method: 'GET', query: query || '' };
+  if (opts && opts.maskSensitive) payload.maskSensitive = true;
+  const resp = await fetch('/.netlify/functions/admin-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify(payload)
+  });
+  if (resp.status === 401) throw new Error('Sessão expirada — faça login no painel admin.');
+  if (!resp.ok) throw new Error(await resp.text() || `HTTP ${resp.status}`);
+  return resp.json();
+};
+window._supaWrite = async function(table, method, body, extra) {
+  const token = await window._getAdminToken();
+  if (!token) throw new Error('Sessão expirada');
+  let prefer = 'return=minimal';
+  if (method === 'POST') prefer = 'return=representation,resolution=merge-duplicates';
+  if (method === 'GET') prefer = '';
+  if (extra && extra.prefer !== undefined) prefer = extra.prefer;
+  const payload = { table, method, body, prefer };
+  if (extra && extra.requireSuperadmin) payload.requireSuperadmin = true;
+  return fetch('/.netlify/functions/admin-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify(payload)
+  });
+};
+</script>
 <style>
   :root {
     --bg: #0f1117;
     --bg-card: #181b23;
     --bg-elevated: #1e2230;
-    --bg-hover: #252a38;
     --border: #2a2f3e;
     --border-subtle: #222738;
     --text: #e8eaf0;
@@ -19,11 +75,9 @@
     --text-muted: #5c6175;
     --accent: #dc2626;
     --accent-soft: rgba(220,38,38,0.12);
-    --accent-glow: rgba(220,38,38,0.25);
     --green: #22c55e;
     --green-soft: rgba(34,197,94,0.12);
     --amber: #f59e0b;
-    --amber-soft: rgba(245,158,11,0.12);
     --blue: #3b82f6;
     --blue-soft: rgba(59,130,246,0.12);
     --radius: 16px;
@@ -35,8 +89,6 @@
     background: var(--bg); color: var(--text); min-height: 100vh;
     -webkit-font-smoothing: antialiased;
   }
-
-  /* ── Top bar ── */
   .topbar {
     position: sticky; top: 0; z-index: 10;
     background: rgba(15,17,23,0.92); backdrop-filter: blur(12px);
@@ -67,99 +119,84 @@
     background: var(--bg-elevated); border: 1px solid var(--border);
     border-radius: 8px;
   }
-
-  /* ── Layout ── */
-  .page { max-width: 960px; margin: 0 auto; padding: 40px 24px 80px; }
-
-  /* ── Em construção banner ── */
-  .under-construction {
-    background: linear-gradient(135deg, rgba(245,158,11,0.08), rgba(245,158,11,0.03));
-    border: 1px solid rgba(245,158,11,0.3);
-    border-radius: var(--radius); padding: 24px 28px;
-    margin-bottom: 36px; display: flex; align-items: flex-start; gap: 18px;
-  }
-  .uc-icon { font-size: 2rem; flex-shrink: 0; margin-top: 2px; }
-  .uc-title { font-size: 1rem; font-weight: 700; color: var(--amber); margin-bottom: 4px; }
-  .uc-desc { font-size: 0.84rem; color: var(--text-soft); line-height: 1.6; }
-  .uc-checklist { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
-  .uc-chip {
-    font-size: 0.72rem; font-weight: 600; padding: 3px 10px;
-    background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.25);
-    border-radius: 20px; color: var(--amber); opacity: 0.85;
-  }
-
-  /* ── Page header ── */
-  .page-header { margin-bottom: 36px; }
+  .page { max-width: 920px; margin: 0 auto; padding: 32px 24px 120px; }
+  .page-header { margin-bottom: 28px; }
   .page-header-eyebrow {
     font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.12em; color: var(--text-muted); margin-bottom: 8px;
   }
-  .page-header-title {
-    font-size: 1.6rem; font-weight: 800; color: var(--text); margin-bottom: 6px;
-  }
+  .page-header-title { font-size: 1.55rem; font-weight: 800; color: var(--text); margin-bottom: 6px; }
   .page-header-sub { font-size: 0.9rem; color: var(--text-soft); }
 
-  /* ── Section ── */
-  .section { margin-bottom: 32px; }
-  .section-title {
+  .edit-banner {
+    background: var(--green-soft); border: 1px solid rgba(34,197,94,0.35);
+    border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 22px;
+    font-size: 0.88rem; color: var(--text); line-height: 1.55;
+  }
+  .edit-banner strong { color: var(--green); }
+  .edit-banner-new {
+    background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.3);
+  }
+  .edit-banner-new strong { color: var(--blue); }
+
+  .save-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+    padding: 14px 24px;
+    background: rgba(15,17,23,0.95); backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    flex-wrap: wrap;
+  }
+  .save-bar-msg { font-size: 0.8rem; color: var(--text-muted); }
+  .btn-primary {
+    padding: 12px 28px; border-radius: 10px; border: none;
+    background: var(--accent); color: #fff; font-size: 0.9rem; font-weight: 700;
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  .btn-primary:hover { opacity: 0.92; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .form-section {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 22px 24px; margin-bottom: 20px;
+  }
+  .form-section-title {
     font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 16px;
-    padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle);
     display: flex; align-items: center; gap: 8px;
   }
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px 18px;
+  }
+  .form-grid-full { grid-column: 1 / -1; }
+  .f-label {
+    display: block; font-size: 0.68rem; font-weight: 600; color: var(--text-muted);
+    margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .f-input, .f-select, .f-textarea {
+    width: 100%; padding: 10px 12px; border-radius: 10px;
+    border: 1.5px solid var(--border); background: var(--bg-elevated);
+    color: var(--text); font-size: 0.88rem; font-family: inherit; outline: none;
+  }
+  .f-input:focus, .f-select:focus, .f-textarea:focus { border-color: var(--blue); }
+  .f-textarea { min-height: 88px; resize: vertical; }
+  .f-hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; }
+  .f-check { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .f-check input { width: 18px; height: 18px; accent-color: var(--green); }
 
-  /* ── Field grid ── */
-  .field-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
-  .field-card {
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); padding: 18px 20px;
-    position: relative; overflow: hidden;
+  .loading-box, .error-box {
+    background: var(--bg-card); border: 1px dashed var(--border);
+    border-radius: var(--radius-sm); padding: 48px; text-align: center;
+    color: var(--text-muted); font-size: 0.9rem;
   }
-  .field-card.pending { border-style: dashed; }
-  .field-card-label {
-    font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 8px;
-  }
-  .field-card-value {
-    font-size: 1.05rem; font-weight: 700; color: var(--text);
-  }
-  .field-card-value.pending {
-    font-size: 0.82rem; font-weight: 600;
-    color: var(--text-muted); font-style: italic;
-  }
-  .field-card-sub {
-    font-size: 0.75rem; color: var(--text-soft); margin-top: 4px;
-  }
-  .field-card-badge {
-    position: absolute; top: 12px; right: 12px;
-    font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.06em; padding: 2px 7px; border-radius: 5px;
-    background: var(--amber-soft); color: var(--amber);
-    border: 1px solid rgba(245,158,11,0.3);
-  }
+  .error-box { border-color: rgba(220,38,38,0.4); color: var(--accent); }
 
-  /* ── Simulados table ── */
-  .sim-table { width: 100%; border-collapse: collapse; }
-  .sim-table th, .sim-table td {
-    padding: 11px 14px; text-align: left; font-size: 0.83rem;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-  .sim-table th {
-    font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--text-muted);
-    background: var(--bg-elevated);
-  }
-  .sim-table tr:last-child td { border-bottom: none; }
-  .sim-table td { color: var(--text-soft); }
-  .sim-table td.pending { font-style: italic; color: var(--text-muted); }
-  .sim-badge-ok { color: var(--green); font-weight: 700; }
-  .sim-badge-pending { color: var(--amber); }
-
-  /* ── User cards ── */
   .user-card {
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); padding: 16px 20px;
-    display: flex; align-items: center; gap: 16px;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 14px 18px;
+    display: flex; align-items: center; gap: 14px;
   }
   .user-avatar {
     width: 40px; height: 40px; border-radius: 50%;
@@ -167,79 +204,58 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 0.85rem; font-weight: 800; color: var(--accent); flex-shrink: 0;
   }
-  .user-nome { font-size: 0.9rem; font-weight: 700; color: var(--text); }
-  .user-email { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
-  .user-status-ok  { font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; background: var(--green-soft); color: var(--green); border: 1px solid rgba(34,197,94,0.25); }
-  .user-status-off { font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; background: var(--bg-elevated); color: var(--text-muted); border: 1px solid var(--border); }
-  .user-loading { color: var(--text-muted); font-size: 0.85rem; padding: 20px; text-align: center; }
+  .user-nome { font-size: 0.88rem; font-weight: 700; color: var(--text); }
+  .user-email { font-size: 0.76rem; color: var(--text-muted); margin-top: 2px; }
+  .user-status-ok  { font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; background: var(--green-soft); color: var(--green); }
+  .user-status-off { font-size: 0.65rem; font-weight: 700; padding: 2px 8px; border-radius: 5px; background: var(--bg-elevated); color: var(--text-muted); border: 1px solid var(--border); }
 
-  /* ── History ── */
   .history-empty {
-    background: var(--bg-card); border: 1px dashed var(--border);
-    border-radius: var(--radius-sm); padding: 40px;
+    background: var(--bg-elevated); border: 1px dashed var(--border);
+    border-radius: var(--radius-sm); padding: 36px;
     text-align: center; color: var(--text-muted); font-size: 0.85rem;
   }
-  .history-empty-icon { font-size: 2rem; margin-bottom: 10px; }
   .ativ-card {
-    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
-    padding: 18px 20px; margin-bottom: 10px; position: relative;
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 16px 18px; margin-bottom: 10px; position: relative;
   }
-  .ativ-card:hover { border-color: var(--text-muted); }
   .ativ-tipo {
     display: inline-block; font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.06em; padding: 2px 8px; border-radius: 5px; margin-right: 8px;
   }
   .ativ-tipo-reuniao { background: var(--blue-soft); color: var(--blue); border: 1px solid rgba(59,130,246,0.25); }
   .ativ-tipo-ligacao { background: var(--green-soft); color: var(--green); border: 1px solid rgba(34,197,94,0.25); }
-  .ativ-tipo-email   { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(245,158,11,0.25); }
-  .ativ-tipo-outro   { background: var(--bg-elevated); color: var(--text-muted); border: 1px solid var(--border); }
+  .ativ-tipo-email   { background: rgba(245,158,11,0.12); color: var(--amber); border: 1px solid rgba(245,158,11,0.25); }
+  .ativ-tipo-outro   { background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); }
   .ativ-data { font-size: 0.75rem; color: var(--text-muted); }
   .ativ-desc { font-size: 0.85rem; color: var(--text); margin-top: 8px; line-height: 1.6; white-space: pre-wrap; }
   .ativ-participantes { font-size: 0.75rem; color: var(--text-soft); margin-top: 6px; }
   .ativ-delete {
     position: absolute; top: 12px; right: 12px; background: none; border: none;
-    color: var(--text-muted); cursor: pointer; font-size: 0.9rem; opacity: 0; transition: opacity 0.2s;
+    color: var(--text-muted); cursor: pointer; font-size: 0.9rem; opacity: 0.6;
   }
-  .ativ-card:hover .ativ-delete { opacity: 1; }
-  .ativ-delete:hover { color: var(--accent); }
+  .ativ-delete:hover { color: var(--accent); opacity: 1; }
+  .ativ-btn-add {
+    padding: 8px 16px; border-radius: 8px; border: none;
+    background: var(--blue); color: #fff; font-size: 0.82rem;
+    font-weight: 700; cursor: pointer;
+  }
+  .ativ-btn-add:hover { background: #2563eb; }
   .ativ-form-overlay {
     position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.6);
     display: flex; align-items: center; justify-content: center;
   }
   .ativ-form-box {
     background: var(--bg-card); border: 1px solid var(--border); border-radius: 20px;
-    padding: 32px; width: min(92%, 500px); max-height: 90vh; overflow-y: auto;
-    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    padding: 28px; width: min(92%, 500px); max-height: 90vh; overflow-y: auto;
   }
-  .ativ-field { margin-bottom: 16px; }
-  .ativ-label {
-    display: block; font-size: 0.72rem; font-weight: 600; color: var(--text-muted);
-    margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;
-  }
-  .ativ-input {
-    width: 100%; padding: 10px 14px; border-radius: 10px;
-    border: 1.5px solid var(--border); background: var(--bg-elevated);
-    color: var(--text); font-size: 0.88rem; outline: none; font-family: inherit;
-  }
-  .ativ-input:focus { border-color: var(--blue); }
-  .ativ-btn-add {
-    padding: 8px 18px; border-radius: 8px; border: none;
-    background: var(--blue); color: #fff; font-size: 0.82rem;
-    font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;
-  }
-  .ativ-btn-add:hover { background: #2563eb; }
-
   @media (max-width: 600px) {
     .topbar { padding: 0 16px; }
-    .page { padding: 24px 16px 60px; }
-    .under-construction { flex-direction: column; gap: 12px; }
-    .field-row { grid-template-columns: 1fr; }
+    .page { padding: 20px 16px 100px; }
   }
 </style>
 </head>
 <body>
 
-<!-- Top bar -->
 <div class="topbar">
   <a href="admin.html" class="topbar-back">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
@@ -255,338 +271,511 @@
 </div>
 
 <div class="page">
-
-  <!-- Cabeçalho da página -->
   <div class="page-header">
     <div class="page-header-eyebrow">Gestão de Contratos</div>
     <div class="page-header-title" id="pageTitle">Dados do Contrato</div>
     <div class="page-header-sub" id="pageSubtitle">Informações contratuais, pacote e simulados da instituição</div>
   </div>
+  <div id="contractRoot"><div class="loading-box">Carregando…</div></div>
+</div>
 
-  <!-- Banner Em Construção -->
-  <div class="under-construction">
-    <div class="uc-icon">🚧</div>
-    <div>
-      <div class="uc-title">Página em construção</div>
-      <div class="uc-desc">
-        As informações contratuais serão preenchidas pela equipe MedCof.
-        A estrutura já está pronta para receber os dados de cada instituição.
-        Os campos marcados como <strong style="color:var(--amber)">pendente</strong> serão atualizados quando os dados forem inseridos.
-      </div>
-      <div class="uc-checklist">
-        <span class="uc-chip">📅 Vigência do contrato</span>
-        <span class="uc-chip">📦 Pacote contratado</span>
-        <span class="uc-chip">🎯 Simulados contratados</span>
-        <span class="uc-chip">👤 Responsável institucional</span>
-        <span class="uc-chip">📋 Histórico de atividade</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Conteúdo dinâmico populado via JS -->
-  <div id="contractContent"></div>
-
+<div class="save-bar" id="saveBar" style="display:none">
+  <span class="save-bar-msg" id="saveBarMsg">Alterações não salvas serão gravadas no banco ao confirmar.</span>
+  <button type="button" class="btn-primary" id="btnSalvarContrato">Salvar dados do contrato</button>
 </div>
 
 <script>
-(() => {
+(function () {
   const params = new URLSearchParams(location.search);
-  const ies = params.get("ies") || "";
+  const ies = (params.get('ies') || '').trim();
 
-  /* ═══ DADOS CONTRATUAIS — todas as IES da planilha ═══
-     simTend     : simulados Tendências (sempre 3, sempre impressos)
-     simPers     : simulados Personalizados (total - 3)
-     simPersImp  : true = personalizados impressos | false = virtuais (padrão)
-  ═══════════════════════════════════════════════════════ */
-  const contracts = {
-    "facene":              { nome:"FACENE",              status:"Assinado", local:"Mossoró — RN",           plano:"Regular", modulos:"Internato + ENAMED", materialFisico:false, simTend:3, simPers:3, simPersImp:false, condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "unicet":              { nome:"UNICET",              status:"Assinado", local:"Teresina — PI",          plano:"Elite",   modulos:"Internato + ENAMED", materialFisico:false, simTend:3, simPers:2, simPersImp:true,  condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "unisc":               { nome:"UNISC",               status:"Assinado", local:"Santa Cruz do Sul — RS", plano:"Regular", modulos:"Internato + ENAMED", materialFisico:false, simTend:3, simPers:2, simPersImp:true,  condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "univassouras":        { nome:"UNIVASSOURAS",        status:"Assinado", local:"Vassouras — RJ",         plano:"Regular", modulos:"Internato + ENAMED", materialFisico:false, simTend:3, simPers:2, simPersImp:false, condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "unifeso":             { nome:"UNIFESO",             status:"Assinado", local:"Teresópolis — RJ",       plano:"Regular", modulos:"Internato + ENAMED", materialFisico:false, simTend:3, simPers:3, simPersImp:true,  condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "famene":              { nome:"FAMENE",              status:"Assinado", local:"João Pessoa — PB",       plano:"Regular", modulos:"Internato + ENAMED", materialFisico:false, simTend:3, simPers:3, simPersImp:false, condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "unichristus":         { nome:"UNICHRISTUS",         status:"Assinado", local:"Fortaleza — CE",         plano:"Regular", modulos:"Internato + ENAMED", materialFisico:false, simTend:3, simPers:2, simPersImp:true,  condicaoPrevios:"Não haverá reembolso ou cancelamento de parcelas futuras de alunos prévios MedCof" },
-    "uninassau-cacoal":    { nome:"UNINASSAU CACOAL",    status:"Assinado", local:"Cacoal — RO",            plano:"Elite",   modulos:"Internato + ENAMED", materialFisico:true,  simTend:3, simPers:2, simPersImp:true,  condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "uninassau-vilhena":   { nome:"UNINASSAU VILHENA",   status:"Assinado", local:"Vilhena — RO",           plano:"Elite",   modulos:"Internato + ENAMED", materialFisico:true,  simTend:3, simPers:2, simPersImp:true,  condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "uninassau-recife":    { nome:"UNINASSAU RECIFE",    status:"Assinado", local:"Recife — PE",            plano:"Elite",   modulos:"Internato + ENAMED", materialFisico:true,  simTend:3, simPers:2, simPersImp:true,  condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
-    "uninassau-barreiras": { nome:"UNINASSAU BARREIRAS", status:"Assinado", local:"Barreiras — BA",         plano:"Elite",   modulos:"Internato + ENAMED", materialFisico:true,  simTend:3, simPers:2, simPersImp:true,  condicaoPrevios:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" }
+  /** Valores padrão legados (planilha MedCof) — usados só para pré-preencher quando não há linha em contratos_ies */
+  const LEGACY_DEFAULTS = {
+    facene:              { nome:"FACENE",              status_contrato:"Assinado", localidade:"Mossoró — RN",           plano:"Regular", modulos:"Internato + ENAMED", material_fisico:false, sim_tendencias_qtd:3, sim_personalizados_qtd:3, sim_personalizados_impressos:false, condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    unicet:              { nome:"UNICET",              status_contrato:"Assinado", localidade:"Teresina — PI",          plano:"Elite",   modulos:"Internato + ENAMED", material_fisico:false, sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:true,  condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    unisc:               { nome:"UNISC",               status_contrato:"Assinado", localidade:"Santa Cruz do Sul — RS", plano:"Regular", modulos:"Internato + ENAMED", material_fisico:false, sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:true,  condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    univassouras:        { nome:"UNIVASSOURAS",        status_contrato:"Assinado", localidade:"Vassouras — RJ",         plano:"Regular", modulos:"Internato + ENAMED", material_fisico:false, sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:false, condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    unifeso:             { nome:"UNIFESO",             status_contrato:"Assinado", localidade:"Teresópolis — RJ",       plano:"Regular", modulos:"Internato + ENAMED", material_fisico:false, sim_tendencias_qtd:3, sim_personalizados_qtd:3, sim_personalizados_impressos:true,  condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    famene:              { nome:"FAMENE",              status_contrato:"Assinado", localidade:"João Pessoa — PB",       plano:"Regular", modulos:"Internato + ENAMED", material_fisico:false, sim_tendencias_qtd:3, sim_personalizados_qtd:3, sim_personalizados_impressos:false, condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    unichristus:         { nome:"UNICHRISTUS",         status_contrato:"Assinado", localidade:"Fortaleza — CE",         plano:"Regular", modulos:"Internato + ENAMED", material_fisico:false, sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:true,  condicao_alunos_previos:"Não haverá reembolso ou cancelamento de parcelas futuras de alunos prévios MedCof" },
+    "uninassau-cacoal":  { nome:"UNINASSAU CACOAL",    status_contrato:"Assinado", localidade:"Cacoal — RO",            plano:"Elite",   modulos:"Internato + ENAMED", material_fisico:true,  sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:true,  condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    "uninassau-vilhena": { nome:"UNINASSAU VILHENA",   status_contrato:"Assinado", localidade:"Vilhena — RO",           plano:"Elite",   modulos:"Internato + ENAMED", material_fisico:true,  sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:true,  condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    "uninassau-recife":  { nome:"UNINASSAU RECIFE",    status_contrato:"Assinado", localidade:"Recife — PE",            plano:"Elite",   modulos:"Internato + ENAMED", material_fisico:true,  sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:true,  condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" },
+    "uninassau-barreiras": { nome:"UNINASSAU BARREIRAS", status_contrato:"Assinado", localidade:"Barreiras — BA",       plano:"Elite",   modulos:"Internato + ENAMED", material_fisico:true,  sim_tendencias_qtd:3, sim_personalizados_qtd:2, sim_personalizados_impressos:true,  condicao_alunos_previos:"Reembolso parcial ou cancelamento de parcelas futuras — proporcional ao tempo de uso" }
   };
 
-  const c = contracts[ies];
-  const name = c ? c.nome : (ies.toUpperCase() || "IES não identificada");
-  document.getElementById("topbarIes").textContent = name;
-  document.getElementById("pageTitle").textContent = "Contrato — " + name;
-  document.getElementById("pageSubtitle").textContent = "Informações contratuais, pacote e simulados de " + name + " × MedCof";
-  document.title = "MedCof B2B — Contrato " + name;
+  function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  }
+
+  function valStr(v) { return v == null ? '' : String(v); }
+  function valBool(v) { return v === true || v === 'true' || v === 1 || v === '1'; }
+  function valInt(v) {
+    const n = parseInt(String(v).replace(/\D/g, ''), 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  const root = document.getElementById('contractRoot');
+  const saveBar = document.getElementById('saveBar');
 
   if (!ies) {
-    document.getElementById("pageTitle").textContent = "Instituição não encontrada";
-    document.getElementById("pageSubtitle").textContent = "Acesse pelo grid de instituições no painel admin.";
+    root.innerHTML = '<div class="error-box">Informe a instituição na URL (ex.: admin-contrato.html?ies=cesmac). Acesse pelo painel admin.</div>';
     return;
   }
 
-  /* ═══ HELPERS ═══ */
-  function fc(label, value, sub, isPending) {
-    return `<div class="field-card${isPending?' pending':''}">
-      ${isPending?'<div class="field-card-badge">pendente</div>':''}
-      <div class="field-card-label">${label}</div>
-      <div class="field-card-value${isPending?' pending':''}">${value}</div>
-      ${sub?'<div class="field-card-sub">'+sub+'</div>':''}
-    </div>`;
-  }
-  function sec(icon, title, body) {
-    return `<div class="section"><div class="section-title">${icon} ${title}</div>${body}</div>`;
-  }
-  const svgInfo  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
-  const svgPkg   = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>';
-  const svgCheck = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
-  const svgUser  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-  const svgHist  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>';
+  document.getElementById('pageTitle').textContent = 'Contrato — ' + ies.toUpperCase();
+  document.getElementById('pageSubtitle').textContent = 'Informações contratuais, pacote e simulados — slug: ' + ies;
+  document.title = 'MedCof B2B — Contrato ' + ies;
 
-  const el = document.getElementById("contractContent");
-
-  if (!c) {
-    el.innerHTML = `<div class="history-empty"><div class="history-empty-icon">🔍</div>Dados contratuais desta instituição ainda não foram cadastrados no sistema.</div>`;
-    return;
-  }
-
-  /* plano badge color */
-  const planoCor = c.plano==='Elite'?'var(--accent)':c.plano==='ENAMED'?'var(--blue)':'var(--green)';
-  const planoBg  = c.plano==='Elite'?'var(--accent-soft)':c.plano==='ENAMED'?'var(--blue-soft)':'var(--green-soft)';
-
-  const totalSim = c.simTend + c.simPers;
-  const persFormato = c.simPersImp ? 'impressos' : 'virtuais';
-  const simDetalhe = c.simTend + ' Tendências (impressos) + ' + c.simPers + ' Personalizados (' + persFormato + ')';
-
-  /* ── Seção 1: Informações Gerais ── */
-  const s1 = sec(svgInfo, 'Informações Gerais',
-    '<div class="field-row">' +
-    fc('Status do contrato', '<span style="color:var(--green);font-weight:800">● ' + c.status + '</span>', null, false) +
-    fc('Localidade', c.local, null, false) +
-    fc('Início do contrato', 'A preencher', null, true) +
-    fc('Término do contrato', 'A preencher', null, true) +
-    '</div>'
-  );
-
-  /* ── Seção 2: Pacote Contratado ── */
-  const s2 = sec(svgPkg, 'Pacote Contratado',
-    '<div class="field-row">' +
-    fc('Plano', '<span style="background:'+planoBg+';color:'+planoCor+';padding:3px 12px;border-radius:6px;font-weight:800;letter-spacing:0.04em">' + c.plano + '</span>', null, false) +
-    fc('Módulos incluídos', c.modulos, null, false) +
-    fc('Material físico', c.materialFisico ? '<span style="color:var(--green)">Incluso</span>' : '<span style="color:var(--text-muted)">Não incluso</span>', null, false) +
-    fc('Número de licenças', 'A preencher', 'Vagas de alunos contratadas', true) +
-    '</div>'
-  );
-
-  /* ── Seção 3: Simulados Contratados ── */
-  const simFmtTend  = '🖨️ Impresso';
-  const simFmtPers  = c.simPersImp ? '🖨️ Impresso' : '💻 Virtual';
-  const s3 = sec(svgCheck, 'Simulados Contratados',
-    '<div class="field-row" style="margin-bottom:20px">' +
-    fc('Total contratado', '<span style="font-size:1.5rem;font-weight:800;color:var(--accent)">' + totalSim + '</span>', simDetalhe, false) +
-    fc('Simulados Tendências', '<span style="color:var(--green);font-weight:700">' + c.simTend + '</span>', simFmtTend, false) +
-    fc('Simulados Personalizados', '<span style="font-weight:700">' + c.simPers + '</span>', simFmtPers, false) +
-    '</div>' +
-    '<table class="sim-table"><thead><tr><th>Tipo</th><th>Qtd. contratada</th><th>Formato</th><th>Qtd. realizada</th><th>Status</th></tr></thead><tbody>' +
-    '<tr><td><strong>Simulado Tendências</strong><div style="font-size:0.75rem;color:var(--text-muted)">ENAMED — resultado nacional</div></td>' +
-    '<td style="font-weight:700;color:var(--green)">' + c.simTend + '</td>' +
-    '<td>🖨️ Impresso</td>' +
-    '<td class="pending">A registrar</td><td><span class="sim-badge-pending">⏳ Em andamento</span></td></tr>' +
-    '<tr><td><strong>Simulado Personalizado</strong><div style="font-size:0.75rem;color:var(--text-muted)">Aplicação interna por IES</div></td>' +
-    '<td style="font-weight:700">' + c.simPers + '</td>' +
-    '<td>' + simFmtPers + '</td>' +
-    '<td class="pending">—</td><td><span class="sim-badge-pending">⏳ Pendente</span></td></tr>' +
-    '</tbody></table>'
-  );
-
-  /* ── Seção 4: Condição alunos prévios ── */
-  const s4 = sec('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
-    'Condição para Alunos MedCof Prévios',
-    '<div style="background:var(--blue-soft);border:1px solid rgba(59,130,246,0.3);border-left:4px solid var(--blue);border-radius:var(--radius-sm);padding:18px 20px;display:flex;gap:14px;align-items:flex-start">' +
-    '<span style="font-size:1.4rem;flex-shrink:0;margin-top:1px">🛡️</span>' +
-    '<div><div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--blue);margin-bottom:6px">Política acordada em contrato</div>' +
-    '<div style="font-size:0.9rem;color:var(--text);font-weight:500;line-height:1.7">' + c.condicaoPrevios + '</div></div>' +
-    '</div>'
-  );
-
-  /* ── Seção 5: Responsável (placeholder — preenchido via Supabase abaixo) ── */
-  const s5 = sec(svgUser, 'Responsável Institucional',
-    '<div id="usersSection"><div class="user-loading">🔄 Carregando usuários...</div></div>'
-  );
-
-  /* ── Seção 6: Histórico de Atividade (funcional via Supabase) ── */
-  const s6 = sec(svgHist, 'Histórico de Atividade',
-    '<div style="display:flex;justify-content:flex-end;margin-bottom:14px">' +
-    '<button class="ativ-btn-add" onclick="window._openAtivModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Registrar atividade</button>' +
-    '</div>' +
-    '<div id="ativList"><div class="history-empty"><div class="history-empty-icon">📋</div>Carregando atividades...</div></div>'
-  );
-
-  el.innerHTML = s1 + s2 + s3 + s4 + s5 + s6;
-
-  /* ── Busca usuários cadastrados para esta IES via Supabase ── */
-  (async () => {
-    const usersEl = document.getElementById("usersSection");
+  async function loadInstNome() {
     try {
-      const sb = getSupabaseClient();
-      const { data, error } = await sb
-        .from("usuarios_autorizados")
-        .select("nome, email, ativo")
-        .eq("instituicao", ies)
-        .order("ativo", { ascending: false });
+      const rows = await window._supaRest('instituicoes', 'select=nome,cidade,slug&slug=eq.' + encodeURIComponent(ies));
+      if (rows && rows[0]) {
+        const n = rows[0].nome || ies;
+        document.getElementById('topbarIes').textContent = n;
+        document.getElementById('pageTitle').textContent = 'Contrato — ' + n;
+        document.getElementById('pageSubtitle').textContent =
+          'Informações contratuais, pacote e simulados de ' + n + ' × MedCof';
+        document.title = 'MedCof B2B — Contrato ' + n;
+        return rows[0];
+      }
+    } catch (_) {}
+    document.getElementById('topbarIes').textContent = ies.toUpperCase();
+    return null;
+  }
 
-      if (error) throw error;
+  /**
+   * Monta o objeto do formulário. Se já existe linha em contratos_ies, o banco é a única fonte
+   * (não mistura planilha legada — assim alterações salvas não são reaplicadas ao recarregar).
+   */
+  function mergeDefaults(dbRow, legacy, instRow) {
+    const empty = function () {
+      return {
+        ies_slug: ies,
+        status_contrato: '',
+        numero_contrato: '',
+        localidade: instRow && instRow.cidade ? String(instRow.cidade) : '',
+        data_inicio: '',
+        data_fim: '',
+        valor_mensalidade: '',
+        forma_pagamento: '',
+        dia_vencimento: '',
+        plano: '',
+        modulos: '',
+        material_fisico: false,
+        licencas_contratadas: '',
+        sim_tendencias_qtd: 0,
+        sim_personalizados_qtd: 0,
+        sim_personalizados_impressos: false,
+        tendencias_realizadas: '',
+        personalizados_realizados: '',
+        condicao_alunos_previos: '',
+        resp_nome: '',
+        resp_email: '',
+        resp_telefone: '',
+        resp_cargo: '',
+        observacoes_gerais: '',
+        observacoes_comercial: ''
+      };
+    };
 
-      if (!data || data.length === 0) {
-        usersEl.innerHTML =
-          '<div class="user-loading" style="color:var(--text-muted)">Nenhum usuário cadastrado para esta IES ainda.</div>';
+    const fromDb = dbRow && typeof dbRow === 'object';
+
+    if (fromDb) {
+      const o = empty();
+      Object.keys(o).forEach(function (k) {
+        if (dbRow[k] === undefined || dbRow[k] === null) return;
+        if (k === 'material_fisico' || k === 'sim_personalizados_impressos') {
+          o[k] = valBool(dbRow[k]);
+          return;
+        }
+        if (k === 'sim_tendencias_qtd' || k === 'sim_personalizados_qtd') {
+          o[k] = valInt(dbRow[k]);
+          return;
+        }
+        o[k] = dbRow[k];
+      });
+      if ((!o.localidade || !String(o.localidade).trim()) && instRow && instRow.cidade) {
+        o.localidade = String(instRow.cidade);
+      }
+      return o;
+    }
+
+    const o = empty();
+    if (legacy) {
+      if (legacy.localidade) o.localidade = legacy.localidade;
+      if (legacy.status_contrato) o.status_contrato = legacy.status_contrato;
+      if (legacy.plano) o.plano = legacy.plano;
+      if (legacy.modulos) o.modulos = legacy.modulos;
+      o.material_fisico = !!legacy.material_fisico;
+      o.sim_tendencias_qtd = legacy.sim_tendencias_qtd != null ? valInt(legacy.sim_tendencias_qtd) : o.sim_tendencias_qtd;
+      o.sim_personalizados_qtd = legacy.sim_personalizados_qtd != null ? valInt(legacy.sim_personalizados_qtd) : o.sim_personalizados_qtd;
+      o.sim_personalizados_impressos = !!legacy.sim_personalizados_impressos;
+      if (legacy.condicao_alunos_previos) o.condicao_alunos_previos = legacy.condicao_alunos_previos;
+    }
+    return o;
+  }
+
+  function renderForm(d) {
+    function field(label, inputHtml, hint) {
+      return '<div><span class="f-label">' + label + '</span>' + inputHtml +
+        (hint ? '<div class="f-hint">' + esc(hint) + '</div>' : '') + '</div>';
+    }
+    const ds = function (v) {
+      if (v && typeof v === 'object' && typeof v.toISOString === 'function') {
+        try { return v.toISOString().slice(0, 10); } catch (_) {}
+      }
+      const s = valStr(v);
+      return s.length >= 10 ? s.slice(0, 10) : s;
+    };
+    function optsWithCustom(baseOpts, current) {
+      const cur = (current != null ? String(current) : '').trim();
+      if (cur && baseOpts.indexOf(cur) === -1) return baseOpts.concat([cur]);
+      return baseOpts.slice();
+    }
+    const stBase = ['', 'Rascunho', 'Em análise', 'Assinado', 'Vigente', 'Encerrado', 'Suspenso'];
+    const stOpts = optsWithCustom(stBase, d.status_contrato);
+    const stSel = stOpts.map(function (o) {
+      const sel = (d.status_contrato === o || (!d.status_contrato && o === '')) ? ' selected' : '';
+      return '<option value="' + esc(o) + '"' + sel + '>' + (o || '— Selecione —') + '</option>';
+    }).join('');
+    const planoBase = ['', 'Regular', 'Elite', 'ENAMED', 'Personalizado'];
+    const planoOpts = optsWithCustom(planoBase, d.plano);
+    const planoSel = planoOpts.map(function (o) {
+      const sel = d.plano === o ? ' selected' : '';
+      return '<option value="' + esc(o) + '"' + sel + '>' + (o || '— Pacote —') + '</option>';
+    }).join('');
+    const pagBase = ['', 'Boleto', 'Transferência', 'Cartão', 'Fatura', 'Misto', 'Outro'];
+    const pagOpts = optsWithCustom(pagBase, d.forma_pagamento);
+    const pagSel = pagOpts.map(function (o) {
+      const sel = d.forma_pagamento === o ? ' selected' : '';
+      return '<option value="' + esc(o) + '"' + sel + '>' + (o || '— Forma —') + '</option>';
+    }).join('');
+
+    return (
+      '<form id="contratoForm" autocomplete="off">' +
+      '<div class="form-section">' +
+      '<div class="form-section-title">📋 Informações gerais</div>' +
+      '<div class="form-grid">' +
+      field('Status do contrato', '<select class="f-select" name="status_contrato" id="f_status">' + stSel + '</select>', 'Situação formal do vínculo com a IES') +
+      field('Nº / referência do contrato', '<input class="f-input" name="numero_contrato" id="f_numero" value="' + esc(valStr(d.numero_contrato)) + '" placeholder="Ex.: 045/2025">') +
+      field('Localidade (cidade / UF)', '<input class="f-input" name="localidade" value="' + esc(valStr(d.localidade)) + '" placeholder="Ex.: Fortaleza — CE">') +
+      field('Início da vigência', '<input class="f-input" type="date" name="data_inicio" value="' + esc(ds(d.data_inicio)) + '">') +
+      field('Término da vigência', '<input class="f-input" type="date" name="data_fim" value="' + esc(ds(d.data_fim)) + '">') +
+      '</div></div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">💰 Comercial e financeiro</div>' +
+      '<div class="form-grid">' +
+      field('Valor mensal / pacote', '<input class="f-input" name="valor_mensalidade" value="' + esc(valStr(d.valor_mensalidade)) + '" placeholder="Ex.: R$ 12.000,00">', 'Valores combinados com a IES') +
+      field('Forma de pagamento', '<select class="f-select" name="forma_pagamento">' + pagSel + '</select>') +
+      field('Dia de vencimento', '<input class="f-input" name="dia_vencimento" value="' + esc(valStr(d.dia_vencimento)) + '" placeholder="Ex.: dia 10">') +
+      '</div>' +
+      '<div class="form-grid" style="margin-top:14px"><div class="form-grid-full">' +
+      '<span class="f-label">Observações comerciais / faturamento</span>' +
+      '<textarea class="f-textarea" name="observacoes_comercial" placeholder="Notas de negociação, aditivos, multas…">' + esc(valStr(d.observacoes_comercial)) + '</textarea></div></div>' +
+      '</div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">📦 Pacote contratado</div>' +
+      '<div class="form-grid">' +
+      field('Plano / pacote', '<select class="f-select" name="plano">' + planoSel + '</select>') +
+      field('Módulos inclusos', '<input class="f-input" name="modulos" value="' + esc(valStr(d.modulos)) + '" placeholder="Ex.: Internato + ENAMED">') +
+      field('Licenças / vagas contratadas', '<input class="f-input" name="licencas_contratadas" value="' + esc(valStr(d.licencas_contratadas)) + '" placeholder="Ex.: 400 alunos ativos">') +
+      '</div>' +
+      '<div class="f-check"><label><input type="checkbox" name="material_fisico" id="f_mat"' + (d.material_fisico ? ' checked' : '') + '> Material físico incluso (apostilas / logística gráfica)</label></div>' +
+      '</div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">🎯 Simulados contratados</div>' +
+      '<div class="form-grid">' +
+      field('Qtd. simulados Tendências (contratada)', '<input class="f-input" type="number" min="0" name="sim_tendencias_qtd" value="' + valInt(d.sim_tendencias_qtd) + '">') +
+      field('Qtd. simulados Personalizados (contratada)', '<input class="f-input" type="number" min="0" name="sim_personalizados_qtd" value="' + valInt(d.sim_personalizados_qtd) + '">') +
+      '</div>' +
+      '<div class="f-check"><label><input type="checkbox" name="sim_personalizados_impressos" id="f_simPersImp"' + (d.sim_personalizados_impressos ? ' checked' : '') + '> Personalizados com prova impressa (não apenas virtual)</label></div>' +
+      '<div class="form-grid" style="margin-top:16px">' +
+      field('Tendências já realizados (acompanhamento)', '<input class="f-input" name="tendencias_realizadas" value="' + esc(valStr(d.tendencias_realizadas)) + '" placeholder="Opcional — texto ou número">') +
+      field('Personalizados já realizados', '<input class="f-input" name="personalizados_realizados" value="' + esc(valStr(d.personalizados_realizados)) + '" placeholder="Opcional">') +
+      '</div></div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">🛡️ Política para alunos MedCof prévios</div>' +
+      '<div class="form-grid-full">' +
+      '<span class="f-label">Condição acordada em contrato</span>' +
+      '<textarea class="f-textarea" name="condicao_alunos_previos" placeholder="Reembolso, proporcionalidade, etc.">' + esc(valStr(d.condicao_alunos_previos)) + '</textarea></div>' +
+      '</div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">👤 Responsável institucional (IES)</div>' +
+      '<div class="form-grid">' +
+      field('Nome', '<input class="f-input" name="resp_nome" value="' + esc(valStr(d.resp_nome)) + '">') +
+      field('E-mail', '<input class="f-input" type="email" name="resp_email" value="' + esc(valStr(d.resp_email)) + '">') +
+      field('Telefone / WhatsApp', '<input class="f-input" name="resp_telefone" value="' + esc(valStr(d.resp_telefone)) + '">') +
+      field('Cargo / função', '<input class="f-input" name="resp_cargo" value="' + esc(valStr(d.resp_cargo)) + '" placeholder="Ex.: Coord. acadêmica">') +
+      '</div></div>' +
+
+      '<div class="form-section">' +
+      '<div class="form-section-title">📝 Observações gerais</div>' +
+      '<div class="form-grid-full">' +
+      '<textarea class="f-textarea" name="observacoes_gerais" placeholder="Qualquer outro detalhe relevante do contrato.">' + esc(valStr(d.observacoes_gerais)) + '</textarea></div>' +
+      '</div>' +
+      '</form>'
+    );
+  }
+
+  async function loadUsersSection() {
+    const wrap = document.getElementById('usersSection');
+    if (!wrap) return;
+    try {
+      const rows = await window._supaRestAdmin(
+        'usuarios_autorizados',
+        'select=nome,email,ativo&instituicao=eq.' + encodeURIComponent(ies)
+      );
+      if (!rows || !rows.length) {
+        wrap.innerHTML = '<div class="history-empty">Nenhum usuário cadastrado para esta IES ainda.</div>';
         return;
       }
-
-      const cards = data.map(u => {
-        const iniciais = (u.nome || u.email)
-          .split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase().slice(0, 2);
-        return `<div class="user-card">
-          <div class="user-avatar">${iniciais}</div>
-          <div style="flex:1;min-width:0">
-            <div class="user-nome">${u.nome || '—'}</div>
-            <div class="user-email">${u.email}</div>
-          </div>
-          <span class="${u.ativo ? 'user-status-ok' : 'user-status-off'}">${u.ativo ? '● Ativo' : '● Inativo'}</span>
-        </div>`;
-      }).join('');
-
-      usersEl.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px">${cards}</div>`;
+      rows.sort(function (a, b) { return (b.ativo === true) - (a.ativo === true); });
+      wrap.innerHTML = '<div style="display:flex;flex-direction:column;gap:10px">' + rows.map(function (u) {
+        const ini = (u.nome || u.email || '').split(' ').slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase().slice(0, 2);
+        return '<div class="user-card"><div class="user-avatar">' + esc(ini) + '</div><div style="flex:1;min-width:0">' +
+          '<div class="user-nome">' + esc(u.nome || '—') + '</div><div class="user-email">' + esc(u.email) + '</div></div>' +
+          '<span class="' + (u.ativo ? 'user-status-ok' : 'user-status-off') + '">' + (u.ativo ? '● Ativo' : '● Inativo') + '</span></div>';
+      }).join('') + '</div>';
     } catch (e) {
-      usersEl.innerHTML =
-        `<div class="user-loading" style="color:var(--amber)">⚠️ Erro ao carregar usuários: ${e.message}</div>`;
+      wrap.innerHTML = '<div class="error-box" style="padding:20px">⚠️ ' + esc(e.message) + '</div>';
     }
-  })();
+  }
 
-  /* ═══ HISTÓRICO DE ATIVIDADES — Supabase ═══ */
-  const _iesSlug = ies;
+  const tipoCls = { reuniao: 'ativ-tipo-reuniao', ligacao: 'ativ-tipo-ligacao', email: 'ativ-tipo-email' };
+  const tipoLabel = { reuniao: '🤝 Reunião', ligacao: '📞 Ligação', email: '✉️ E-mail', outro: '📌 Outro' };
 
   async function loadAtividades() {
     const el = document.getElementById('ativList');
     if (!el) return;
     try {
-      const sb = getSupabaseClient();
-      const { data, error } = await sb.from('atividades_contrato')
-        .select('*')
-        .eq('ies_slug', _iesSlug)
-        .order('data', { ascending: false });
-      if (error) throw error;
+      const data = await window._supaRest(
+        'atividades_contrato',
+        'select=*&ies_slug=eq.' + encodeURIComponent(ies) + '&order=data.desc'
+      );
       if (!data || !data.length) {
-        el.innerHTML = '<div class="history-empty"><div class="history-empty-icon">📋</div>Nenhum registro de atividade ainda.<br>Registre reuniões e interações com a coordenação para acompanhar a evolução do contrato.</div>';
+        el.innerHTML = '<div class="history-empty"><div style="font-size:2rem;margin-bottom:8px">📋</div>Nenhum registro ainda.<br>Registre reuniões e interações com a coordenação.</div>';
         return;
       }
-      const tipoCls = { reuniao: 'ativ-tipo-reuniao', ligacao: 'ativ-tipo-ligacao', email: 'ativ-tipo-email' };
-      const tipoLabel = { reuniao: '🤝 Reunião', ligacao: '📞 Ligação', email: '✉️ E-mail', outro: '📌 Outro' };
-      el.innerHTML = data.map(a => {
+      el.innerHTML = data.map(function (a) {
         const dt = a.data ? new Date(a.data + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
         const cls = tipoCls[a.tipo] || 'ativ-tipo-outro';
         const label = tipoLabel[a.tipo] || tipoLabel.outro;
-        return `<div class="ativ-card">
-          <button class="ativ-delete" onclick="window._deleteAtiv('${a.id}')" title="Excluir">✕</button>
-          <span class="ativ-tipo ${cls}">${label}</span>
-          <span class="ativ-data">📅 ${dt}</span>
-          ${a.participantes ? '<div class="ativ-participantes">👥 ' + a.participantes.replace(/</g,'&lt;') + '</div>' : ''}
-          <div class="ativ-desc">${(a.descricao||'').replace(/</g,'&lt;')}</div>
-          ${a.registrado_por ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:8px;text-align:right">Registrado por: ' + a.registrado_por + '</div>' : ''}
-        </div>`;
+        return '<div class="ativ-card">' +
+          '<button type="button" class="ativ-delete" data-ativid="' + esc(a.id) + '" title="Excluir">✕</button>' +
+          '<span class="ativ-tipo ' + cls + '">' + label + '</span> ' +
+          '<span class="ativ-data">📅 ' + dt + '</span>' +
+          (a.participantes ? '<div class="ativ-participantes">👥 ' + esc(a.participantes) + '</div>' : '') +
+          '<div class="ativ-desc">' + esc(a.descricao || '') + '</div>' +
+          (a.registrado_por ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:8px;text-align:right">Por: ' + esc(a.registrado_por) + '</div>' : '') +
+          '</div>';
       }).join('');
-    } catch(e) {
-      el.innerHTML = '<div class="history-empty" style="color:var(--amber)">⚠️ Erro ao carregar: ' + e.message + '</div>';
+      el.querySelectorAll('.ativ-delete').forEach(function (btn) {
+        btn.onclick = function () { window._deleteAtiv(btn.getAttribute('data-ativid')); };
+      });
+    } catch (e) {
+      el.innerHTML = '<div class="history-empty" style="color:var(--accent)">⚠️ ' + esc(e.message) + '</div>';
     }
   }
-  loadAtividades();
 
-  window._openAtivModal = function() {
-    // Remove existing modal if any
+  window._openAtivModal = function () {
     const old = document.getElementById('ativModal');
     if (old) old.remove();
     const m = document.createElement('div');
     m.id = 'ativModal';
     m.className = 'ativ-form-overlay';
-    m.innerHTML = `<div class="ativ-form-box">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-        <h3 style="font-size:1.05rem;font-weight:700">📝 Registrar atividade</h3>
-        <button onclick="document.getElementById('ativModal').remove()" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
-      </div>
-      <div class="ativ-field">
-        <label class="ativ-label">Tipo de atividade</label>
-        <select id="ativTipo" class="ativ-input">
-          <option value="reuniao">🤝 Reunião com coordenação</option>
-          <option value="ligacao">📞 Ligação</option>
-          <option value="email">✉️ E-mail / Mensagem</option>
-          <option value="outro">📌 Outro</option>
-        </select>
-      </div>
-      <div class="ativ-field">
-        <label class="ativ-label">Data</label>
-        <input type="date" id="ativData" class="ativ-input" value="${new Date().toISOString().split('T')[0]}">
-      </div>
-      <div class="ativ-field">
-        <label class="ativ-label">Participantes</label>
-        <input type="text" id="ativPart" class="ativ-input" placeholder="Ex: Prof. Silva, Coord. João, Equipe MedCof">
-      </div>
-      <div class="ativ-field">
-        <label class="ativ-label">Descrição / Pauta / Resumo</label>
-        <textarea id="ativDesc" class="ativ-input" rows="4" placeholder="Descreva o que foi discutido, decisões tomadas, próximos passos..." style="resize:vertical"></textarea>
-      </div>
-      <div id="ativError" style="font-size:0.82rem;color:var(--accent);min-height:18px;margin-bottom:8px;text-align:center"></div>
-      <div style="display:flex;gap:12px">
-        <button onclick="document.getElementById('ativModal').remove()" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.9rem;font-weight:600;cursor:pointer">Cancelar</button>
-        <button id="ativSaveBtn" onclick="window._saveAtiv()" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--blue);color:#fff;font-size:0.9rem;font-weight:700;cursor:pointer">Salvar</button>
-      </div>
-    </div>`;
+    m.innerHTML =
+      '<div class="ativ-form-box">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+      '<h3 style="font-size:1.05rem;font-weight:700">📝 Registrar atividade</h3>' +
+      '<button type="button" id="ativCloseX" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button></div>' +
+      '<div style="margin-bottom:14px"><span class="f-label">Tipo</span>' +
+      '<select id="ativTipo" class="f-input">' +
+      '<option value="reuniao">🤝 Reunião</option><option value="ligacao">📞 Ligação</option>' +
+      '<option value="email">✉️ E-mail</option><option value="outro">📌 Outro</option></select></div>' +
+      '<div style="margin-bottom:14px"><span class="f-label">Data</span>' +
+      '<input type="date" id="ativData" class="f-input" value="' + new Date().toISOString().split('T')[0] + '"></div>' +
+      '<div style="margin-bottom:14px"><span class="f-label">Participantes</span>' +
+      '<input type="text" id="ativPart" class="f-input" placeholder="Nomes"></div>' +
+      '<div style="margin-bottom:14px"><span class="f-label">Descrição</span>' +
+      '<textarea id="ativDesc" class="f-textarea" rows="4"></textarea></div>' +
+      '<div id="ativError" style="font-size:0.82rem;color:var(--accent);min-height:18px;margin-bottom:8px;text-align:center"></div>' +
+      '<div style="display:flex;gap:10px"><button type="button" id="ativCancel" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-weight:600;cursor:pointer">Cancelar</button>' +
+      '<button type="button" id="ativSaveBtn" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--blue);color:#fff;font-weight:700;cursor:pointer">Salvar</button></div></div>';
     document.body.appendChild(m);
-    m.onclick = (e) => { if (e.target === m) m.remove(); };
+    function close() { m.remove(); }
+    m.onclick = function (e) { if (e.target === m) close(); };
+    document.getElementById('ativCloseX').onclick = close;
+    document.getElementById('ativCancel').onclick = close;
+    document.getElementById('ativSaveBtn').onclick = function () { window._saveAtiv(); };
   };
 
-  window._saveAtiv = async function() {
+  window._saveAtiv = async function () {
     const tipo = document.getElementById('ativTipo').value;
     const data = document.getElementById('ativData').value;
     const part = document.getElementById('ativPart').value.trim();
     const desc = document.getElementById('ativDesc').value.trim();
     const errEl = document.getElementById('ativError');
+    const btn = document.getElementById('ativSaveBtn');
     if (!data) { errEl.textContent = 'Informe a data.'; return; }
     if (!desc) { errEl.textContent = 'Descreva a atividade.'; return; }
-    const btn = document.getElementById('ativSaveBtn');
-    btn.disabled = true; btn.textContent = 'Salvando...';
     errEl.textContent = '';
+    btn.disabled = true;
+    btn.textContent = 'Salvando…';
     try {
-      const sb = getSupabaseClient();
-      // Tentar pegar email do admin logado
       let email = '';
-      try { const { data: { session } } = await sb.auth.getSession(); email = session?.user?.email || ''; } catch(_) {}
-      const { error } = await sb.from('atividades_contrato').insert({
-        ies_slug: _iesSlug,
-        tipo,
-        data,
+      try {
+        const sb = getSupabaseClient();
+        const { data: { session } } = await sb.auth.getSession();
+        email = session && session.user ? session.user.email || '' : '';
+      } catch (_) {}
+      const resp = await window._supaWrite('atividades_contrato', 'POST', {
+        ies_slug: ies,
+        tipo: tipo,
+        data: data,
         participantes: part,
         descricao: desc,
-        registrado_por: email,
+        registrado_por: email
       });
-      if (error) throw error;
+      if (!resp.ok) throw new Error(await resp.text());
       document.getElementById('ativModal').remove();
       loadAtividades();
-    } catch(e) {
-      errEl.textContent = 'Erro: ' + e.message;
-      btn.disabled = false; btn.textContent = 'Salvar';
+    } catch (e) {
+      errEl.textContent = esc(e.message);
+      btn.disabled = false;
+      btn.textContent = 'Salvar';
     }
   };
 
-  window._deleteAtiv = async function(id) {
-    if (!confirm('Excluir este registro de atividade?')) return;
+  window._deleteAtiv = async function (id) {
+    if (!confirm('Excluir este registro?')) return;
     try {
-      const sb = getSupabaseClient();
-      await sb.from('atividades_contrato').delete().eq('id', id);
+      const resp = await window._supaWrite('atividades_contrato?id=eq.' + encodeURIComponent(id), 'DELETE');
+      if (!resp.ok) throw new Error(await resp.text());
       loadAtividades();
-    } catch(e) { alert('Erro: ' + e.message); }
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
+  function collectPayload() {
+    const f = document.getElementById('contratoForm');
+    const fd = new FormData(f);
+    return {
+      ies_slug: ies,
+      status_contrato: (fd.get('status_contrato') || '').trim(),
+      numero_contrato: (fd.get('numero_contrato') || '').trim(),
+      localidade: (fd.get('localidade') || '').trim(),
+      data_inicio: (fd.get('data_inicio') || '').trim() || null,
+      data_fim: (fd.get('data_fim') || '').trim() || null,
+      valor_mensalidade: (fd.get('valor_mensalidade') || '').trim(),
+      forma_pagamento: (fd.get('forma_pagamento') || '').trim(),
+      dia_vencimento: (fd.get('dia_vencimento') || '').trim(),
+      observacoes_comercial: (fd.get('observacoes_comercial') || '').trim(),
+      plano: (fd.get('plano') || '').trim(),
+      modulos: (fd.get('modulos') || '').trim(),
+      licencas_contratadas: (fd.get('licencas_contratadas') || '').trim(),
+      material_fisico: document.getElementById('f_mat').checked,
+      sim_tendencias_qtd: valInt(fd.get('sim_tendencias_qtd')),
+      sim_personalizados_qtd: valInt(fd.get('sim_personalizados_qtd')),
+      sim_personalizados_impressos: document.getElementById('f_simPersImp').checked,
+      tendencias_realizadas: (fd.get('tendencias_realizadas') || '').trim(),
+      personalizados_realizados: (fd.get('personalizados_realizados') || '').trim(),
+      condicao_alunos_previos: (fd.get('condicao_alunos_previos') || '').trim(),
+      resp_nome: (fd.get('resp_nome') || '').trim(),
+      resp_email: (fd.get('resp_email') || '').trim(),
+      resp_telefone: (fd.get('resp_telefone') || '').trim(),
+      resp_cargo: (fd.get('resp_cargo') || '').trim(),
+      observacoes_gerais: (fd.get('observacoes_gerais') || '').trim(),
+      updated_at: new Date().toISOString()
+    };
+  }
+
+  async function saveContrato() {
+    const btn = document.getElementById('btnSalvarContrato');
+    const msg = document.getElementById('saveBarMsg');
+    btn.disabled = true;
+    msg.textContent = 'Salvando…';
+    try {
+      const payload = collectPayload();
+      const resp = await window._supaWrite(
+        'contratos_ies?on_conflict=ies_slug',
+        'POST',
+        payload,
+        { prefer: 'return=minimal' }
+      );
+      if (!resp.ok) throw new Error(await resp.text());
+      const rootEl = document.getElementById('contractRoot');
+      if (rootEl) rootEl.setAttribute('data-has-saved', '1');
+      msg.textContent = '✓ Alterações gravadas com sucesso.';
+      setTimeout(function () {
+        msg.textContent = rootEl && rootEl.getAttribute('data-has-saved') === '1'
+          ? 'Contrato cadastrado — edite os campos e salve para atualizar.'
+          : 'Preencha os campos e salve para registrar o contrato.';
+      }, 4500);
+    } catch (e) {
+      msg.textContent = 'Erro: ' + e.message;
+      alert(e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  (async function init() {
+    const instRow = await loadInstNome();
+
+    let dbRow = null;
+    try {
+      const rows = await window._supaRestAdmin(
+        'contratos_ies',
+        'select=*&ies_slug=eq.' + encodeURIComponent(ies) + '&limit=1'
+      );
+      if (rows && rows[0]) dbRow = rows[0];
+    } catch (e) {
+      root.innerHTML = '<div class="error-box">' + esc(e.message) + '</div>';
+      return;
+    }
+
+    const legacy = LEGACY_DEFAULTS[ies] || null;
+    const merged = mergeDefaults(dbRow, legacy, instRow);
+    const hasContratoSalvo = !!dbRow;
+
+    root.setAttribute('data-has-saved', hasContratoSalvo ? '1' : '0');
+    const bannerHtml = hasContratoSalvo
+      ? '<div class="edit-banner">✓ <strong>Contrato já cadastrado no sistema.</strong> Altere qualquer campo abaixo e use <strong>Salvar dados do contrato</strong> (barra inferior) para atualizar — quantas vezes precisar.</div>'
+      : '<div class="edit-banner edit-banner-new"><strong>Primeiro cadastro:</strong> preencha os dados e salve. Depois, esta mesma página carregará o que foi gravado para você editar sempre que necessário.</div>';
+
+    document.getElementById('saveBarMsg').textContent = hasContratoSalvo
+      ? 'Contrato cadastrado — edite os campos e salve para atualizar.'
+      : 'Preencha os campos e salve para registrar o contrato.';
+
+    root.innerHTML =
+      bannerHtml +
+      renderForm(merged) +
+      '<div class="form-section">' +
+      '<div class="form-section-title">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Usuários da instituição (cadastro)</div>' +
+      '<div id="usersSection"><div class="history-empty">Carregando…</div></div></div>' +
+      '<div class="form-section">' +
+      '<div class="form-section-title">📋 Histórico de atividade</div>' +
+      '<div style="display:flex;justify-content:flex-end;margin-bottom:12px">' +
+      '<button type="button" class="ativ-btn-add" onclick="window._openAtivModal()">+ Registrar atividade</button></div>' +
+      '<div id="ativList"><div class="history-empty">Carregando…</div></div>' +
+      '</div>';
+
+    saveBar.style.display = 'flex';
+    document.getElementById('btnSalvarContrato').onclick = saveContrato;
+
+    loadUsersSection();
+    loadAtividades();
+  })();
 })();
 </script>
+<!-- Supabase (Postgres): CREATE TABLE IF NOT EXISTS contratos_ies ( ies_slug text PRIMARY KEY, status_contrato text, numero_contrato text, localidade text, data_inicio date, data_fim date, valor_mensalidade text, forma_pagamento text, dia_vencimento text, observacoes_comercial text, plano text, modulos text, licencas_contratadas text, material_fisico boolean, sim_tendencias_qtd int, sim_personalizados_qtd int, sim_personalizados_impressos boolean, tendencias_realizadas text, personalizados_realizados text, condicao_alunos_previos text, resp_nome text, resp_email text, resp_telefone text, resp_cargo text, observacoes_gerais text, updated_at timestamptz ); -->
 </body>
 </html>

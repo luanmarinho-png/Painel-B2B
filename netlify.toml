@@ -25,6 +25,9 @@
   [functions.send-boletim-email]
     timeout = 60
 
+  [functions.admin-export]
+    timeout = 60
+
 [[headers]]
   for = "/.netlify/functions/*"
 

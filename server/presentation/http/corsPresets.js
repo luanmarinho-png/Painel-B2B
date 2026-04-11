@@ -22,4 +22,12 @@ const corsResetPassword = {
   'Access-Control-Allow-Headers': 'Content-Type'
 };
 
-module.exports = { corsAdminJson, corsAdminProxy, corsResetPassword };
+/** CSV download — expõe filename ao browser (fetch + blob). */
+const corsAdminExport = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Expose-Headers': 'Content-Disposition, X-Export-Row-Count'
+};
+
+module.exports = { corsAdminJson, corsAdminProxy, corsResetPassword, corsAdminExport };

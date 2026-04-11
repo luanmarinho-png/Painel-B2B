@@ -15,7 +15,7 @@ const { isSuperadmin } = require('../../domain/userRoles');
  * @returns {Promise<{ statusCode: number, headers: Record<string, string>, body: string }>}
  */
 async function executeUpdateUser({ callerRole, body, corsHeaders }) {
-  const { email, role, instituicao, ativo, nome, password, instituicoes_responsavel } = body;
+  const { email, role, instituicao, ativo, nome, password, instituicoes_responsavel, access_approved } = body;
 
   if (!email) {
     return {
@@ -61,6 +61,12 @@ async function executeUpdateUser({ callerRole, body, corsHeaders }) {
             role: role !== undefined ? role : user.user_metadata?.role,
             instituicao: instituicao !== undefined ? instituicao : user.user_metadata?.instituicao,
             nome: nome !== undefined ? nome : user.user_metadata?.nome,
+            access_approved: (() => {
+              const nextRole = role !== undefined ? role : user.user_metadata?.role;
+              if (nextRole === 'admin' || nextRole === 'superadmin') return true;
+              if (nextRole === 'pendente') return false;
+              return access_approved !== undefined ? access_approved : user.user_metadata?.access_approved;
+            })(),
             instituicoes_responsavel:
               instituicoes_responsavel !== undefined
                 ? instituicoes_responsavel

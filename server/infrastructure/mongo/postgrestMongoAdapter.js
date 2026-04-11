@@ -43,8 +43,15 @@ async function resetMongoClient() {
  * @returns {boolean}
  */
 function isTopologyClosedError(err) {
-  const msg = err && typeof err.message === 'string' ? err.message : String(err);
-  return /topology is closed|connection.*closed|pool.*closed/i.test(msg);
+  if (!err || typeof err !== 'object') return false;
+  const name = /** @type {{ name?: string }} */ (err).name;
+  if (name === 'MongoTopologyClosedError' || name === 'MongoClientClosedError') return true;
+  const msg = typeof /** @type {{ message?: string }} */ (err).message === 'string'
+    ? /** @type {{ message: string }} */ (err).message
+    : String(err);
+  return /topology is closed|client was closed|operation interrupted|connection.*closed|pool.*closed|not connected/i.test(
+    msg
+  );
 }
 
 /**
@@ -53,13 +60,21 @@ function isTopologyClosedError(err) {
 async function getDb() {
   const { uri, databaseName } = getMongoEnv();
   if (!uri) throw new Error('MONGODB_URI não configurada');
+
+  const clientOpts = {
+    serverSelectionTimeoutMS: 5000,
+    connectTimeoutMS: 5000,
+    socketTimeoutMS: 15000,
+    maxPoolSize: 10,
+    minPoolSize: 1,
+    maxIdleTimeMS: 120000,
+    retryWrites: true,
+    retryReads: true
+  };
+
   if (!isMongoClientUsable(_client)) {
     await resetMongoClient();
-    _client = new MongoClient(uri, {
-      serverSelectionTimeoutMS: 12000,
-      maxPoolSize: 10,
-      minPoolSize: 0
-    });
+    _client = new MongoClient(uri, clientOpts);
     await _client.connect();
   }
   return _client.db(databaseName);
@@ -358,15 +373,17 @@ function conflictFilter(onConflict, doc) {
  * @returns {Promise<{ statusCode: number, headers: Record<string, string>, body: string }>}
  */
 async function executePostgrestMongo(params) {
-  try {
-    return await runPostgrestMongo(params);
-  } catch (err) {
-    if (isTopologyClosedError(err)) {
-      await resetMongoClient();
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
       return await runPostgrestMongo(params);
+    } catch (err) {
+      lastErr = err;
+      if (!isTopologyClosedError(err)) throw err;
+      await resetMongoClient();
     }
-    throw err;
   }
+  throw lastErr;
 }
 
 /**
@@ -473,7 +490,7 @@ async function runPostgrestMongo({
         body: JSON.stringify({ error: 'DELETE requer filtro na query' })
       };
     }
-    await coll.deleteOne(filter);
+    await coll.deleteMany(filter);
     return {
       statusCode: 204,
       headers: { 'Content-Type': 'application/json' },
