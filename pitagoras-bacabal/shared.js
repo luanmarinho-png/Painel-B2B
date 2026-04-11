@@ -181,6 +181,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.body.setAttribute('data-theme-ready', 'true');
   renderTurmaSwitcher();
   await mountAccessGate();
+  // Dispara engajamento em paralelo com a flag (mesma janela de rede); a flag continua
+  // resolvendo antes do primeiro render para não alterar o hub de simulados (card Mentor).
+  const engPromise = _loadEngajamentoFromSupabase();
   await loadMentorCoordenadorFlag();
   const page = document.body.dataset.page;
 
@@ -194,7 +197,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (page === "mentor") renderMentorPage();
     if (page === "home") renderHomePage();
     // Buscar atualização em background — se houver dados mais novos, re-renderiza
-    _loadEngajamentoFromSupabase().then(result => {
+    engPromise.then((result) => {
       if (result && result.updatedAt) lastEngajamentoUpdatedAt = result.updatedAt;
       if (result && result.allData) {
         _refreshDashboardWithData(result.allData);
@@ -206,7 +209,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     // Sem dados estáticos — mostrar loading e buscar do Supabase
     if (page === "home") renderHomePage();
     _showLoadingState();
-    const result = await _loadEngajamentoFromSupabase();
+    const result = await engPromise;
     if (result && result.updatedAt) lastEngajamentoUpdatedAt = result.updatedAt;
     if (result && result.allData) {
       _refreshDashboardWithData(result.allData);
