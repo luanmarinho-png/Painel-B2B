@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>Painel Institucional — Página Inicial</title>
+  <script src="/session-fix.js?v=2"></script>
+  <link rel="stylesheet" href="shared.css?v=2">
+  <style>
+    .btn-logout {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px;
+      background: transparent; border: 1px solid #ccc;
+      color: #555; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; font-family: inherit;
+      white-space: nowrap;
+    }
+    .btn-logout:hover { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.5); color: #dc2626; }
+    .btn-logout svg { flex-shrink: 0; }
+  </style>
+</head>
+<body data-page="home">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand brand--home-cockpit">
+        <div class="topbar-logo-pair">
+          <div id="institutionLogoSlot" class="topbar-logo-ies">
+            <img class="home-institution-logo" src="logo_unieuro.png" alt="Instituição">
+          </div>
+          <span class="topbar-logo-connector" aria-hidden="true">×</span>
+          <img class="topbar-logo-medcof" src="logo-novo-medcof.avif" alt="Logo do Grupo MedCof">
+        </div>
+        <div class="brand-copy">
+          <div class="brand-title" data-institution-brand>UNIEURO × MedCof</div>
+          <div class="brand-subtitle"><span id="homeLastUpdated">Sem data remota — dados locais ou cache</span></div>
+        </div>
+      </div>
+      <nav class="main-nav" aria-label="Navegação principal">
+        <a class="nav-link active" href="index.html">Inicial</a>
+        <a class="nav-link" href="engajamento.html">Engajamento</a>
+        <a class="nav-link" href="periodo-detalhado.html">Período detalhado</a>
+        <a class="nav-link" href="simulado-personalizado.html">Simulados</a>
+      </nav>
+      <button class="btn-logout" id="btnLogout" onclick="handleLogout()" title="Sair da conta">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sair
+      </button>
+    </div>
+  </header>
+
+  <main class="page-shell home-cockpit-main">
+    <section class="home-cockpit-intro">
+      <div class="section-kicker">Dashboard inicial</div>
+      <h1 id="homeBrandHeading">Painel institucional UNIEURO × MedCof</h1>
+      <p class="home-cockpit-lead">Estado da turma, quem precisa de atenção e atalhos para decisão — sem precisar navegar para outras páginas primeiro.</p>
+    </section>
+
+    <div id="homeDashboardRoot">
+      <div class="kpi-grid home-kpi-row" id="homeKpiRow"></div>
+
+      <section class="home-sniper-card" id="homeSniperStrip" aria-label="Modo sniper — busca de aluno">
+        <div class="home-sniper-deco" aria-hidden="true">
+          <svg class="home-sniper-target" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="60" cy="60" r="56" stroke="currentColor" stroke-width="1.5" opacity="0.12"/>
+            <circle cx="60" cy="60" r="40" stroke="currentColor" stroke-width="1.5" opacity="0.18"/>
+            <circle cx="60" cy="60" r="22" stroke="currentColor" stroke-width="2" opacity="0.22"/>
+            <circle cx="60" cy="60" r="5" fill="currentColor" opacity="0.15"/>
+            <path d="M60 8v12M60 100v12M8 60h12M100 60h12" stroke="currentColor" stroke-width="1.2" opacity="0.14" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="home-sniper-card-inner">
+          <h3 class="home-sniper-title">Modo sniper</h3>
+          <p class="home-sniper-lead">Na correria? Busque um aluno da <strong>sua IES</strong> na base MedCof, envie ao <strong>Cofbot</strong> e receba um relatório objetivo: engajamento, questões, tempo de estudo e desempenho em simulados quando a nota estiver na base.</p>
+          <div class="home-sniper-actions">
+            <input type="search" id="homeSniperInput" class="home-sniper-input" placeholder="Digite ou selecione o aluno…" autocomplete="off" list="homeSniperList" maxlength="200" />
+            <datalist id="homeSniperList"></datalist>
+            <button type="button" class="home-sniper-icon-btn home-sniper-icon-btn--send" id="homeSniperSubmit" title="Gerar resumo no Cofbot" aria-label="Enviar pedido ao Cofbot">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>
+            <button type="button" class="home-sniper-icon-btn home-sniper-icon-btn--clear" id="homeSniperClear" title="Limpar busca" aria-label="Limpar busca">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <p class="home-sniper-error" id="homeSniperError" hidden></p>
+        </div>
+      </section>
+
+      <div class="home-cockpit-grid">
+        <div class="home-cockpit-panel home-cockpit-panel--chart">
+          <div class="section-kicker">Evolução do ciclo</div>
+          <h3 class="home-attention-title" style="margin-top:4px;font-size:1rem">Progressão mensal de uso e resolução de questões</h3>
+          <p class="helper-text home-monthly-chart-intro">Barras (eixo esquerdo) = questões resolvidas no mês; linha dourada (eixo direito) = horas de acesso. Legenda acima do gráfico.</p>
+          <div class="chart-frame chart-frame--home" id="homeMonthlyChart"></div>
+        </div>
+        <div class="home-cockpit-panel home-cockpit-panel--attention">
+          <div id="homeAttention"></div>
+        </div>
+      </div>
+
+      <div class="home-cockpit-panel home-cockpit-panel--simulados">
+        <div class="section-kicker">Simulados</div>
+        <h3 class="home-attention-title" style="margin-top:4px;font-size:1rem">Evolução da média da IES</h3>
+        <div id="homeSimuladoChart"></div>
+      </div>
+
+      <div class="home-cockpit-panel home-cockpit-panel--insights">
+        <div id="homeCycleInsights"></div>
+      </div>
+
+      <div class="home-action-bar" id="homeActionBar">
+        <a class="btn btn--primary" href="periodo-detalhado.html#export">Exportar relatório</a>
+        <a class="btn" href="simulado-personalizado.html">Ver simulados</a>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    Painel institucional <strong data-institution-brand>UNIEURO × MedCof</strong> — estrutura multipágina pronta para uso no Google Sites.
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="dashboard-data.js"></script>
+  <script src="shared.js?v=2"></script>
+<script src="/brand-loader.js?v=2"></script>
+</body>
+</html>

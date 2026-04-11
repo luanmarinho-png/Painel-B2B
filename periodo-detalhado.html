@@ -61,14 +61,14 @@
         <div>
           <div class="section-kicker">Seleção de período</div>
           <h2>Escolha o recorte que deseja analisar</h2>
-          <p>Cada cartão representa um período da base. Ao selecionar um recorte, a página atualiza automaticamente os KPIs, destaques e a tabela detalhada.</p>
+          <p>Selecione um recorte para ver KPIs, destaques e tabela.</p>
         </div>
       </div>
       <div class="period-selector-grid" id="periodSelectorGrid"></div>
     </section>
 
     <section class="section-shell">
-      <div class="export-card">
+      <div class="export-card" id="export">
         <div class="export-head">
           <div class="export-title">
             <div class="export-icon" aria-hidden="true">
@@ -81,7 +81,7 @@
             </div>
             <div>
               <h3>Baixar análises em Excel</h3>
-              <p>Marque os períodos desejados e baixe uma planilha compatível com Excel para uso da coordenação.</p>
+              <p>Uma aba por recorte no arquivo (.xlsm), com filtros no Excel.</p>
             </div>
           </div>
         </div>
@@ -89,7 +89,7 @@
           <div class="export-options" id="exportPeriodOptions"></div>
           <div class="export-actions">
             <button class="btn-select-all" type="button" onclick="toggleAllExportPeriods()">Selecionar ou limpar todos</button>
-            <button class="btn-export" type="button" onclick="downloadSelectedPeriods()">Baixar planilha Excel (.csv)</button>
+            <button class="btn-export" type="button" onclick="downloadSelectedPeriods()">Baixar planilha Excel (.xlsm)</button>
             <div class="export-hint" id="exportHint">Nenhum período selecionado.</div>
           </div>
         </div>
@@ -109,33 +109,6 @@
 
       <div class="grid-3" id="periodInsights" style="margin-top:18px"></div>
 
-      <div class="filters">
-        <div class="filter-group">
-          <label for="periodSearchInput">Buscar aluno</label>
-          <input id="periodSearchInput" type="text" placeholder="Digite o nome...">
-        </div>
-        <div class="filter-group">
-          <label for="periodSortSelect">Ordenar por</label>
-          <select id="periodSortSelect">
-            <option value="questoes_desc">Questões (maior primeiro)</option>
-            <option value="questoes_asc">Questões (menor primeiro)</option>
-            <option value="tempo_min_desc">Tempo de uso (maior)</option>
-            <option value="tempo_min_asc">Tempo de uso (menor)</option>
-            <option value="aulas_desc">Aulas (maior)</option>
-            <option value="nome_asc">Nome (A→Z)</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <label for="periodTractionSelect">Filtrar engajamento</label>
-          <select id="periodTractionSelect">
-            <option value="">Todos os alunos</option>
-            <option value="alto">Alto — 20 ou mais questões/dia</option>
-            <option value="medio">Médio — 10 a 19,9 questões/dia</option>
-            <option value="baixo">Baixo — menos de 10 questões/dia</option>
-          </select>
-        </div>
-        <div class="results-count" id="periodResultsCount"></div>
-      </div>
     </section>
 
     <section class="section-shell">
@@ -147,8 +120,52 @@
         </div>
       </div>
 
+      <div class="period-detail-toolbar">
       <!-- Filtro por período acadêmico — injetado via JS para UNIVASSOURAS -->
       <div id="periodTurmaFilterBar" style="display:none"></div>
+
+      <div class="period-filters-card">
+        <button type="button" class="period-filters-toggle" id="periodFiltersToggle" aria-expanded="false" aria-controls="periodFiltersPanel">
+          <span class="period-filters-toggle-left">
+            <svg class="period-filters-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            </svg>
+            <span class="period-filters-toggle-label">Filtros</span>
+          </span>
+          <svg class="period-filters-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <div class="period-filters-panel" id="periodFiltersPanel" hidden>
+          <div class="filters filters--in-card">
+          <div class="filter-group">
+            <label for="periodSearchInput">Buscar aluno</label>
+            <input id="periodSearchInput" type="text" placeholder="Digite o nome...">
+          </div>
+          <div class="filter-group">
+            <label for="periodSortSelect">Ordenar por</label>
+            <select id="periodSortSelect">
+              <option value="questoes_desc">Questões (maior primeiro)</option>
+              <option value="questoes_asc">Questões (menor primeiro)</option>
+              <option value="tempo_min_desc">Tempo de uso (maior)</option>
+              <option value="tempo_min_asc">Tempo de uso (menor)</option>
+              <option value="aulas_desc">Aulas (maior)</option>
+              <option value="nome_asc">Nome (A→Z)</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="periodTractionSelect">Filtrar engajamento</label>
+            <select id="periodTractionSelect">
+              <option value="">Todos os alunos</option>
+              <option value="alto">Alto — 20 ou mais questões/dia</option>
+              <option value="medio">Médio — 10 a 19,9 questões/dia</option>
+              <option value="baixo">Baixo — menos de 10 questões/dia</option>
+            </select>
+          </div>
+          <div class="results-count" id="periodResultsCount"></div>
+          </div>
+        </div>
+      </div>
+      </div>
+
 
       <div class="table-wrap">
         <table>

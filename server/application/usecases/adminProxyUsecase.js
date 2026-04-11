@@ -10,6 +10,7 @@ const { isPrivilegedAdmin, isSuperadmin } = require('../../domain/userRoles');
 const { corsAdminProxy } = require('../../presentation/http/corsPresets');
 const { appendAdminAuditLog } = require('./appendAdminAuditLog');
 const { executeBoletinsStorageSignedUpload } = require('./boletinsStorageSignedUpload');
+const { executeAdminAvatarSignedUpload } = require('./adminAvatarSignedUpload');
 
 const ALLOWED_TABLES = new Set([
   'alunos_master',
@@ -25,7 +26,8 @@ const ALLOWED_TABLES = new Set([
   'contratos_ies',
   'alunos_faltantes_simulado',
   'avisos',
-  'notificacoes_admin'
+  'notificacoes_admin',
+  'medcof_app_config'
 ]);
 
 /**
@@ -128,6 +130,10 @@ async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
 
   if (payload.action === 'boletins_storage_signed_upload') {
     return executeBoletinsStorageSignedUpload({ rawPayload: payload });
+  }
+
+  if (payload.action === 'admin_avatar_signed_upload') {
+    return executeAdminAvatarSignedUpload({ userId: session.user.id, rawPayload: payload });
   }
 
   if (!table) {

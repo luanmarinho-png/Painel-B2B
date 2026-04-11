@@ -17,6 +17,8 @@ const MONTH_INDEX = {
 const ACCESS_STATE_KEY = "medcof_panel_access";
 const INSTITUTION_SESSION_KEY = "medcof_panel_institution";
 const INSTITUTION_THEME_CLASS_PREFIX = "theme-";
+/** Mesmo vermelho do admin claro (--accent); theme_hex por IES não altera o painel. */
+const MEDCOF_PANEL_ACCENT_HEX = "#dc2626";
 const PAGE_SIZE = 25;
 
 const INSTITUTION_DATASETS = window.INSTITUTION_DATASETS || {};
@@ -55,6 +57,26 @@ async function _anonDataProxyRead(table, query) {
     return await resp.json();
   } catch {
     return [];
+  }
+}
+
+/** Superadmin liberou o card Mentor na aba Simulados (medcof_app_config). */
+window.__MEDCOF_MENTOR_COORDENADOR_ENABLED__ = false;
+
+/**
+ * Lê flag global `mentor_coordenador_enabled` (anon-data-proxy).
+ */
+async function loadMentorCoordenadorFlag() {
+  window.__MEDCOF_MENTOR_COORDENADOR_ENABLED__ = false;
+  try {
+    const rows = await _anonDataProxyRead(
+      "medcof_app_config",
+      "select=key,config_value&key=eq.mentor_coordenador_enabled&limit=1"
+    );
+    const v = rows && rows[0] ? rows[0].config_value : null;
+    window.__MEDCOF_MENTOR_COORDENADOR_ENABLED__ = v === true || v === "true";
+  } catch {
+    window.__MEDCOF_MENTOR_COORDENADOR_ENABLED__ = false;
   }
 }
 
@@ -109,6 +131,9 @@ const engagementState = {
 
 let exportSelections = PERIODS.map(() => true);
 
+/** ISO string ou null — última atualização do payload remoto de engajamento. */
+let lastEngajamentoUpdatedAt = null;
+
 // ── Fetch assíncrono do Supabase (chamado no DOMContentLoaded) ──
 async function _loadEngajamentoFromSupabase() {
   const slug = CURRENT_INSTITUTION?.key || CURRENT_INSTITUTION_KEY || DEFAULT_INSTITUTION_KEY || "";
@@ -146,6 +171,8 @@ function _refreshDashboardWithData(allData) {
   if (page === "engagement") renderEngagementPage();
   if (page === "period") renderPeriodPage();
   if (page === "simulados") renderSimuladosPage();
+  if (page === "mentor") renderMentorPage();
+  if (page === "home") renderHomePage();
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -154,6 +181,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.body.setAttribute('data-theme-ready', 'true');
   renderTurmaSwitcher();
   await mountAccessGate();
+  await loadMentorCoordenadorFlag();
   const page = document.body.dataset.page;
 
   // ── Tentar carregar dados frescos do Supabase ──
@@ -163,16 +191,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (page === "engagement") renderEngagementPage();
     if (page === "period") renderPeriodPage();
     if (page === "simulados") renderSimuladosPage();
+    if (page === "mentor") renderMentorPage();
+    if (page === "home") renderHomePage();
     // Buscar atualização em background — se houver dados mais novos, re-renderiza
     _loadEngajamentoFromSupabase().then(result => {
+      if (result && result.updatedAt) lastEngajamentoUpdatedAt = result.updatedAt;
       if (result && result.allData) {
         _refreshDashboardWithData(result.allData);
+      } else if (page === "home") {
+        renderHomePage();
       }
     });
   } else {
     // Sem dados estáticos — mostrar loading e buscar do Supabase
+    if (page === "home") renderHomePage();
     _showLoadingState();
     const result = await _loadEngajamentoFromSupabase();
+    if (result && result.updatedAt) lastEngajamentoUpdatedAt = result.updatedAt;
     if (result && result.allData) {
       _refreshDashboardWithData(result.allData);
       _hideLoadingState();
@@ -182,11 +217,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (page === "engagement") renderEngagementPage();
       if (page === "period") renderPeriodPage();
       if (page === "simulados") renderSimuladosPage();
+      if (page === "mentor") renderMentorPage();
+      if (page === "home") renderHomePage();
     }
   }
 
   if (sessionStorage.getItem(ACCESS_STATE_KEY) === "granted") {
     mountCoordenadorChat();
+    void mountCoordNotificacoesUi();
   }
 });
 
@@ -231,7 +269,7 @@ function applyInstitutionBranding() {
   const institutionName = CURRENT_INSTITUTION.institutionName || "Instituição";
   const initials = CURRENT_INSTITUTION.institutionInitials || getInstitutionInitials(institutionName);
 
-  // ── Tema síncrono: aplicar cores ANTES do render (elimina flash) ──
+  // ── Tema síncrono: paleta alinhada ao admin claro (sem theme_hex por IES) ──
   _applySyncThemeHex();
 
   applyInstitutionTheme();
@@ -268,14 +306,10 @@ function applyInstitutionBranding() {
 }
 
 /**
- * Aplica o tema de cores sincronamente a partir de themeHex no dashboard-data.js.
- * Reproduz o MESMO CSS que brand-loader.js injeta, mas sem esperar fetch do Supabase.
- * brand-loader.js continua como fallback para atualizações dinâmicas.
+ * Injeta o mesmo CSS temático que brand-loader.js (cor MedCof fixa — theme_hex do admin não altera o painel).
  */
 function _applySyncThemeHex() {
-  const hex = CURRENT_INSTITUTION.themeHex;
-  if (!hex || hex.length < 7) return;
-  // Não re-injetar se brand-loader já aplicou
+  const hex = MEDCOF_PANEL_ACCENT_HEX;
   if (document.getElementById('brand-loader-theme')) return;
   if (document.getElementById('sync-theme')) return;
 
@@ -285,6 +319,17 @@ function _applySyncThemeHex() {
   const dark  = `rgb(${Math.round(r*.55)},${Math.round(g*.55)},${Math.round(b*.55)})`;
   const mid   = `rgb(${Math.round(r*.75)},${Math.round(g*.75)},${Math.round(b*.75)})`;
   const rgba  = (a) => `rgba(${r},${g},${b},${a})`;
+
+  const toLinear = (c) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const dr = Math.round(r * 0.55);
+  const dg = Math.round(g * 0.55);
+  const db = Math.round(b * 0.55);
+  const theadBgLum =
+    0.2126 * toLinear(dr) + 0.7152 * toLinear(dg) + 0.0722 * toLinear(db);
+  const theadTextColor = theadBgLum > 0.45 ? "#111827" : "#ffffff";
 
   const css = `
 /* Sync Theme — aplicado por shared.js (sem fetch) */
@@ -324,7 +369,9 @@ body {
 .btn-export { background: linear-gradient(135deg, ${dark} 0%, ${hex} 100%) !important; box-shadow: 0 12px 24px ${rgba(0.20)} !important; color: #ffffff !important; }
 .btn-select-all { background: ${rgba(0.08)} !important; color: ${dark} !important; border-color: ${rgba(0.22)} !important; }
 .check-chip input { accent-color: ${hex} !important; }
-.table-wrap table th { background: ${rgba(0.06)} !important; color: ${dark} !important; }
+.table-wrap table thead tr { background: ${dark} !important; }
+.table-wrap table thead th { background: ${dark} !important; color: ${theadTextColor} !important; }
+.table-wrap table tbody th { background: ${rgba(0.06)} !important; color: ${dark} !important; }
 .badge-alto { background: ${rgba(0.10)} !important; color: ${hex} !important; }
 .access-btn { background: linear-gradient(135deg, ${dark}, ${hex}) !important; box-shadow: 0 12px 28px ${rgba(0.30)} !important; }
 body { --green: ${hex} !important; --green-dark: ${dark} !important; --green-soft: ${rgba(0.08)} !important; --green-mid: ${mid} !important; --blue: ${hex} !important; --blue-soft: ${rgba(0.08)} !important; }
@@ -351,10 +398,6 @@ function applyInstitutionTheme() {
   });
 
   body.dataset.institution = CURRENT_INSTITUTION.key || DEFAULT_INSTITUTION_KEY;
-
-  if (CURRENT_INSTITUTION.themeClass) {
-    body.classList.add(CURRENT_INSTITUTION.themeClass);
-  }
 }
 
 function getMedcofAccessLogoMarkup() {
@@ -461,7 +504,9 @@ function buildPeriodSummary(rows, days) {
     totalQuestAcertadas,
     taxaAcertoMedia,
     avgQuestions: rows.length ? totalQuestions / rows.length : 0,
-    avgQuestionsPerDay: totalQuestions / safeDays,
+    avgQuestionsPerDay: activeRows.length
+      ? activeRows.reduce((sum, row) => sum + (row.questoes || 0), 0) / activeRows.length / safeDays
+      : 0,
     avgTempo: rows.length ? totalTempo / rows.length : 0,
     topStudent
   };
@@ -534,6 +579,8 @@ function buildMonthlyDashboard(periods) {
       const totalQuestions = students.reduce((sum, student) => sum + student.questoes, 0);
       const totalTempo = students.reduce((sum, student) => sum + student.tempo_min, 0);
       const activeStudents = students.filter((student) => student.active).length;
+      const activeList = students.filter((student) => student.active);
+      const tqActive = activeList.reduce((sum, s) => sum + s.questoes, 0);
       return {
         key: bucket.key,
         label: bucket.label,
@@ -542,7 +589,7 @@ function buildMonthlyDashboard(periods) {
         totalQuestions,
         totalTempo,
         activeStudents,
-        avgQuestionsPerDay: bucket.days ? totalQuestions / bucket.days : 0
+        avgQuestionsPerDay: bucket.days && activeList.length ? tqActive / activeList.length / bucket.days : 0
       };
     })
     .sort((a, b) => a.key.localeCompare(b.key));
@@ -616,7 +663,9 @@ function buildAccumulatedDashboard(monthlyDashboard) {
     totalStudents: ranking.length,
     totalQuestions: ranking.reduce((sum, student) => sum + student.questoes, 0),
     totalTempo: ranking.reduce((sum, student) => sum + student.tempo_min, 0),
-    avgQuestionsPerDay: totalDays ? ranking.reduce((sum, student) => sum + student.questoes, 0) / totalDays : 0,
+    avgQuestionsPerDay: totalDays && ranking.length
+      ? ranking.reduce((sum, student) => sum + student.questoes, 0) / ranking.length / totalDays
+      : 0,
     highTractionCount: ranking.filter((student) => student.traction.key === "alta").length,
     moderateTractionCount: ranking.filter((student) => student.traction.key === "moderada").length,
     bestStudent: ranking[0]
@@ -647,8 +696,6 @@ function renderEngagementPage() {
   }
 
   const kpisRoot = document.getElementById("engagementKpis");
-  const chartRoot = document.getElementById("engagementMonthlyChart");
-  const insightsRoot = document.getElementById("engagementInsights");
   const spotlightRoot = document.getElementById("engagementSpotlight");
   const searchInput = document.getElementById("engagementSearchInput");
   const sortSelect = document.getElementById("engagementSortSelect");
@@ -664,7 +711,7 @@ function renderEngagementPage() {
       {
         value: formatNumber(ACCUMULATED_DASHBOARD.totalQuestions),
         label: "Questões acumuladas",
-        meta: `${formatDecimal(ACCUMULATED_DASHBOARD.avgQuestionsPerDay)} questões/dia no grupo`
+        meta: `${formatDecimal(ACCUMULATED_DASHBOARD.avgQuestionsPerDay)} q/dia · média por aluno`
       },
       {
         value: formatHours(ACCUMULATED_DASHBOARD.totalTempo),
@@ -682,31 +729,6 @@ function renderEngagementPage() {
         meta: "entre 10 e 19,9 questões/dia"
       }
     ].map(createKpiCard).join("");
-  }
-
-  if (chartRoot) chartRoot.innerHTML = createMonthlyProgressChartSVG(MONTHLY_DASHBOARD);
-
-  if (insightsRoot) {
-    const peakQuestionsMonth = [...MONTHLY_DASHBOARD].sort((a, b) => b.totalQuestions - a.totalQuestions)[0];
-    const peakHoursMonth = [...MONTHLY_DASHBOARD].sort((a, b) => b.totalTempo - a.totalTempo)[0];
-    const bestStudent = ACCUMULATED_DASHBOARD.bestStudent;
-    insightsRoot.innerHTML = [
-      {
-        label: "Melhor destaque do ciclo",
-        value: bestStudent ? formatNumber(bestStudent.questoes) : "0",
-        meta: bestStudent ? `${bestStudent.nome} · ${formatDecimal(bestStudent.questoesDia)} q/dia` : "Sem dados"
-      },
-      {
-        label: "Pico de questões",
-        value: peakQuestionsMonth ? shortMonthLabel(peakQuestionsMonth.label) : "—",
-        meta: peakQuestionsMonth ? `${formatNumber(peakQuestionsMonth.totalQuestions)} questões no mês` : "Sem dados"
-      },
-      {
-        label: "Pico de acesso",
-        value: peakHoursMonth ? shortMonthLabel(peakHoursMonth.label) : "—",
-        meta: peakHoursMonth ? `${formatHours(peakHoursMonth.totalTempo)} no mês` : "Sem dados"
-      }
-    ].map(createSummaryCard).join("");
   }
 
   if (spotlightRoot) {
@@ -733,6 +755,440 @@ function renderEngagementPage() {
   // Carregar notas de simulados em paralelo e re-renderizar quando pronto
   _loadSimNotasForEngagement().then(sims => {
     if (sims.length > 0) renderEngagementRanking();
+  });
+}
+
+function _escapeHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function _formatHomeDateLabel(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return "—";
+  }
+}
+
+/** Meta de engajamento (q/dia por aluno) — mesma faixa "alta" do ranking. */
+const HOME_META_QDIA = 20;
+
+/**
+ * Passo “nice” para ticks de eixo em escala ~0–100.
+ * @param {number} rawSpan
+ * @returns {number}
+ */
+function _nicePercentAxisStep(rawSpan) {
+  if (!rawSpan || rawSpan <= 0) return 1;
+  const pow10 = 10 ** Math.floor(Math.log10(rawSpan));
+  const f = rawSpan / pow10;
+  let nice = 10;
+  if (f < 1.5) nice = 1;
+  else if (f < 3) nice = 2;
+  else if (f < 7) nice = 5;
+  return nice * pow10;
+}
+
+/**
+ * Valores de tick entre lo e hi (inclusivos), limitados a [0, 100].
+ * @param {number} lo
+ * @param {number} hi
+ * @returns {number[]}
+ */
+function _percentAxisTickValues(lo, hi) {
+  const span = hi - lo;
+  const step = _nicePercentAxisStep(span / 4);
+  const start = Math.ceil((lo - 1e-9) / step) * step;
+  const ticks = [];
+  for (let t = start; t <= hi + 1e-9; t += step) {
+    const v = Math.min(100, Math.max(0, t));
+    if (v >= lo - 1e-6 && v <= hi + 1e-6) ticks.push(v);
+    if (ticks.length > 12) break;
+  }
+  if (!ticks.length) return [lo, hi];
+  return ticks;
+}
+
+/**
+ * Linha de evolução da média da IES nos simulados (mesma base da aba Simulados).
+ * @param {Array<{ media: number, tipoLabel: string, dateStr: string, detailTitle?: string }>} points
+ */
+function createHomeSimuladoEvolucaoSVG(points) {
+  if (!points.length) return "";
+  const w = 640;
+  const n = points.length;
+  const maxLabLen = points.reduce(
+    (m, p) =>
+      Math.max(
+        m,
+        String(p.tipoLabel || "").length + String(p.dateStr || "").length
+      ),
+    0
+  );
+  const pt = 30;
+  const useXRot = n > 5 || maxLabLen > 22;
+  const pb = useXRot ? 62 : 54;
+  const ch = 200;
+  const h = pt + ch + pb;
+  const pl = 28;
+  const pr = 28;
+  const cw = w - pl - pr;
+  const vals = points.map((p) => p.media);
+  let minV = Math.min(...vals);
+  let maxV = Math.max(...vals);
+  let span = maxV - minV;
+  if (span < 1e-6) {
+    minV -= 2;
+    maxV += 2;
+    span = 4;
+  }
+  const pad = Math.max(span * 0.12, 1.5);
+  let lo = Math.max(0, minV - pad);
+  let hi = Math.min(100, maxV + pad);
+  if (hi - lo < 4) {
+    const mid = (minV + maxV) / 2;
+    lo = Math.max(0, mid - 2);
+    hi = Math.min(100, mid + 2);
+  }
+  const range = Math.max(hi - lo, 1e-6);
+  const ySvg = (media) => pt + ch - ((media - lo) / range) * ch;
+  const coords = points.map((p, i) => {
+    const x = pl + (n === 1 ? cw / 2 : (i / (n - 1)) * cw);
+    const y = ySvg(p.media);
+    return { x, y };
+  });
+  const pathD =
+    n === 1
+      ? ""
+      : coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(" ");
+  const tickVals = _percentAxisTickValues(lo, hi);
+  const gridLines = tickVals
+    .map((tv) => {
+      const y = ySvg(tv);
+      return `<line x1="${pl}" y1="${y.toFixed(1)}" x2="${w - pr}" y2="${y.toFixed(1)}" stroke="#e8eef4" stroke-width="1"/>`;
+    })
+    .join("");
+  const valueLabs = coords
+    .map((c, i) => {
+      const pct = String(points[i].media.toFixed(1)).replace(".", ",") + "%";
+      const va = n > 1 && i === 0 ? "start" : n > 1 && i === n - 1 ? "end" : "middle";
+      return `<text x="${c.x.toFixed(1)}" y="${(c.y - 12).toFixed(1)}" text-anchor="${va}" fill="#b91c1c" font-size="11" font-weight="800">${_escapeHtml(pct)}</text>`;
+    })
+    .join("");
+  const dots = coords
+    .map(
+      (c, i) =>
+        `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="5" fill="#fff" stroke="#dc2626" stroke-width="2.5"><title>${_escapeHtml(
+          [points[i].detailTitle, points[i].tipoLabel, String(points[i].media.toFixed(1)).replace(".", ",") + "%"]
+            .filter(Boolean)
+            .join(" · ")
+        )}</title></circle>`
+    )
+    .join("");
+  const xLabRot = useXRot ? -34 : 0;
+  const fsTipo = n > 6 ? 8 : 9;
+  const fsData = n > 6 ? 7 : 7.5;
+  const xLabs = points
+    .map((p, i) => {
+      const xDot = pl + (n === 1 ? cw / 2 : (i / (n - 1)) * cw);
+      const tAnchor =
+        n > 1 && i === 0 ? "start" : n > 1 && i === n - 1 ? "end" : "middle";
+      const xa = xDot;
+      const tipo = _escapeHtml(p.tipoLabel || "");
+      const dat = _escapeHtml(p.dateStr || "");
+      const tspans = dat
+        ? `<tspan x="${xa.toFixed(1)}" dy="0" font-size="${fsTipo}" font-weight="700" fill="#475569">${tipo}</tspan><tspan x="${xa.toFixed(1)}" dy="12" font-size="${fsData}" font-weight="500" fill="#94a3b8">${dat}</tspan>`
+        : `<tspan x="${xa.toFixed(1)}" dy="0" font-size="${fsTipo}" font-weight="700" fill="#475569">${tipo}</tspan>`;
+      if (xLabRot) {
+        const pivotY = h - 12;
+        const rfs = Math.max(fsTipo - 0.5, 7);
+        const rfd = Math.max(fsData - 0.5, 6.5);
+        const tspansR = dat
+          ? `<tspan x="0" dy="0" font-size="${rfs}" font-weight="700" fill="#475569">${tipo}</tspan><tspan x="0" dy="11" font-size="${rfd}" font-weight="500" fill="#94a3b8">${dat}</tspan>`
+          : `<tspan x="0" dy="0" font-size="${rfs}" font-weight="700" fill="#475569">${tipo}</tspan>`;
+        return `<g transform="translate(${xa.toFixed(1)},${pivotY}) rotate(${xLabRot})"><text x="0" y="0" text-anchor="${tAnchor}" dominant-baseline="alphabetic">${tspansR}</text></g>`;
+      }
+      return `<text x="${xa.toFixed(1)}" y="${h - 28}" text-anchor="${tAnchor}" fill="#64748b">${tspans}</text>`;
+    })
+    .join("");
+  return `<svg viewBox="0 0 ${w} ${h}" class="home-sim-evolucao-svg" role="img" aria-label="Evolução da média da IES nos simulados">
+    ${gridLines}
+    <line x1="${pl}" y1="${pt + ch}" x2="${w - pr}" y2="${pt + ch}" stroke="#cbd5e1" stroke-width="1"/>
+    ${pathD ? `<path d="${pathD}" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>` : ""}
+    ${valueLabs}
+    ${dots}
+    ${xLabs}
+  </svg>`;
+}
+
+/**
+ * Carrega e desenha o gráfico de evolução dos simulados na home (assíncrono).
+ */
+async function _renderHomeSimuladoEvolucaoChart() {
+  const el = document.getElementById("homeSimuladoChart");
+  if (!el) return;
+  const slug = CURRENT_INSTITUTION?.key || CURRENT_INSTITUTION_KEY || "";
+  if (!slug) {
+    el.innerHTML = `<p class="home-empty-hint">Sem instituição para carregar simulados.</p>`;
+    return;
+  }
+  el.innerHTML = `<div class="home-sim-loading">Carregando evolução…</div>`;
+  try {
+    const [allRankings, simCtx] = await Promise.all([
+      _simFetch(
+        `ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&select=simulado_ref,respostas,created_at&order=created_at.asc`
+      ),
+      _simBancoContextForSlug(slug)
+    ]);
+    const validRefs = simCtx ? simCtx.validRefs : null;
+    const rankingsRaw = validRefs ? allRankings.filter((r) => validRefs.has(r.simulado_ref)) : allRankings;
+    const rankings = _dedupeSimuladoRankings(rankingsRaw);
+    const tipoById8 = simCtx ? simCtx.tipoById8 : null;
+    const points = rankings
+      .map((r) => {
+        const d = r.respostas || {};
+        const m = d.media_ies;
+        if (m == null || !Number.isFinite(Number(m))) return null;
+        const titulo = (d.simulado_titulo && String(d.simulado_titulo).trim()) || "";
+        const ref = (r.simulado_ref && String(r.simulado_ref).trim()) || "";
+        const nome = titulo || ref || "—";
+        const isTend = _refIsTendencias(r.simulado_ref, tipoById8);
+        const tipoLabel = isTend ? "Tendências" : "Personalizado";
+        const dt = r.created_at ? new Date(r.created_at) : null;
+        const dataStr =
+          dt && !Number.isNaN(dt.getTime())
+            ? dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" })
+            : "";
+        return {
+          media: Number(m),
+          tipoLabel,
+          dateStr: dataStr,
+          detailTitle: nome
+        };
+      })
+      .filter(Boolean);
+    if (!points.length) {
+      el.innerHTML = `<p class="home-empty-hint">Nenhum simulado com média da IES processada ainda.</p>`;
+      return;
+    }
+    el.innerHTML = `${createHomeSimuladoEvolucaoSVG(points)}<p class="home-sparkline-caption">Média da instituição (%) por resultado, em ordem cronológica — mesma base da aba Simulados. <a class="home-sim-deep-link" href="simulado-personalizado.html">Abrir análise completa</a></p>`;
+  } catch (e) {
+    console.warn("home simulado chart", e);
+    el.innerHTML = `<p class="home-empty-hint">Não foi possível carregar a evolução dos simulados.</p>`;
+  }
+}
+
+function renderHomePage() {
+  const lastUpdatedEl = document.getElementById("homeLastUpdated");
+  if (lastUpdatedEl) {
+    lastUpdatedEl.textContent = lastEngajamentoUpdatedAt
+      ? `Último seguimento: ${_formatHomeDateLabel(lastEngajamentoUpdatedAt)}`
+      : "Sem data remota — dados locais ou cache";
+  }
+
+  const kpisRoot = document.getElementById("homeKpiRow");
+  const monthlyChartRoot = document.getElementById("homeMonthlyChart");
+  const attentionRoot = document.getElementById("homeAttention");
+  const insightsRoot = document.getElementById("homeCycleInsights");
+
+  const acc = typeof ACCUMULATED_DASHBOARD !== "undefined" ? ACCUMULATED_DASHBOARD : null;
+  const total = acc?.totalStudents || 0;
+  const high = acc?.highTractionCount || 0;
+  const pctMeta = total > 0 ? Math.round((high / total) * 100) : null;
+  const avgQd = acc?.avgQuestionsPerDay ?? 0;
+  const totalTempoMin = acc?.totalTempo ?? 0;
+
+  if (kpisRoot) {
+    kpisRoot.innerHTML = [
+      {
+        value: total ? String(total) : "—",
+        label: "Alunos ativos",
+        meta: "no ciclo consolidado"
+      },
+      {
+        value: pctMeta != null ? `${pctMeta}%` : "—",
+        label: "Turma na meta",
+        meta: `≥${HOME_META_QDIA} q/dia (engajamento alto)`
+      },
+      {
+        value: total ? formatDecimal(avgQd) : "—",
+        label: "Questões/dia (média)",
+        meta: "média por aluno no ciclo (mesma base do ranking)"
+      },
+      {
+        value: total && totalTempoMin > 0 ? formatHours(totalTempoMin) : "—",
+        label: "Tempo total no ciclo",
+        meta: "soma do tempo de estudo do grupo"
+      }
+    ]
+      .map(createKpiCard)
+      .join("");
+  }
+
+  if (monthlyChartRoot) {
+    const monthly = MONTHLY_DASHBOARD || [];
+    monthlyChartRoot.innerHTML = monthly.length
+      ? createMonthlyProgressChartSVG(monthly)
+      : `<p class="home-empty-hint">Sem dados mensais para exibir.</p>`;
+  }
+
+  if (attentionRoot) {
+    const low = (acc?.ranking || [])
+      .filter((s) => (s.questoesDia || 0) < HOME_META_QDIA)
+      .sort((a, b) => a.questoesDia - b.questoesDia)
+      .slice(0, 5);
+    const rows = low
+      .map(
+        (s) => `<div class="home-attention-row">
+        <span class="home-attention-name">${_escapeHtml(s.nome)}</span>
+        <span class="home-attention-meta">${formatDecimal(s.questoesDia)} q/dia</span>
+      </div>`
+      )
+      .join("");
+    attentionRoot.innerHTML = `
+      <div class="home-attention-head">
+        <div class="section-kicker">Atenção necessária</div>
+        <h3 class="home-attention-title">Abaixo da meta (&lt;${HOME_META_QDIA} q/dia)</h3>
+      </div>
+      <div class="home-attention-list" id="homeAttentionList">${rows || `<p class="home-empty-hint">Nenhum aluno abaixo da meta.</p>`}</div>
+    `;
+  }
+
+  if (insightsRoot) {
+    const monthly = MONTHLY_DASHBOARD || [];
+    const peakQuestionsMonth = monthly.length
+      ? [...monthly].sort((a, b) => b.totalQuestions - a.totalQuestions)[0]
+      : null;
+    const peakHoursMonth = monthly.length
+      ? [...monthly].sort((a, b) => b.totalTempo - a.totalTempo)[0]
+      : null;
+    const bestStudent = acc?.bestStudent;
+    insightsRoot.innerHTML = `
+      <div class="home-insights-head">
+        <div class="section-kicker">Insights do ciclo</div>
+        <h3 class="home-insights-title">Destaques consolidados</h3>
+      </div>
+      <div class="insight-list home-insights-grid">
+        ${[
+          {
+            label: "Melhor destaque do ciclo",
+            value: bestStudent ? formatNumber(bestStudent.questoes) : "—",
+            meta: bestStudent
+              ? `${_escapeHtml(bestStudent.nome)} · ${formatDecimal(bestStudent.questoesDia)} q/dia`
+              : "Sem dados"
+          },
+          {
+            label: "Pico de questões",
+            value: peakQuestionsMonth ? shortMonthLabel(peakQuestionsMonth.label) : "—",
+            meta: peakQuestionsMonth
+              ? `${formatNumber(peakQuestionsMonth.totalQuestions)} questões no mês`
+              : "Sem dados"
+          },
+          {
+            label: "Pico de acesso (tempo)",
+            value: peakHoursMonth ? shortMonthLabel(peakHoursMonth.label) : "—",
+            meta: peakHoursMonth
+              ? `${formatHours(peakHoursMonth.totalTempo)} no mês`
+              : "Sem dados"
+          }
+        ]
+          .map(createSummaryCard)
+          .join("")}
+      </div>
+    `;
+  }
+
+  _renderHomeSimuladoEvolucaoChart();
+
+  _wireHomeSniperOnce();
+  const sniperDl = document.getElementById("homeSniperList");
+  if (sniperDl && acc?.ranking?.length) {
+    sniperDl.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    const sorted = [...acc.ranking]
+      .filter((r) => r?.nome)
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+    const max = Math.min(sorted.length, 600);
+    for (let i = 0; i < max; i++) {
+      const nome = sorted[i].nome;
+      const opt = document.createElement("option");
+      opt.value = nome;
+      frag.appendChild(opt);
+    }
+    sniperDl.appendChild(frag);
+  }
+  _loadSimNotasForEngagement().catch(() => {});
+}
+
+/**
+ * Modo sniper: envia ao Cofbot pedido de resumo operacional do aluno escolhido.
+ */
+function _onHomeSniperSubmit() {
+  const errEl = document.getElementById("homeSniperError");
+  const inp = document.getElementById("homeSniperInput");
+  if (errEl) {
+    errEl.textContent = "";
+    errEl.hidden = true;
+  }
+  const q = (inp?.value || "").trim();
+  if (!q) {
+    if (errEl) {
+      errEl.textContent = "Digite o nome do aluno.";
+      errEl.hidden = false;
+    }
+    return;
+  }
+  const student = findStudentInRankingByQuery(q);
+  if (!student) {
+    if (errEl) {
+      errEl.textContent =
+        "Nenhum aluno encontrado. Confira a grafia ou escolha um nome da lista de sugestões.";
+      errEl.hidden = false;
+    }
+    return;
+  }
+  const payload = buildHomeSniperStudentPayload(student);
+  const promptText = `[Modo sniper] Gere um resumo operacional objetivo para a coordenação sobre o aluno "${student.nome}": engajamento (faixa e questões/dia), volume de questões e tempo na plataforma, taxa de acerto quando houver, e desempenho nos simulados listados no contexto. Inclua 2 ações práticas imediatas.`;
+  if (typeof window.medcofCofbotSubmitSniperPrompt === "function") {
+    window.medcofCofbotSubmitSniperPrompt(promptText, payload);
+  } else if (errEl) {
+    errEl.textContent = "Cofbot disponível após login no painel — recarregue se já estiver autenticado.";
+    errEl.hidden = false;
+  }
+}
+
+function _onHomeSniperClear() {
+  const inp = document.getElementById("homeSniperInput");
+  const errEl = document.getElementById("homeSniperError");
+  if (inp) inp.value = "";
+  if (errEl) {
+    errEl.textContent = "";
+    errEl.hidden = true;
+  }
+  inp?.focus();
+}
+
+function _wireHomeSniperOnce() {
+  if (window.__medcofHomeSniperWired) return;
+  const btn = document.getElementById("homeSniperSubmit");
+  const clearBtn = document.getElementById("homeSniperClear");
+  const inp = document.getElementById("homeSniperInput");
+  if (!btn || !inp) return;
+  window.__medcofHomeSniperWired = true;
+  btn.addEventListener("click", _onHomeSniperSubmit);
+  if (clearBtn) clearBtn.addEventListener("click", _onHomeSniperClear);
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      _onHomeSniperSubmit();
+    }
   });
 }
 
@@ -1033,7 +1489,7 @@ function _buildPeriodThead(hasTurma) {
     <th class="num">% Acerto</th>
     <th class="num">Aulas</th>
     <th class="num">Flashcards</th>
-    <th class="num" style="text-align:center">Engajamento</th>
+    <th scope="col" style="text-align:center">Engajamento</th>
   </tr>`;
 }
 
@@ -1114,7 +1570,27 @@ function renderPeriodPage() {
   }
 
   renderExportPeriodOptions();
+  initPeriodFiltersCollapsible();
   selectPeriod(0);
+}
+
+/**
+ * Card colapsável dos filtros da tabela detalhada (período).
+ */
+function initPeriodFiltersCollapsible() {
+  const toggle = document.getElementById("periodFiltersToggle");
+  const panel = document.getElementById("periodFiltersPanel");
+  if (!toggle || !panel || toggle.dataset.bound === "1") return;
+  toggle.dataset.bound = "1";
+  const chevron = toggle.querySelector(".period-filters-chevron");
+  toggle.addEventListener("click", () => {
+    const willOpen = panel.hasAttribute("hidden");
+    if (willOpen) panel.removeAttribute("hidden");
+    else panel.setAttribute("hidden", "");
+    toggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    toggle.classList.toggle("is-open", willOpen);
+    if (chevron) chevron.classList.toggle("is-open", willOpen);
+  });
 }
 
 // Turma color config (shared between period and results pages)
@@ -1308,67 +1784,207 @@ function updateExportHint() {
     : "Nenhum período selecionado.";
 }
 
-function downloadSelectedPeriods() {
+/**
+ * Carrega ExcelJS (CDN) para exportação Excel (.xlsx) do período detalhado.
+ * @returns {Promise<void>}
+ */
+function _ensureExcelJSPanel() {
+  if (typeof ExcelJS !== "undefined") return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js";
+    s.onload = () => res();
+    s.onerror = () => rej(new Error("Falha ao carregar ExcelJS"));
+    document.head.appendChild(s);
+  });
+}
+
+/**
+ * Nome de aba Excel (≤31 chars, sem caracteres inválidos, único no workbook).
+ * @param {string} raw
+ * @param {Set<string>} used
+ */
+function _excelSheetNameFromLabel(raw, used) {
+  const cleaned = (raw || "Periodo").replace(/[:\\/?*[\]]/g, "-").replace(/\s+/g, " ").trim().slice(0, 31);
+  let name = cleaned || "Periodo";
+  let i = 2;
+  while (used.has(name)) {
+    const suf = ` (${i})`;
+    name = ((raw || "Periodo").replace(/[:\\/?*[\]]/g, "-").trim().slice(0, 31 - suf.length) + suf).slice(0, 31);
+    i += 1;
+  }
+  used.add(name);
+  return name;
+}
+
+/**
+ * Exporta recortes em .xlsx (OOXML): uma aba por período (ordem cronológica),
+ * cabeçalho MedCof, fonte Roboto, autofiltro e linhas congeladas.
+ */
+async function downloadSelectedPeriods() {
   const selectedPeriods = PERIODS.filter((_, index) => exportSelections[index]);
   if (!selectedPeriods.length) {
     updateExportHint();
     return;
   }
 
-  const csvHasTurma = selectedPeriods.flatMap(p => p.data).some(r => r.turma) || Object.keys(TURMA_BY_NAME).length > 0;
+  const csvHasTurma = selectedPeriods.flatMap((p) => p.data).some((r) => r.turma) || Object.keys(TURMA_BY_NAME).length > 0;
 
   const header = [
-    "Periodo",
     "Aluno",
     ...(csvHasTurma ? ["Turma"] : []),
     "Tempo de uso",
     "Tempo (min)",
-    "Questoes",
+    "Questões",
     "% Acerto",
-    "Videos",
+    "Vídeos",
     "Aulas",
     "Flashcards",
     "Logins",
-    "Questoes por dia",
+    "Q. por dia",
     "Engajamento"
   ];
 
-  const rows = selectedPeriods.flatMap((period) => period.data.map((row) => {
-    const engagement = getPeriodEngagement(row.questoes, period.meta.days);
-    const rowTurma = row.turma || TURMA_BY_NAME[row.nome?.trim().toLowerCase()] || "";
-    const taxa = row.questoes_acertadas && row.questoes > 0
-      ? ((row.questoes_acertadas / row.questoes) * 100).toFixed(1)
-      : (row.taxa_acerto != null ? Number(row.taxa_acerto).toFixed(1) : "");
-    return [
-      period.meta.label,
-      row.nome,
-      ...(csvHasTurma ? [rowTurma] : []),
-      formatHours(row.tempo_min),
-      row.tempo_min,
-      row.questoes,
-      taxa,
-      row.videos    || 0,
-      row.aulas     || 0,
-      row.flashcards|| 0,
-      row.logins    || 0,
-      formatDecimal(engagement.rate),
-      engagement.label
-    ];
-  }));
+  const colWidths = {
+    Aluno: 34,
+    Turma: 12,
+    "Tempo de uso": 14,
+    "Tempo (min)": 12,
+    "Questões": 11,
+    "% Acerto": 11,
+    "Vídeos": 9,
+    Aulas: 9,
+    Flashcards: 12,
+    Logins: 9,
+    "Q. por dia": 12,
+    Engajamento: 14
+  };
 
-  const csv = [header, ...rows]
-    .map((cols) => cols.map((value) => `"${String(value).replace(/"/g, "\"\"")}"`).join(";"))
-    .join("\n");
+  const MEDCOF_HEADER = "FFDC2626";
+  const MEDCOF_HEADER_FONT = "FFFFFFFF";
+  const STRIPE_A = "FFF9F9F9";
+  const STRIPE_B = "FFFFFFFF";
+  const TITLE_BG = "FFFEF2F2";
+  const BORDER = {
+    top: { style: "thin", color: { argb: "FFE0E0E0" } },
+    left: { style: "thin", color: { argb: "FFE0E0E0" } },
+    bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
+    right: { style: "thin", color: { argb: "FFE0E0E0" } }
+  };
 
-  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `analises_${slugifyInstitutionName(CURRENT_INSTITUTION.institutionName)}_medcof_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  try {
+    await _ensureExcelJSPanel();
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "MedCof";
+    wb.created = new Date();
+
+    const sorted = [...selectedPeriods].sort((a, b) => a.meta.startDate - b.meta.startDate);
+    const usedSheetNames = new Set();
+
+    for (const period of sorted) {
+      const sheetName = _excelSheetNameFromLabel(period.meta.label, usedSheetNames);
+      const ws = wb.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 2, xSplit: 0 }] });
+      const numCols = header.length;
+
+      ws.mergeCells(1, 1, 1, numCols);
+      const titleCell = ws.getCell(1, 1);
+      titleCell.value = `${CURRENT_INSTITUTION.institutionName} — ${period.meta.label}`;
+      titleCell.font = { name: "Roboto", size: 12, bold: true, color: { argb: "FFB91C1C" } };
+      titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TITLE_BG } };
+      titleCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+      ws.getRow(1).height = 24;
+
+      const headerRow = ws.getRow(2);
+      header.forEach((h, hi) => {
+        const c = headerRow.getCell(hi + 1);
+        c.value = h;
+        c.font = { name: "Roboto", size: 11, bold: true, color: { argb: MEDCOF_HEADER_FONT } };
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: MEDCOF_HEADER } };
+        const rightish = ["Tempo (min)", "Questões", "% Acerto", "Vídeos", "Aulas", "Flashcards", "Logins", "Q. por dia"].includes(h);
+        c.alignment = { horizontal: rightish ? "right" : "left", vertical: "middle", wrapText: true };
+        c.border = BORDER;
+      });
+      headerRow.height = 22;
+
+      const dataRows = period.data || [];
+      dataRows.forEach((row, ri) => {
+        const engagement = getPeriodEngagement(row.questoes, period.meta.days);
+        const rowTurma = row.turma || TURMA_BY_NAME[row.nome?.trim().toLowerCase()] || "";
+        const taxaPct =
+          row.questoes_acertadas && row.questoes > 0
+            ? (row.questoes_acertadas / row.questoes) * 100
+            : row.taxa_acerto != null
+              ? Number(row.taxa_acerto)
+              : null;
+
+        const excelRow = ws.getRow(3 + ri);
+        const bg = ri % 2 === 0 ? STRIPE_A : STRIPE_B;
+        let col = 1;
+
+        const cell = (value, align, opts) => {
+          const ac = excelRow.getCell(col);
+          col += 1;
+          ac.value = value;
+          ac.font = { name: "Roboto", size: 11, color: { argb: "FF1A2233" } };
+          ac.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
+          ac.alignment = { horizontal: align, vertical: "middle" };
+          ac.border = BORDER;
+          if (opts?.numFmt) ac.numFmt = opts.numFmt;
+        };
+
+        cell(row.nome, "left");
+        if (csvHasTurma) cell(rowTurma, "left");
+        cell(formatHours(row.tempo_min), "right");
+        cell(row.tempo_min != null ? row.tempo_min : "", "right", { numFmt: "0" });
+        cell(row.questoes != null ? row.questoes : "", "right", { numFmt: "0" });
+        if (taxaPct != null && !Number.isNaN(taxaPct)) {
+          const ac = excelRow.getCell(col);
+          col += 1;
+          ac.value = taxaPct / 100;
+          ac.numFmt = "0.0%";
+          ac.font = { name: "Roboto", size: 11, color: { argb: "FF1A2233" } };
+          ac.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
+          ac.alignment = { horizontal: "right", vertical: "middle" };
+          ac.border = BORDER;
+        } else {
+          cell("", "right");
+        }
+        cell(row.videos || 0, "right", { numFmt: "0" });
+        cell(row.aulas || 0, "right", { numFmt: "0" });
+        cell(row.flashcards || 0, "right", { numFmt: "0" });
+        cell(row.logins || 0, "right", { numFmt: "0" });
+        cell(engagement.rate, "right", { numFmt: "0.00" });
+        cell(engagement.label, "left");
+      });
+
+      if (dataRows.length) {
+        ws.autoFilter = {
+          from: { row: 2, column: 1 },
+          to: { row: 2, column: numCols }
+        };
+      }
+
+      header.forEach((h, hi) => {
+        ws.getColumn(hi + 1).width = colWidths[h] || 14;
+      });
+    }
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `analises_${slugifyInstitutionName(CURRENT_INSTITUTION.institutionName)}_medcof_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error(e);
+    alert("Não foi possível gerar a planilha. Verifique a conexão e tente novamente.");
+  }
 }
 
 function changeInstitutionPanel() {
@@ -1519,11 +2135,20 @@ function _normalizeSimTipo(raw) {
  * Inclui simulados com instituicoes_destino vazio (todas as IES).
  */
 async function _simBancoContextForSlug(slug) {
-  const ck = "_simCtx_" + slug;
+  const ck = "_simCtx_v2_" + slug;
   if (_simCache[ck]) return _simCache[ck];
-  const out = { validRefs: new Set(), tipoById8: new Map() };
+  const out = { validRefs: new Set(), tipoById8: new Map(), linkById8: new Map() };
+  let sims;
   try {
-    const sims = await _anonDataProxyRead("simulados_banco", "select=id,tipo,instituicoes_destino");
+    sims = await _anonDataProxyRead("simulados_banco", "select=id,tipo,instituicoes_destino,link_gabarito");
+  } catch {
+    try {
+      sims = await _anonDataProxyRead("simulados_banco", "select=id,tipo,instituicoes_destino");
+    } catch {
+      return null;
+    }
+  }
+  try {
     sims.forEach((s) => {
       let dest = s.instituicoes_destino;
       if (!Array.isArray(dest)) {
@@ -1539,6 +2164,8 @@ async function _simBancoContextForSlug(slug) {
       out.tipoById8.set(id8, _normalizeSimTipo(s.tipo));
       out.validRefs.add(`bq_${slug}_${id8}`);
       out.validRefs.add(`bq_${slug}_tendencias_${id8}`);
+      const lg = s.link_gabarito != null ? String(s.link_gabarito).trim() : "";
+      if (lg) out.linkById8.set(id8, lg);
     });
     _simCache[ck] = out;
     return out;
@@ -1658,6 +2285,591 @@ async function _simRoute(root, slug) {
   }
 }
 
+/**
+ * Página Mentor (aba dedicada): gestão do simulado + distribuição livre por grande área.
+ * Dados: simulado-planner (Tendências + Personalizado). UI em etapas sequenciais.
+ */
+function renderMentorPage() {
+  const root = document.getElementById("mentorRoot");
+  if (!root) return;
+  const slug = location.pathname.split("/").filter(Boolean)[0] || "";
+  const plannerUrl = `${window.location.origin}/.netlify/functions/simulado-planner`;
+  window.__MEDCOF_SIM_CHAT_CTX__ = null;
+
+  root.innerHTML = `
+    <div class="medcof-mentor-page">
+      <div class="medcof-mentor-flow">
+        <div id="medcofMentorErr" class="medcof-mentor-banner medcof-mentor-banner--err" style="display:none;margin-bottom:12px"></div>
+        <div id="medcofMentorLoading" class="medcof-mentor-banner medcof-mentor-banner--load" style="display:none;margin-bottom:12px">Carregando dados do Mentor…</div>
+        <div class="medcof-mentor-stepper" id="medcofMentorStepper" role="tablist" aria-label="Etapas do Mentor">
+          <button type="button" class="medcof-mentor-step-pill is-active" data-go="1" role="tab">1 · Entender a turma</button>
+          <button type="button" class="medcof-mentor-step-pill" data-go="2" role="tab">2 · Desempenho por área</button>
+          <button type="button" class="medcof-mentor-step-pill" data-go="3" role="tab">3 · Seu plano de questões</button>
+          <button type="button" class="medcof-mentor-step-pill" data-go="4" role="tab">4 · Plano e exportação</button>
+        </div>
+        <div class="medcof-mentor-panels-shell">
+        <div class="medcof-mentor-cofbot-float" aria-hidden="true">
+          <img src="/assets/coordenador-chat-fab.png" alt="" width="64" height="76" decoding="async" draggable="false" />
+        </div>
+        <div class="medcof-mentor-panels-inner">
+        <div class="medcof-mentor-step-panel is-active" data-mentor-step="1">
+          <p class="medcof-mentor-step-head">Passo 1</p>
+          <h2 class="medcof-mentor-step-title">O que já sabemos sobre a sua turma</h2>
+          <p class="medcof-mentor-step-lead">Usamos o histórico agregado de simulados <strong>Tendências</strong> e <strong>Personalizado</strong> — sem substituir o seu critério: você continua no comando.</p>
+          <div class="medcof-mentor-prompts">
+            <strong>Para refletir com a coordenação</strong>
+            <ul>
+              <li>Qual é a maior preocupação com a turma neste ciclo?</li>
+              <li>Há data de prova ou edital que devemos ter em vista?</li>
+            </ul>
+          </div>
+          <div id="medcofMentorHero"></div>
+        </div>
+        <div class="medcof-mentor-step-panel" data-mentor-step="2">
+          <p class="medcof-mentor-step-head">Passo 2</p>
+          <h2 class="medcof-mentor-step-title">% de acerto por grande área</h2>
+          <p class="medcof-mentor-step-lead">Visão consolidada do histórico — útil para decidir onde reforçar.</p>
+          <div class="medcof-mentor-prompts">
+            <strong>Questionamentos</strong>
+            <ul>
+              <li>Quais áreas você sente que a turma ainda subestima?</li>
+              <li>Onde faz sentido combinar reforço teórico com lista de questões?</li>
+            </ul>
+          </div>
+          <div id="medcofMentorAreas"></div>
+        </div>
+        <div class="medcof-mentor-step-panel" data-mentor-step="3">
+          <p class="medcof-mentor-step-head">Passo 3</p>
+          <h2 class="medcof-mentor-step-title">Distribuição de questões — sua escolha</h2>
+          <p class="medcof-mentor-step-lead">Marque as grandes áreas, defina quantidades e inclua outras linhas se precisar.</p>
+          <div class="medcof-mentor-prompts">
+            <strong>Questionamentos</strong>
+            <ul>
+              <li>Quantas questões no total faz sentido para o próximo simulado?</li>
+              <li>Prefere priorizar áreas mais fracas ou equilibrar entre áreas?</li>
+            </ul>
+          </div>
+          <div id="medcofMentorPlan"></div>
+          <div id="medcofMentorCustom"></div>
+          <button type="button" id="medcofMentorAddRow" class="medcof-mentor-btn" style="margin-top:12px;border-style:dashed;width:100%;max-width:320px">+ Outra grande área</button>
+          <div class="medcof-mentor-toolbar">
+            <button type="button" id="medcofMentorRefresh" class="medcof-mentor-btn">Refazer</button>
+            <button type="button" id="medcofMentorGerar" class="medcof-mentor-btn medcof-mentor-btn--primary">Gerar plano</button>
+          </div>
+          <div id="medcofMentorTotal" style="margin-top:12px;font-size:0.84rem;font-weight:700;color:var(--text)"></div>
+        </div>
+        <div class="medcof-mentor-step-panel" data-mentor-step="4">
+          <p class="medcof-mentor-step-head">Passo 4</p>
+          <h2 class="medcof-mentor-step-title">Plano premoldado e exportação</h2>
+          <p class="medcof-mentor-step-lead">Use <strong>Gerar plano</strong> no passo 3 para cruzar sua distribuição com o histórico da IES e o banco de questões aprovadas.</p>
+          <div class="medcof-mentor-prompts">
+            <strong>Como usar</strong>
+            <ul>
+              <li>Revise cada slot (ordem, área, tema, dificuldade) antes de aplicar na turma.</li>
+              <li>Baixe a planilha para arquivo ou reunião de coordenação.</li>
+            </ul>
+          </div>
+          <div id="medcofMentorPremolded"></div>
+          <h3 class="medcof-mentor-subh" style="font-size:0.95rem;font-weight:800;margin:22px 0 10px;color:var(--text)">Temas de referência (histórico)</h3>
+          <div id="medcofMentorThemes"></div>
+          <div class="medcof-mentor-toolbar" style="margin-top:18px">
+            <button type="button" id="medcofMentorXlsx" class="medcof-mentor-btn medcof-mentor-btn--primary" disabled>Baixar planilha (.xlsx)</button>
+            <button type="button" id="medcofMentorCsvThemes" class="medcof-mentor-btn" disabled>Exportar temas (CSV)</button>
+          </div>
+        </div>
+        </div>
+        </div>
+        <div class="medcof-mentor-nav" id="medcofMentorNavBar">
+          <button type="button" class="medcof-mentor-btn" id="medcofMentorBtnPrev" disabled>Anterior</button>
+          <span class="medcof-mentor-progress" id="medcofMentorProgress">Passo 1 de 4</span>
+          <button type="button" class="medcof-mentor-btn medcof-mentor-btn--primary" id="medcofMentorBtnNext">Próximo</button>
+        </div>
+      </div>
+    </div>`;
+
+  const heroEl = document.getElementById("medcofMentorHero");
+  const areasEl = document.getElementById("medcofMentorAreas");
+  const planEl = document.getElementById("medcofMentorPlan");
+  const customEl = document.getElementById("medcofMentorCustom");
+  const themesEl = document.getElementById("medcofMentorThemes");
+  const errEl = document.getElementById("medcofMentorErr");
+  const loadEl = document.getElementById("medcofMentorLoading");
+  const totalEl = document.getElementById("medcofMentorTotal");
+  const premoldedEl = document.getElementById("medcofMentorPremolded");
+  const btnRefresh = document.getElementById("medcofMentorRefresh");
+  const btnGerar = document.getElementById("medcofMentorGerar");
+  const btnCsvThemes = document.getElementById("medcofMentorCsvThemes");
+  const btnXlsx = document.getElementById("medcofMentorXlsx");
+  const btnAdd = document.getElementById("medcofMentorAddRow");
+  const btnPrev = document.getElementById("medcofMentorBtnPrev");
+  const btnNext = document.getElementById("medcofMentorBtnNext");
+  const progressEl = document.getElementById("medcofMentorProgress");
+  const stepperEl = document.getElementById("medcofMentorStepper");
+
+  /** @type {any} */
+  let lastPayload = null;
+  let customRowId = 0;
+  let currentStep = 1;
+
+  /**
+   * Alterna painéis e pills do fluxo Mentor (4 etapas).
+   * @param {number} n
+   */
+  function setStep(n) {
+    const step = Math.max(1, Math.min(4, n));
+    currentStep = step;
+    root.querySelectorAll("[data-mentor-step]").forEach((el) => {
+      el.classList.toggle("is-active", Number(el.getAttribute("data-mentor-step")) === step);
+    });
+    root.querySelectorAll(".medcof-mentor-step-pill").forEach((btn) => {
+      const s = Number(btn.getAttribute("data-go"));
+      btn.classList.toggle("is-active", s === step);
+      btn.classList.toggle("is-done", s < step);
+    });
+    if (btnPrev) btnPrev.disabled = step === 1;
+    if (btnNext) {
+      if (step === 4) {
+        btnNext.textContent = "Recomeçar";
+        btnNext.classList.remove("medcof-mentor-btn--primary");
+      } else {
+        btnNext.textContent = "Próximo";
+        btnNext.classList.add("medcof-mentor-btn--primary");
+      }
+    }
+    if (progressEl) progressEl.textContent = `Passo ${step} de 4 — você decide o ritmo`;
+  }
+
+  function escHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function updatePlanTotal() {
+    let sum = 0;
+    planEl.querySelectorAll(".medcof-mentor-area-qty").forEach((inp) => {
+      const row = inp.closest(".medcof-mentor-plan-row");
+      const chk = row && row.querySelector(".medcof-mentor-area-chk");
+      if (chk && !chk.checked) return;
+      sum += Math.max(0, parseInt(String(inp.value || "0"), 10) || 0);
+    });
+    customEl.querySelectorAll(".medcof-mentor-custom-row").forEach((row) => {
+      const name = (row.querySelector(".medcof-mentor-custom-name") || {}).value;
+      const q = row.querySelector(".medcof-mentor-area-qty");
+      if (name && String(name).trim() && q) {
+        sum += Math.max(0, parseInt(String(q.value || "0"), 10) || 0);
+      }
+    });
+    totalEl.textContent = sum > 0 ? `Total de questões no plano: ${sum}` : "";
+  }
+
+  root.addEventListener("input", (e) => {
+    if (
+      e.target &&
+      (e.target.classList.contains("medcof-mentor-area-qty") ||
+        e.target.classList.contains("medcof-mentor-custom-name"))
+    ) {
+      updatePlanTotal();
+    }
+  });
+  root.addEventListener("change", (e) => {
+    if (e.target && e.target.classList.contains("medcof-mentor-area-chk")) updatePlanTotal();
+  });
+
+  function buildPlanFromAreas(areas) {
+    if (!areas || !areas.length) {
+      planEl.innerHTML =
+        '<p style="font-size:0.84rem;color:var(--text-soft)">Sem dados de área ainda — use &quot;Refazer&quot; após processar simulados.</p>';
+      return;
+    }
+    let html = "";
+    areas.forEach((a) => {
+      const pct = a.pct_acerto_ies != null ? Number(a.pct_acerto_ies).toFixed(1) : "—";
+      const ga = escHtml(a.grande_area || "—");
+      html += `<div class="medcof-mentor-plan-row">
+        <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:220px;cursor:pointer">
+          <input type="checkbox" class="medcof-mentor-area-chk" checked />
+          <span class="medcof-mentor-area-name" style="font-weight:700">${ga}</span>
+          <span style="font-size:0.78rem;color:var(--text-soft)">(${pct}% acerto no histórico)</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:0.76rem;color:var(--text-soft)">Questões</span>
+          <input type="number" min="0" max="999" value="0" class="medcof-mentor-area-qty" style="width:72px" />
+        </div>
+      </div>`;
+    });
+    planEl.innerHTML = html;
+    updatePlanTotal();
+  }
+
+  function collectPlanRows() {
+    /** @type {{ area: string, questoes: number }[]} */
+    const out = [];
+    planEl.querySelectorAll(".medcof-mentor-plan-row").forEach((row) => {
+      const chk = row.querySelector(".medcof-mentor-area-chk");
+      const nm = row.querySelector(".medcof-mentor-area-name");
+      const qtyInp = row.querySelector(".medcof-mentor-area-qty");
+      if (!nm || !qtyInp) return;
+      if (chk && !chk.checked) return;
+      const n = Math.max(0, parseInt(String(qtyInp.value || "0"), 10) || 0);
+      if (n <= 0) return;
+      const area = (nm.textContent || "").trim();
+      if (area) out.push({ area, questoes: n });
+    });
+    customEl.querySelectorAll(".medcof-mentor-custom-row").forEach((row) => {
+      const nameInp = row.querySelector(".medcof-mentor-custom-name");
+      const qtyInp = row.querySelector(".medcof-mentor-area-qty");
+      if (!nameInp || !qtyInp) return;
+      const area = String(nameInp.value || "").trim();
+      const n = Math.max(0, parseInt(String(qtyInp.value || "0"), 10) || 0);
+      if (area && n > 0) out.push({ area, questoes: n });
+    });
+    return out;
+  }
+
+  function renderPremoldedFromPayload() {
+    const plano = lastPayload && lastPayload.planoPremoldado;
+    if (!premoldedEl) return;
+    if (!plano || !Array.isArray(plano.slots) || !plano.slots.length) {
+      premoldedEl.innerHTML = `<p style="font-size:0.84rem;color:var(--text-soft);margin:0">Gere o plano no passo 3 com o botão <strong>Gerar plano</strong> para ver o simulado premoldado aqui.</p>`;
+      return;
+    }
+    const avisos = Array.isArray(lastPayload.avisos) ? lastPayload.avisos : [];
+    let html = '<div class="medcof-mentor-slot-grid">';
+    plano.slots.forEach((s) => {
+      const difLabel =
+        s.dificuldade === "facil" ? "Fácil" : s.dificuldade === "dificil" ? "Difícil" : "Média";
+      const badges = [];
+      if (s.fraco_ies) {
+        badges.push('<span class="medcof-mentor-badge medcof-mentor-badge--weak">Fraco na IES</span>');
+      }
+      if (s.peso_enamed && s.peso_enamed !== "—") {
+        badges.push(
+          `<span class="medcof-mentor-badge medcof-mentor-badge--prio" title="Prioridade no banco">${escHtml(
+            s.peso_enamed
+          )}</span>`
+        );
+      }
+      html += `<div class="medcof-mentor-slot-card">
+        <div class="medcof-mentor-slot-num">Q${s.ordem}</div>
+        <div class="medcof-mentor-slot-body">
+          <div class="medcof-mentor-slot-meta">${escHtml(s.grande_area)} · ${escHtml(difLabel)}</div>
+          <div class="medcof-mentor-slot-tema">${escHtml(s.tema)}</div>
+          <div class="medcof-mentor-slot-codigo">${s.codigo_questao ? escHtml(s.codigo_questao) : "—"}</div>
+          <div class="medcof-mentor-slot-motivo">${escHtml(s.motivo || "")}</div>
+          <div class="medcof-mentor-slot-badges">${badges.join(" ")}</div>
+        </div>
+      </div>`;
+    });
+    html += "</div>";
+    if (avisos.length) {
+      html += `<div class="medcof-mentor-avisos">${avisos.map((a) => `<p>${escHtml(a)}</p>`).join("")}</div>`;
+    }
+    premoldedEl.innerHTML = html;
+  }
+
+  async function gerarPlano() {
+    errEl.style.display = "none";
+    const rows = collectPlanRows();
+    const distribuicao = rows.map((r) => ({ grande_area: r.area, questoes: r.questoes }));
+    if (!distribuicao.length) {
+      errEl.style.display = "block";
+      errEl.textContent = "Marque áreas e informe quantidades maiores que zero.";
+      return;
+    }
+    if (btnGerar) btnGerar.disabled = true;
+    loadEl.style.display = "block";
+    try {
+      const sb = await _medcofEnsureSupabaseForChat();
+      const { data } = await sb.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("Entre no painel com seu usuário MedCof para usar o Mentor.");
+      const res = await fetch(plannerUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "montar",
+          supabase_access_token: token,
+          ies_slug: slug,
+          distribuicao
+        })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Não foi possível montar o plano.");
+      lastPayload = { ...(lastPayload || {}), ...body };
+      window.__MEDCOF_MENTOR_CTX__ = {
+        resumoTemasFrageis: lastPayload.resumoTemasFrageis || [],
+        areasDesempenho: lastPayload.areasDesempenho || [],
+        meta: lastPayload.meta || {},
+        planoPremoldado: lastPayload.planoPremoldado || null
+      };
+      renderPremoldedFromPayload();
+      if (btnXlsx) {
+        const ok = !!(body.planoPremoldado && body.planoPremoldado.slots && body.planoPremoldado.slots.length);
+        btnXlsx.disabled = !ok;
+        btnXlsx.style.opacity = ok ? "1" : "0.65";
+      }
+      setStep(4);
+    } catch (e) {
+      errEl.style.display = "block";
+      errEl.textContent = e && e.message ? e.message : "Erro ao montar.";
+    } finally {
+      loadEl.style.display = "none";
+      if (btnGerar) btnGerar.disabled = false;
+    }
+  }
+
+  async function downloadMentorXlsx() {
+    const plano = lastPayload && lastPayload.planoPremoldado;
+    if (!plano || !plano.slots || !plano.slots.length) return;
+    await _ensureExcelJSPanel();
+    const wb = new ExcelJS.Workbook();
+    const w1 = wb.addWorksheet("Plano", { properties: { defaultRowHeight: 18 } });
+    w1.addRow(["Ordem", "Grande área", "Tema", "Dificuldade", "Código", "Observação"]);
+    plano.slots.forEach((s) => {
+      const difLabel =
+        s.dificuldade === "facil" ? "Fácil" : s.dificuldade === "dificil" ? "Difícil" : "Média";
+      w1.addRow([s.ordem, s.grande_area, s.tema, difLabel, s.codigo_questao || "", s.motivo || ""]);
+    });
+    const w2 = wb.addWorksheet("Temas ref.", { properties: { defaultRowHeight: 18 } });
+    w2.addRow(["#", "Grande área", "Tema", "% acerto", "Respostas"]);
+    (lastPayload.suggestedThemes || []).forEach((t) => {
+      w2.addRow([
+        t.prioridade != null ? t.prioridade : "",
+        t.grande_area || "",
+        t.tema || "",
+        t.pct_acerto_ies != null ? t.pct_acerto_ies : "",
+        t.amostras_resposta != null ? t.amostras_resposta : ""
+      ]);
+    });
+    w1.getRow(1).font = { bold: true };
+    w2.getRow(1).font = { bold: true };
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `mentor-plano-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    try {
+      const sb = await _medcofEnsureSupabaseForChat();
+      const { data } = await sb.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const temasChave = (plano.slots || [])
+        .map((s) => String(s.tema || "")
+          .trim()
+          .toLowerCase())
+        .filter(Boolean)
+        .sort()
+        .join("|");
+      await fetch(plannerUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "export_xlsx",
+          supabase_access_token: token,
+          ies_slug: slug,
+          plan_hash: plano.plan_hash || "",
+          contagem_slots: plano.slots.length,
+          temas_chave: temasChave,
+          areas_json: collectPlanRows().map((r) => ({ grande_area: r.area, questoes: r.questoes }))
+        })
+      });
+    } catch {
+      /* telemetria best-effort */
+    }
+  }
+
+  async function run() {
+    errEl.style.display = "none";
+    errEl.textContent = "";
+    if (heroEl) heroEl.innerHTML = "";
+    if (areasEl) areasEl.innerHTML = "";
+    if (customEl) customEl.innerHTML = "";
+    if (themesEl) themesEl.innerHTML = "";
+    btnCsvThemes.disabled = true;
+    btnCsvThemes.style.opacity = "0.65";
+    if (btnXlsx) {
+      btnXlsx.disabled = true;
+      btnXlsx.style.opacity = "0.65";
+    }
+    lastPayload = null;
+    loadEl.style.display = "block";
+    btnRefresh.disabled = true;
+    if (btnGerar) btnGerar.disabled = true;
+    try {
+      const sb = await _medcofEnsureSupabaseForChat();
+      const { data } = await sb.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("Entre no painel com seu usuário MedCof para usar o Mentor.");
+      const res = await fetch(plannerUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ supabase_access_token: token, ies_slug: slug })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Não foi possível carregar o Mentor.");
+      lastPayload = body;
+      window.__MEDCOF_MENTOR_CTX__ = {
+        resumoTemasFrageis: body.resumoTemasFrageis || [],
+        areasDesempenho: body.areasDesempenho || [],
+        meta: body.meta || {},
+        planoPremoldado: null
+      };
+
+      const meta = body.meta || {};
+      const totalAll = meta.totalSimulados != null ? meta.totalSimulados : null;
+      const nT = meta.totalSimuladosTendencias != null ? meta.totalSimuladosTendencias : 0;
+      const nP = meta.totalSimuladosPersonalizado != null ? meta.totalSimuladosPersonalizado : 0;
+      const apoio = (body.mensagemApoioCoordenador || "").replace(/</g, "");
+      const resumo = Array.isArray(body.resumoTemasFrageis) ? body.resumoTemasFrageis : [];
+      const areas = Array.isArray(body.areasDesempenho) ? body.areasDesempenho : [];
+
+      if (heroEl) {
+        let heroInner = `
+          <div class="medcof-mentor-hero-card">
+            <div class="medcof-mentor-hero-kicker">MedCof com a sua coordenação</div>
+            <p>${escHtml(apoio) || "Acompanhamos o desempenho da sua instituição e usamos esse histórico para apoiar a organização do simulado — com transparência e no seu lado."}</p>`;
+        if (totalAll != null && totalAll > 0) {
+          heroInner += `<p style="font-size:0.82rem;color:var(--text-soft);margin:14px 0 0;line-height:1.5">Esta leitura considera <strong style="color:var(--text)">${totalAll}</strong> simulado(s) no histórico (<strong>${nT}</strong> Tendências + <strong>${nP}</strong> Personalizado) — visão agregada da IES.</p>`;
+        } else if (totalAll === 0) {
+          heroInner += `<p style="font-size:0.82rem;color:var(--text-soft);margin:14px 0 0">Assim que houver resultados processados, o resumo aparecerá aqui.</p>`;
+        }
+        if (resumo.length > 0) {
+          heroInner += `<div class="medcof-mentor-hero-list">
+            <div class="medcof-mentor-hero-sub">Onde a turma mais precisa de reforço (resumo)</div>
+            <ul>`;
+          resumo.forEach((row) => {
+            const pct = row.pct_acerto_ies != null ? Number(row.pct_acerto_ies).toFixed(1) : "—";
+            heroInner += `<li style="margin-bottom:6px"><strong>${escHtml(row.grande_area)}</strong> — ${escHtml(row.tema)} <span style="color:var(--text-soft);font-weight:600">(${pct}% acerto)</span></li>`;
+          });
+          heroInner += `</ul></div>`;
+        }
+        heroInner += `</div>`;
+        heroEl.innerHTML = heroInner;
+      }
+
+      if (areasEl) {
+        if (areas.length) {
+          let t = `<div class="medcof-mentor-table-wrap"><table><thead><tr><th>Grande área</th><th style="text-align:right">% acerto</th><th style="text-align:right">Respostas (amostra)</th></tr></thead><tbody>`;
+          areas.forEach((a) => {
+            const pct = a.pct_acerto_ies != null ? Number(a.pct_acerto_ies).toFixed(1) : "—";
+            t += `<tr><td>${escHtml(a.grande_area)}</td><td style="text-align:right">${pct}</td><td style="text-align:right">${a.amostras_resposta != null ? a.amostras_resposta : "—"}</td></tr>`;
+          });
+          t += `</tbody></table></div>`;
+          areasEl.innerHTML = t;
+        } else {
+          areasEl.innerHTML =
+            '<p style="font-size:0.84rem;color:var(--text-soft)">Sem agregação por área neste recorte.</p>';
+        }
+      }
+
+      buildPlanFromAreas(areas);
+
+      const themes = body.suggestedThemes || [];
+      if (themesEl) {
+        const warn = body.warning
+          ? `<div style="padding:12px 14px;border-radius:12px;background:rgba(234,179,8,0.12);color:#a16207;font-size:0.8rem;margin-bottom:14px;border:1px solid rgba(234,179,8,0.35)">${escHtml(body.warning)}</div>`
+          : "";
+        const note = body.nota
+          ? `<p style="font-size:0.8rem;color:var(--text-soft);margin:0 0 14px;line-height:1.45">${escHtml(body.nota)}</p>`
+          : "";
+        if (!themes.length) {
+          themesEl.innerHTML =
+            warn +
+            note +
+            '<p style="font-size:0.84rem;color:var(--text-soft)">Nenhum tema listado neste recorte — use &quot;Refazer&quot; após novos simulados processados.</p>';
+        } else {
+          let table =
+            '<div class="medcof-mentor-table-wrap"><table><thead><tr><th>#</th><th>Grande área</th><th>Tema</th><th style="text-align:right">% acerto</th><th style="text-align:right">Respostas</th></tr></thead><tbody>';
+          themes.forEach((trow) => {
+            const pct = trow.pct_acerto_ies != null ? Number(trow.pct_acerto_ies).toFixed(1) : "—";
+            table += `<tr><td>${trow.prioridade != null ? trow.prioridade : ""}</td><td>${escHtml(trow.grande_area)}</td><td>${escHtml(trow.tema)}</td><td style="text-align:right">${pct}</td><td style="text-align:right">${trow.amostras_resposta != null ? trow.amostras_resposta : "—"}</td></tr>`;
+          });
+          table += `</tbody></table></div>`;
+          themesEl.innerHTML = warn + note + table;
+        }
+      }
+
+      btnCsvThemes.disabled = !(themes && themes.length);
+      btnCsvThemes.style.opacity = themes && themes.length ? "1" : "0.65";
+      renderPremoldedFromPayload();
+    } catch (e) {
+      errEl.style.display = "block";
+      errEl.textContent = e && e.message ? e.message : "Erro ao carregar.";
+    } finally {
+      loadEl.style.display = "none";
+      btnRefresh.disabled = false;
+      if (btnGerar) btnGerar.disabled = false;
+    }
+  }
+
+  function exportThemesCsv() {
+    if (!lastPayload || !Array.isArray(lastPayload.suggestedThemes)) return;
+    const sep = ";";
+    const lines = [];
+    lines.push(`Mentor — temas${sep}${slug}`);
+    lines.push(`Data${sep}${new Date().toISOString()}`);
+    const m = lastPayload.meta || {};
+    if (m.totalSimulados != null) lines.push(`Simulados no historico${sep}${m.totalSimulados}`);
+    if (m.totalSimuladosTendencias != null) lines.push(`Tendencias${sep}${m.totalSimuladosTendencias}`);
+    if (m.totalSimuladosPersonalizado != null) lines.push(`Personalizado${sep}${m.totalSimuladosPersonalizado}`);
+    lines.push("");
+    lines.push(`Prioridade${sep}Grande area${sep}Tema${sep}Pct${sep}Amostras${sep}Observacao`);
+    (lastPayload.suggestedThemes || []).forEach((t) => {
+      const obs = (t.motivo || "").split(sep).join(",").replace(/\r?\n/g, " ");
+      lines.push(
+        `${t.prioridade}${sep}${t.grande_area || ""}${sep}${t.tema || ""}${sep}${t.pct_acerto_ies != null ? t.pct_acerto_ies : ""}${sep}${t.amostras_resposta != null ? t.amostras_resposta : ""}${sep}${obs}`
+      );
+    });
+    const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `mentor-temas-${slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  btnRefresh.addEventListener("click", run);
+  if (btnGerar) btnGerar.addEventListener("click", () => void gerarPlano());
+  btnCsvThemes.addEventListener("click", exportThemesCsv);
+  if (btnXlsx) btnXlsx.addEventListener("click", () => void downloadMentorXlsx());
+  btnAdd.addEventListener("click", () => {
+    const div = document.createElement("div");
+    div.className = "medcof-mentor-custom-row medcof-mentor-plan-row";
+    div.innerHTML = `<input type="text" class="medcof-mentor-custom-name" placeholder="Nome da grande área" style="flex:1;min-width:180px" />
+      <div style="display:flex;align-items:center;gap:6px"><span style="font-size:0.76rem;color:var(--text-soft)">Questões</span>
+      <input type="number" min="0" max="999" value="0" class="medcof-mentor-area-qty" style="width:72px" /></div>`;
+    customEl.appendChild(div);
+    updatePlanTotal();
+  });
+
+  if (btnNext) {
+    btnNext.addEventListener("click", () => {
+      if (currentStep === 4) setStep(1);
+      else setStep(currentStep + 1);
+    });
+  }
+  if (btnPrev) {
+    btnPrev.addEventListener("click", () => setStep(currentStep - 1));
+  }
+  if (stepperEl) {
+    stepperEl.addEventListener("click", (e) => {
+      const t = e.target && e.target.closest && e.target.closest(".medcof-mentor-step-pill");
+      if (!t || !t.getAttribute("data-go")) return;
+      setStep(Number(t.getAttribute("data-go"), 10));
+    });
+  }
+  setStep(1);
+
+  void run();
+}
+
+
 // ── HUB: 2 cards (Tendências / Personalizado) ──────────────────
 async function _renderSimuladoHub(root, slug) {
   const [allRankings, simCtx] = await Promise.all([
@@ -1672,7 +2884,6 @@ async function _renderSimuladoHub(root, slug) {
   const rankings = _dedupeSimuladoRankings(rankingsRaw);
 
   let tendCount = 0, persCount = 0, tendLast = null, persLast = null, tendMedia = null, persMedia = null;
-  let tendSum = 0, tendN = 0, persSum = 0, persN = 0;
   rankings.forEach((r) => {
     const ref = r.simulado_ref || "";
     const d = r.respostas || {};
@@ -1684,27 +2895,14 @@ async function _renderSimuladoHub(root, slug) {
         tendLast = d.simulado_titulo || ref;
         tendMedia = m;
       }
-      if (m != null && Number.isFinite(Number(m))) {
-        tendSum += Number(m);
-        tendN++;
-      }
     } else {
       persCount++;
       if (!persLast) {
         persLast = d.simulado_titulo || ref;
         persMedia = m;
       }
-      if (m != null && Number.isFinite(Number(m))) {
-        persSum += Number(m);
-        persN++;
-      }
     }
   });
-  const avgTendJoint = tendN ? tendSum / tendN : null;
-  const avgPersJoint = persN ? persSum / persN : null;
-  const showJointChart = tendCount > 0 && persCount > 0;
-  const maxJoint = Math.max(avgTendJoint || 0, avgPersJoint || 0, 1);
-  const barH = (pct) => (pct != null && Number.isFinite(pct) ? Math.round((pct / maxJoint) * 100) : 8);
 
   const fmt = (v) => v != null ? `${Number(v).toFixed(1)}%` : '—';
   const hubCard = (href, icon, title, sub, count, media, last, color, disabled) => `
@@ -1729,45 +2927,34 @@ async function _renderSimuladoHub(root, slug) {
       </div>
     </a>`;
 
+  const mentorOn = !!window.__MEDCOF_MENTOR_COORDENADOR_ENABLED__;
+  const hubGridClass = mentorOn ? "sim-hub-grid" : "sim-hub-grid sim-hub-grid--two";
+  const mentorCard = mentorOn
+    ? `<a href="mentor.html" class="sim-card sim-hub-mentor-card" style="text-decoration:none;color:inherit">
+          <div class="sim-card-top" style="background:linear-gradient(90deg,#a855f7,#7c3aed)"></div>
+          <div class="sim-card-body sim-hub-mentor-row">
+            <div class="sim-hub-mentor-cofbot">
+              <img src="/assets/coordenador-chat-fab.png" alt="" width="48" height="56" decoding="async" />
+              <div class="sim-hub-mentor-bubble" role="status">Quer ajuda para organizar simulados para a sua IES?</div>
+            </div>
+            <div>
+              <span class="sim-card-tag" style="background:rgba(124,58,237,0.14);color:#5b21b6">Mentor</span>
+              <div class="sim-card-title" style="margin-top:8px">Organizar próximo simulado</div>
+              <p class="sim-hub-mentor-desc">Pontos fracos da turma, % por grande área e distribuição de questões — no seu ritmo.</p>
+              <div class="sim-hub-mentor-cta">Abrir <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></div>
+            </div>
+          </div>
+        </a>`
+    : "";
+
   root.innerHTML = `
-    <section class="hero-card hero-strong">
-      <div class="hero-kicker">Simulados</div>
-      <h1>Análise de simulados</h1>
-      <p class="hero-sub">Visualize resultados, evolução temporal e diagnósticos por área, tema e aluno.</p>
-    </section>
-    <section class="section-shell" style="margin-top:24px">
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;max-width:800px;margin:0 auto">
+    <section class="section-shell" style="margin-top:0">
+      <div class="${hubGridClass}">
         ${hubCard('#tendencias','📊','Tendências','ENAMED e simulados nacionais',tendCount,tendMedia,tendLast,'#16a34a',tendCount===0)}
         ${hubCard('#personalizado','🎯','Personalizado','Simulados do banco de questões',persCount,persMedia,persLast,'#3b82f6',persCount===0)}
+        ${mentorCard}
       </div>
-    </section>
-    ${
-      showJointChart
-        ? `
-    <section class="section-shell" style="margin-top:28px">
-      <div style="max-width:800px;margin:0 auto;padding:26px 24px;border-radius:16px;border:1px solid var(--border-subtle);background:var(--bg-card);box-shadow:0 4px 24px rgba(0,0,0,0.06)">
-        <div style="font-size:0.68rem;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted)">Análise conjunta</div>
-        <h2 style="margin:6px 0 8px;font-size:1.05rem;font-weight:800;color:var(--text)">Média da IES por tipo de simulado</h2>
-        <p style="margin:0 0 22px;font-size:0.78rem;color:var(--text-muted);line-height:1.5">Média aritmética das médias da instituição em todos os resultados processados em cada categoria. Exibido apenas quando há pelo menos um simulado em <strong>Tendências</strong> e um em <strong>Personalizado</strong>.</p>
-        <div style="display:flex;align-items:flex-end;justify-content:center;gap:clamp(16px,6vw,48px);min-height:160px;padding:8px 0 0">
-          <div style="flex:1;max-width:200px;display:flex;flex-direction:column;align-items:center;gap:10px">
-            <div style="font-size:1.35rem;font-weight:800;color:#16a34a">${avgTendJoint != null ? avgTendJoint.toFixed(1) + "%" : "—"}</div>
-            <div style="width:100%;max-width:100px;height:${barH(avgTendJoint)}px;min-height:8px;border-radius:10px 10px 0 0;background:linear-gradient(180deg,#22c55e,#15803d)"></div>
-            <div style="font-size:0.76rem;font-weight:700;color:var(--text)">Tendências</div>
-            <div style="font-size:0.68rem;color:var(--text-muted)">${tendN} resultado(s)</div>
-          </div>
-          <div style="width:1px;align-self:stretch;height:120px;background:var(--border-subtle);margin-bottom:8px;opacity:0.7"></div>
-          <div style="flex:1;max-width:200px;display:flex;flex-direction:column;align-items:center;gap:10px">
-            <div style="font-size:1.35rem;font-weight:800;color:#2563eb">${avgPersJoint != null ? avgPersJoint.toFixed(1) + "%" : "—"}</div>
-            <div style="width:100%;max-width:100px;height:${barH(avgPersJoint)}px;min-height:8px;border-radius:10px 10px 0 0;background:linear-gradient(180deg,#60a5fa,#1d4ed8)"></div>
-            <div style="font-size:0.76rem;font-weight:700;color:var(--text)">Personalizado</div>
-            <div style="font-size:0.68rem;color:var(--text-muted)">${persN} resultado(s)</div>
-          </div>
-        </div>
-      </div>
-    </section>`
-        : ""
-    }`;
+    </section>`;
 }
 
 // ── GRID: lista de simulados de um tipo ─────────────────────────
@@ -1833,10 +3020,10 @@ async function _renderSimuladoGrid(root, slug, tipo) {
 
   root.innerHTML = `
     <div style="padding:20px 0"><a href="#" class="sim-back">${backSvg} Todos os simulados</a></div>
-    <section class="hero-card hero-strong" style="margin-bottom:24px">
-      <div class="hero-kicker" style="color:${tipoColor}">${tipoIcon} ${tipoLabel}</div>
+    <section class="home-cockpit-intro" style="margin-bottom:20px">
+      <div class="section-kicker" style="color:${tipoColor}">${tipoIcon} ${tipoLabel}</div>
       <h1>Simulados ${tipoLabel.toLowerCase()}</h1>
-      <p class="hero-sub">${wantTend ? 'Resultados dos simulados ENAMED com ranking nacional e regional.' : 'Resultados dos simulados do banco de questões com análise por área e tema.'}</p>
+      <p class="home-cockpit-lead">${wantTend ? 'Resultados dos simulados ENAMED com ranking nacional e regional.' : 'Resultados dos simulados do banco de questões com análise por área e tema.'}</p>
     </section>
     <section class="section-shell"><div class="sim-grid">${cards}</div></section>`;
 }
@@ -1853,6 +3040,9 @@ async function _renderSimuladoDetail(root, slug, ref) {
   const tipoLabel = isTend ? 'Tendências' : 'Personalizado';
   const tipoColor = isTend ? 'var(--green)' : 'var(--accent)';
   const backHash = isTend ? '#tendencias' : '#personalizado';
+  const id8Ref = _refExtractId8(ref);
+  const linkGabCadastro =
+    simCtx && simCtx.linkById8 && id8Ref ? simCtx.linkById8.get(id8Ref) : null;
 
  try {
   // ── 1. Fetch all rows for this simulado (limit 500 to cover edge cases) ──
@@ -2398,11 +3588,15 @@ async function _renderSimuladoDetail(root, slug, ref) {
           (u, idx) => {
             const rot = _boletinsRotulos[idx];
             const btnLabel =
-              rot ||
-              (_boletinsUrls.length > 1 ? `Pacote ${idx + 1}` : 'Acessar boletins');
-            const titleAttr = rot
-              ? `${rot} — pacote ${idx + 1} de ${_boletinsUrls.length}`
-              : `Pacote ${idx + 1} de ${_boletinsUrls.length}`;
+              _boletinsUrls.length > 1
+                ? `Boletins part.${idx + 1}`
+                : rot || 'Acessar boletins';
+            const titleAttr =
+              _boletinsUrls.length > 1
+                ? `Boletins part.${idx + 1} de ${_boletinsUrls.length}`
+                : rot
+                  ? `${rot} — download`
+                  : `Pacote ${idx + 1} de ${_boletinsUrls.length}`;
             return `<a href="${u}" target="_blank" rel="noopener" title="${titleAttr.replace(/"/g, '&quot;')}" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;background:#16a34a;border:none;border-radius:10px;color:#fff;font-size:0.82rem;font-weight:700;text-decoration:none;cursor:pointer;transition:all 0.2s;white-space:nowrap;max-width:100%" onmouseover="this.style.background='#15803d'" onmouseout="this.style.background='#16a34a'"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${btnLabel}</a>`;
           }
         )
@@ -2451,49 +3645,11 @@ async function _renderSimuladoDetail(root, slug, ref) {
   if (isTend && rankNac != null) heroPills += _pill('Nacional', `${rankNac}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankNacTotal}</span>`);
   if (isTend && rankReg != null) heroPills += _pill('Regional', `${rankReg}<span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">/${rankRegTotal}</span>`);
 
-  // Gabarito link (stored in __RANKING__.respostas.link_gabarito)
-  const linkGabarito = ranking ? ranking.link_gabarito : null;
+  // Gabarito: URL em simulados_banco (cadastro); fallback legado __RANKING__.link_gabarito
+  const _lgTrim = (u) => (u != null && String(u).trim()) || null;
+  const linkGabarito = _lgTrim(linkGabCadastro) || _lgTrim(ranking && ranking.link_gabarito);
   const _heroBtnStyle = `display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);border-radius:10px;color:#fff;font-size:0.78rem;font-weight:700;text-decoration:none;transition:all 0.2s;cursor:pointer`;
   const gabaritoBtn = linkGabarito ? `<a href="${linkGabarito}" target="_blank" rel="noopener" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Ver gabarito</a>` : '';
-
-  // Boletins (link_boletins + opcional link_boletins_pacotes[])
-  const _urlsBol = (() => {
-    if (!ranking) return [];
-    const m = ranking.link_boletins_pacotes;
-    if (Array.isArray(m) && m.length) return m.map(u => String(u).trim()).filter(Boolean);
-    const s = ranking.link_boletins;
-    if (typeof s === 'string' && s.trim()) return [s.trim()];
-    return [];
-  })();
-  const _rotulosBol = (() => {
-    if (!ranking) return [];
-    const m = ranking.link_boletins_pacotes;
-    if (Array.isArray(m) && m.length > 1) {
-      const rr = ranking.link_boletins_pacotes_rotulos;
-      return m.map((_, i) =>
-        Array.isArray(rr) && rr[i] != null && String(rr[i]).trim()
-          ? String(rr[i]).trim()
-          : ''
-      );
-    }
-    const ru = ranking.link_boletins_rotulo;
-    if (_urlsBol.length === 1 && typeof ru === 'string' && ru.trim()) return [ru.trim()];
-    return _urlsBol.map(() => '');
-  })();
-  const boletinsBtn =
-    _urlsBol.length === 1
-      ? `<a href="${_urlsBol[0]}" target="_blank" rel="noopener" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${_rotulosBol[0] ? _rotulosBol[0] : 'Baixar boletins'}</a>`
-      : _urlsBol.length > 1
-        ? _urlsBol
-            .map(
-              (u, i) => {
-                const short = _rotulosBol[i] || `P${i + 1}`;
-                const tip = _rotulosBol[i] ? `${_rotulosBol[i]} (${i + 1}/${_urlsBol.length})` : `Pacote ${i + 1}/${_urlsBol.length}`;
-                return `<a href="${u}" target="_blank" rel="noopener" title="${tip.replace(/"/g, '&quot;')}" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${short}</a>`;
-              }
-            )
-            .join('')
-        : '';
 
   // Contexto de exportação PDF/Excel
   window.__MEDCOF_SIM_EXPORT__ = {
@@ -2550,7 +3706,6 @@ async function _renderSimuladoDetail(root, slug, ref) {
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <p style="font-size:0.82rem;color:rgba(255,255,255,0.5);margin:0">${totalAlunos} alunos · ${totalQuestoes} questões${notaMax != null ? ` · Amplitude: ${fmtPct(notaMin)} — ${fmtPct(notaMax)}` : ''}</p>
           ${gabaritoBtn}
-          ${boletinsBtn}
           <button onclick="window._exportSimPDF()" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar PDF</button>
           <button onclick="window._exportSimExcel()" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Exportar Excel</button>
         </div>
@@ -2845,17 +4000,17 @@ function createMonthlyProgressChartSVG(months) {
     `;
   }).join("");
 
-  // Pontos da linha: pílulas com fundo branco sempre visíveis
+  // Pontos da linha: pílulas acima do marcador para não cobrir as barras
   const points = linePoints.map((point) => {
     const label = `${formatDecimal(point.hours)}h`;
     const charW = 8.4;
     const pillW = Math.max(label.length * charW + 20, 48);
     const pillH = 24;
     const pillX = point.x - pillW / 2;
-    // Posicionar acima do ponto; se muito perto do topo, posicionar abaixo
-    const aboveY = point.y - 16;
-    const belowY = point.y + 30;
-    const pillY = aboveY - pillH < padding.top ? belowY - pillH / 2 : aboveY - pillH;
+    let pillY = point.y - pillH - 14;
+    if (pillY < padding.top + 4) {
+      pillY = point.y + 20;
+    }
     const textY = pillY + pillH / 2 + 5;
     return `
     <g>
@@ -3092,6 +4247,353 @@ function initRatingWidget() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Central de avisos (coordenadores) — ícone alinhado ao painel admin
+// ══════════════════════════════════════════════════════════════════
+
+const COORD_NOTIF_FN = "/.netlify/functions/coord-notificacoes";
+
+/** @type {Record<string, unknown>[]} */
+let _coordNotifCache = [];
+
+/**
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+function _coordNormalizeLidoPor(raw) {
+  if (Array.isArray(raw)) return raw.map(String);
+  if (raw == null || raw === "") return [];
+  if (typeof raw === "string") {
+    const t = raw.trim();
+    if (t.startsWith("[")) {
+      try {
+        const p = JSON.parse(t);
+        return Array.isArray(p) ? p.map(String) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+  if (typeof raw === "object") return Object.values(/** @type {Record<string, unknown>} */ (raw)).map(String);
+  return [];
+}
+
+/**
+ * @param {string} s
+ * @returns {string}
+ */
+function _coordEscHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * @param {string} msg
+ */
+function _coordBriefToast(msg) {
+  let el = document.getElementById("coordBriefToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "coordBriefToast";
+    el.className = "coord-brief-toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(/** @type {unknown} */ (el)._coordT);
+  el._coordT = setTimeout(() => {
+    el.hidden = true;
+  }, 2600);
+}
+
+/**
+ * @param {string} action
+ * @param {string} [notifId]
+ */
+async function _coordNotifRequest(action, notifId) {
+  const sb = await _medcofEnsureSupabaseForChat();
+  const { data } = await sb.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) throw new Error("Faça login no painel para gerenciar avisos.");
+  const res = await fetch(COORD_NOTIF_FN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      supabase_access_token: token,
+      ies_slug: _medcofSlugFromPath(),
+      action,
+      notifId
+    })
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(/** @type {{ error?: string }} */ (j).error || res.statusText || "Erro");
+  return j;
+}
+
+/**
+ * @returns {Promise<string>}
+ */
+async function _coordNotifUserEmail() {
+  const sb = await _medcofEnsureSupabaseForChat();
+  const { data } = await sb.auth.getSession();
+  return String(data?.session?.user?.email || "").trim();
+}
+
+async function _coordRefreshNotifUi() {
+  const listEl = document.getElementById("coordNotifList");
+  const badge = document.getElementById("coordNotifBadge");
+  const email = await _coordNotifUserEmail();
+  if (!email || !listEl) return;
+
+  listEl.innerHTML =
+    '<div style="padding:20px;text-align:center;color:var(--text-soft);font-size:0.82rem">Carregando…</div>';
+
+  const rows = await _anonDataProxyRead(
+    "notificacoes_admin",
+    "select=id,tipo,titulo,mensagem,prioridade,criado_por,created_at,destinatarios,lido_por,modo_coord&destinatarios=eq.all&tipo=eq.manual&order=created_at.desc&limit=50"
+  );
+
+  if (!Array.isArray(rows)) {
+    _coordNotifCache = [];
+    listEl.innerHTML =
+      '<div style="padding:24px;text-align:center;color:var(--text-soft);font-size:0.82rem">Não foi possível carregar avisos.</div>';
+    if (badge) badge.hidden = true;
+    return;
+  }
+
+  _coordNotifCache = rows;
+  const prioIcons = { urgent: "🔴", warn: "⚠️", info: "ℹ️" };
+  const prioColors = {
+    urgent: "rgba(220,38,38,0.08)",
+    warn: "rgba(245,158,11,0.08)",
+    info: "rgba(59,130,246,0.06)"
+  };
+
+  let unread = 0;
+  const html = rows
+    .map((n) => {
+      const lidoPor = _coordNormalizeLidoPor(n.lido_por);
+      const isRead = lidoPor.includes(email);
+      if (!isRead) unread++;
+      const icon = prioIcons[/** @type {keyof typeof prioIcons} */ (n.prioridade)] || "ℹ️";
+      const bg = !isRead ? prioColors[/** @type {keyof typeof prioColors} */ (n.prioridade)] || prioColors.info : "transparent";
+      const date = n.created_at
+        ? new Date(String(n.created_at)).toLocaleDateString("pt-BR", {
+            day: "2-digit",
+            month: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit"
+          })
+        : "";
+      const id = _coordEscHtml(String(n.id));
+      return `<button type="button" class="coord-notif-row" data-coord-notif-id="${id}" style="display:block;width:100%;text-align:left;padding:12px 14px;border-radius:10px;margin-bottom:4px;background:${bg};cursor:pointer;border:none;font:inherit;border-left:3px solid ${
+        !isRead
+          ? n.prioridade === "urgent"
+            ? "#dc2626"
+            : n.prioridade === "warn"
+              ? "#f59e0b"
+              : "#3b82f6"
+          : "transparent"
+      }">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span style="font-size:0.85rem">${icon}</span>
+          <span style="font-size:0.82rem;font-weight:${isRead ? "500" : "700"};color:var(--text);flex:1">${_coordEscHtml(
+            String(n.titulo || "")
+          )}</span>
+          <span style="font-size:0.65rem;color:var(--text-soft);white-space:nowrap">${date}</span>
+        </div>
+        <div style="font-size:0.78rem;color:var(--text-soft);line-height:1.5;margin-left:22px">${_coordEscHtml(
+          String(n.mensagem || "")
+        ).substring(0, 200)}${String(n.mensagem || "").length > 200 ? "…" : ""}</div>
+        ${
+          n.criado_por
+            ? `<div style="font-size:0.65rem;color:var(--text-soft);margin-top:4px;margin-left:22px">por ${_coordEscHtml(
+                String(n.criado_por)
+              )}</div>`
+            : ""
+        }
+      </button>`;
+    })
+    .join("");
+
+  listEl.innerHTML =
+    html ||
+    '<div style="padding:28px;text-align:center;color:var(--text-soft);font-size:0.82rem">Nenhum aviso no momento.</div>';
+
+  if (badge) {
+    if (unread > 0) {
+      badge.textContent = unread > 99 ? "99+" : String(unread);
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+    }
+  }
+
+  listEl.querySelectorAll("[data-coord-notif-id]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-coord-notif-id");
+      if (!id) return;
+      try {
+        await _coordNotifRequest("markRead", id);
+        await _coordRefreshNotifUi();
+      } catch (e) {
+        _coordBriefToast((e && e.message) || "Não foi possível atualizar.");
+      }
+    });
+  });
+}
+
+/**
+ * Mostra pop-ups de avisos com modo_coord=popup (um de cada vez).
+ */
+async function _coordRunPopupQueue() {
+  const email = await _coordNotifUserEmail();
+  if (!email) return;
+  const overlay = document.getElementById("coordNotifPopupOverlay");
+  const titleEl = document.getElementById("coordNotifPopupTitle");
+  const bodyEl = document.getElementById("coordNotifPopupBody");
+  if (!overlay || !titleEl || !bodyEl) return;
+
+  const pending = _coordNotifCache.filter((n) => {
+    const lido = _coordNormalizeLidoPor(n.lido_por);
+    if (lido.includes(email)) return false;
+    const modo = String(n.modo_coord || "central").toLowerCase();
+    return modo === "popup";
+  });
+  pending.sort((a, b) => {
+    const ta = a.created_at ? new Date(String(a.created_at)).getTime() : 0;
+    const tb = b.created_at ? new Date(String(b.created_at)).getTime() : 0;
+    return ta - tb;
+  });
+
+  const showNext = async () => {
+    const n = pending.shift();
+    if (!n) {
+      overlay.hidden = true;
+      return;
+    }
+    titleEl.textContent = String(n.titulo || "Aviso");
+    bodyEl.textContent = String(n.mensagem || "");
+    overlay.hidden = false;
+    const okBtn = document.getElementById("coordNotifPopupOk");
+    const onOk = async () => {
+      okBtn && okBtn.removeEventListener("click", onOk);
+      try {
+        await _coordNotifRequest("markRead", String(n.id));
+        await _coordRefreshNotifUi();
+      } catch {
+        /* ignore */
+      }
+      showNext();
+    };
+    if (okBtn) okBtn.addEventListener("click", onOk, { once: true });
+  };
+
+  if (pending.length) await showNext();
+}
+
+/**
+ * Injeta sino, painel e fila de pop-ups no painel do coordenador.
+ */
+async function mountCoordNotificacoesUi() {
+  if (document.getElementById("coordNotifBtn")) return;
+  let email = "";
+  try {
+    email = await _coordNotifUserEmail();
+  } catch {
+    return;
+  }
+  if (!email) return;
+
+  const topbarInner = document.querySelector(".topbar-inner");
+  const logoutBtn = document.getElementById("btnLogout");
+  if (!topbarInner || !logoutBtn) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "coord-notif-toolbar";
+  wrap.innerHTML = `
+    <button type="button" id="coordNotifBtn" class="coord-notif-btn" title="Central de avisos" aria-expanded="false" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <span id="coordNotifBadge" class="coord-notif-badge" hidden>0</span>
+    </button>`;
+  topbarInner.insertBefore(wrap, logoutBtn);
+
+  const panel = document.createElement("div");
+  panel.id = "coordNotifPanel";
+  panel.className = "coord-notif-panel";
+  panel.hidden = true;
+  panel.innerHTML = `
+    <div class="coord-notif-panel-head">
+      <span class="coord-notif-panel-title">🔔 Central de avisos</span>
+      <button type="button" class="coord-notif-clear-all" id="coordNotifClearAll">Limpar todos os avisos</button>
+    </div>
+    <div id="coordNotifList" class="coord-notif-list"></div>`;
+  document.body.appendChild(panel);
+
+  const popup = document.createElement("div");
+  popup.id = "coordNotifPopupOverlay";
+  popup.className = "coord-notif-popup-overlay";
+  popup.hidden = true;
+  popup.innerHTML = `
+    <div class="coord-notif-popup-card" role="dialog" aria-modal="true" aria-labelledby="coordNotifPopupTitle">
+      <div class="coord-notif-popup-kicker">Aviso da equipe MedCof</div>
+      <h2 id="coordNotifPopupTitle" class="coord-notif-popup-h2"></h2>
+      <p id="coordNotifPopupBody" class="coord-notif-popup-body"></p>
+      <button type="button" class="coord-notif-popup-ok" id="coordNotifPopupOk">Entendi</button>
+    </div>`;
+  document.body.appendChild(popup);
+
+  const btn = document.getElementById("coordNotifBtn");
+  const clearAll = document.getElementById("coordNotifClearAll");
+
+  const togglePanel = () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!panel.hidden) void _coordRefreshNotifUi();
+  };
+
+  btn &&
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
+
+  clearAll &&
+    clearAll.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        await _coordNotifRequest("markAllRead");
+        _coordBriefToast("Todos os avisos foram limpos.");
+        await _coordRefreshNotifUi();
+        panel.hidden = true;
+        if (btn) btn.setAttribute("aria-expanded", "false");
+      } catch (err) {
+        _coordBriefToast((err && err.message) || "Não foi possível limpar.");
+      }
+    });
+
+  document.addEventListener("click", (e) => {
+    if (panel.hidden) return;
+    const t = /** @type {Node} */ (e.target);
+    if (panel.contains(t) || (btn && btn.contains(t))) return;
+    panel.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  });
+
+  await _coordRefreshNotifUi();
+  await _coordRunPopupQueue();
+
+  setInterval(() => {
+    if (sessionStorage.getItem(ACCESS_STATE_KEY) !== "granted") return;
+    if (!panel.hidden) return;
+    void _coordRefreshNotifUi().then(() => _coordRunPopupQueue());
+  }, 120000);
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Assistente do coordenador (OpenAI via Netlify Function — chave só no servidor)
 // ══════════════════════════════════════════════════════════════════
 
@@ -3140,6 +4642,70 @@ function sanitizeCoordChatContextPayload(payload) {
   } catch {
     return { page: "erro", aviso: "contexto_indisponivel" };
   }
+}
+
+/**
+ * @param {string} n
+ * @returns {string}
+ */
+function _normStudentNameKey(n) {
+  return String(n || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Localiza aluno no ranking consolidado (match exato, depois único prefixo/inclusão).
+ * @param {string} query
+ * @returns {object | null}
+ */
+function findStudentInRankingByQuery(query) {
+  const q = _normStudentNameKey(query);
+  if (q.length < 2) return null;
+  const rows = ACCUMULATED_DASHBOARD?.ranking || [];
+  const exact = rows.find((s) => _normStudentNameKey(s.nome) === q);
+  if (exact) return exact;
+  const starts = rows.filter((s) => _normStudentNameKey(s.nome).startsWith(q));
+  if (starts.length === 1) return starts[0];
+  const includes = rows.filter((s) => _normStudentNameKey(s.nome).includes(q));
+  if (includes.length === 1) return includes[0];
+  return null;
+}
+
+/**
+ * Monta payload de contexto do Modo sniper (um aluno) para o Cofbot.
+ * @param {object} student
+ * @returns {Record<string, unknown>}
+ */
+function buildHomeSniperStudentPayload(student) {
+  const nk = _normStudentNameKey(student.nome);
+  const simulados = [];
+  const allSims = _engSimCache?.allSims || [];
+  allSims.forEach((s) => {
+    const n = s.notaByName[nk];
+    if (n != null) {
+      simulados.push({
+        rotulo: s.label || "",
+        titulo: (s.titulo || "").slice(0, 120),
+        notaPercentual: n
+      });
+    }
+  });
+  return {
+    nome: student.nome,
+    turma: student.turma || null,
+    questoesTotal: student.questoes,
+    questoesPorDia: student.questoesDia,
+    taxaAcertoPercentual: student.taxa_acerto ?? null,
+    tempoEstudoMinutos: student.tempo_min ?? null,
+    mesesAtivos: student.activeMonths,
+    faixaEngajamento: student.traction?.label || null,
+    aulas: student.aulas ?? null,
+    flashcards: student.flashcards ?? null,
+    simuladosComNota: simulados
+  };
 }
 
 /**
@@ -3241,6 +4807,14 @@ function buildCoordenadorChatContext() {
           }
         }
       };
+    } else if (page === "mentor") {
+      out = {
+        ...base,
+        mentor:
+          window.__MEDCOF_MENTOR_CTX__ || {
+            nota: "Use Refazer na página Mentor para atualizar o resumo de áreas e temas para o Cofbot."
+          }
+      };
     } else if (page === "simulados") {
       if (window.__MEDCOF_SIM_CHAT_CTX__) {
         out = { ...base, simuladoNaTela: window.__MEDCOF_SIM_CHAT_CTX__ };
@@ -3248,10 +4822,31 @@ function buildCoordenadorChatContext() {
         out = { ...base, simulados: { rotaHash: location.hash || "(início)" } };
       }
     } else {
-      out = {
-        ...base,
-        home: { nota: "Use Engajamento, Período detalhado ou Simulados para dados específicos." }
-      };
+      let sniper = null;
+      try {
+        sniper = window.__MEDCOF_SNIPER_CONTEXT__;
+        if (sniper) window.__MEDCOF_SNIPER_CONTEXT__ = null;
+      } catch {
+        sniper = null;
+      }
+      if (sniper && typeof sniper === "object" && sniper.nome) {
+        out = {
+          ...base,
+          home: {
+            dashboardInicial: true,
+            modoSniper: true,
+            alunoFoco: sniper
+          }
+        };
+      } else {
+        out = {
+          ...base,
+          home: {
+            dashboardInicial: true,
+            nota: "KPIs e gráficos do ciclo. Use Modo sniper na página inicial para focar em um aluno."
+          }
+        };
+      }
     }
   } catch (e) {
     out = { ...base, erroContexto: String(e && e.message) };
@@ -3267,9 +4862,9 @@ function buildCoordenadorChatContext() {
 function getCoordenadorChatSuggestions(page) {
   const map = {
     home: [
+      "Modo sniper: como usar o resumo operacional de um aluno numa conversa individual?",
       "Quais 3 ações eu priorizo na reunião de coordenação esta semana?",
-      "Como explicar a meta de ~20 questões/dia para a turma sem soar genérico?",
-      "O que cruzar entre Engajamento e Simulados antes de falar com um aluno?"
+      "Como explicar a meta de ~20 questões/dia para a turma sem soar genérico?"
     ],
     engagement: [
       "Quem está abaixo de 20 questões/dia neste filtro — e o que sugerir primeiro?",
@@ -3285,6 +4880,11 @@ function getCoordenadorChatSuggestions(page) {
       "Como relacionar o desempenho deste simulado com o engajamento na plataforma?",
       "Quais temas ou áreas priorizar para a ENAMED com base no que está na tela?",
       "A turma está acima ou abaixo da referência — qual mensagem passar na próxima aula?"
+    ],
+    mentor: [
+      "Como alinhar a distribuição de questões por grande área com os temas mais frágeis?",
+      "O que comunicar à turma com base no resumo de desempenho por área?",
+      "Como equilibrar Tendências e Personalizado na preparação para a ENAMED?"
     ]
   };
   return map[page] || map.home;
@@ -3319,19 +4919,42 @@ async function _medcofEnsureSupabaseForChat() {
 function mountCoordenadorChat() {
   if (document.getElementById("medcof-coord-chat-root")) return;
 
+  const nudgeTri =
+    '<svg class="medcof-cofbot-nudge-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5 L20 19 H4 Z"/></svg>';
+
   const root = document.createElement("div");
   root.id = "medcof-coord-chat-root";
+  root.className = "medcof-coord-chat-root--br medcof-cofbot-theme-light";
   root.innerHTML = `
-    <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir Cofbot — assistente do coordenador" aria-expanded="false">
-      <img class="medcof-coord-chat-fab-icon" src="/assets/coordenador-chat-fab.png" alt="" width="44" height="52" decoding="async" draggable="false" />
-    </button>
+    <div class="medcof-cofbot-fab-cluster">
+      <button type="button" class="medcof-cofbot-nudge medcof-cofbot-nudge--tl" data-cofbot-corner="tl" aria-label="Cofbot no canto superior esquerdo">${nudgeTri}</button>
+      <button type="button" class="medcof-cofbot-nudge medcof-cofbot-nudge--tr" data-cofbot-corner="tr" aria-label="Cofbot no canto superior direito">${nudgeTri}</button>
+      <button type="button" class="medcof-cofbot-nudge medcof-cofbot-nudge--bl" data-cofbot-corner="bl" aria-label="Cofbot no canto inferior esquerdo">${nudgeTri}</button>
+      <button type="button" class="medcof-coord-chat-fab" id="medcofCoordChatFab" aria-label="Abrir Cofbot — assistente do coordenador" aria-expanded="false">
+        <img class="medcof-coord-chat-fab-icon" src="/assets/coordenador-chat-fab.png" alt="" width="44" height="52" decoding="async" draggable="false" />
+      </button>
+    </div>
     <div class="medcof-coord-chat-panel" id="medcofCoordChatPanel" hidden>
-      <div class="medcof-coord-chat-head">
-        <div>
-          <div class="medcof-coord-chat-title">Cofbot</div>
-          <div class="medcof-coord-chat-sub">Assistente MedCof com base no que você vê no painel — sem dados sensíveis</div>
+      <div class="medcof-coord-chat-head medcof-cofbot-head">
+        <div class="medcof-cofbot-head-main">
+          <div class="medcof-cofbot-avatar" aria-hidden="true"><img src="/assets/coordenador-chat-fab.png" alt="" width="36" height="42" decoding="async" draggable="false" /></div>
+          <div>
+            <div class="medcof-coord-chat-title">Cofbot</div>
+            <div class="medcof-coord-chat-sub">Assistente MedCof com base no que você vê no painel — sem dados sensíveis</div>
+          </div>
         </div>
-        <button type="button" class="medcof-coord-chat-close" id="medcofCoordChatClose" aria-label="Fechar">×</button>
+        <div class="medcof-cofbot-head-actions">
+          <button type="button" class="medcof-cofbot-icon-btn" id="medcofCoordChatExpand" aria-label="Expandir painel" title="Expandir">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+          </button>
+          <button type="button" class="medcof-cofbot-icon-btn" id="medcofCoordChatDock" aria-label="Mudar posição do Cofbot na página" title="Posição na tela">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="2"/><path d="M14 10h6v6a2 2 0 0 1-2 2h-6"/></svg>
+          </button>
+          <button type="button" class="medcof-cofbot-icon-btn" id="medcofCoordChatClear" aria-label="Limpar histórico do chat" title="Limpar histórico">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+          </button>
+          <button type="button" class="medcof-coord-chat-close" id="medcofCoordChatClose" aria-label="Fechar">×</button>
+        </div>
       </div>
       <div class="medcof-coord-chat-suggestions" id="medcofCoordChatSuggestions">
         <div class="medcof-coord-chat-insight" id="medcofCoordChatInsight" hidden></div>
@@ -3343,11 +4966,73 @@ function mountCoordenadorChat() {
         <input type="text" class="medcof-coord-chat-input" id="medcofCoordChatInput" placeholder="Ex.: quem precisa de acompanhamento neste período?" autocomplete="off" maxlength="2000" />
         <button type="submit" class="medcof-coord-chat-send" id="medcofCoordChatSend">Enviar</button>
       </form>
+      <div class="medcof-cofbot-resize-grip" aria-hidden="true"></div>
     </div>
   `;
   document.body.appendChild(root);
 
+  const COF_CORNER_KEY = "medcofCoordChatCorner";
+  const CORNERS = ["br", "bl", "tr", "tl"];
+
+  /**
+   * Fixa o widget Cofbot em um canto da viewport e persiste a escolha.
+   * @param {string} pos
+   */
+  function applyCofbotCorner(pos) {
+    if (CORNERS.indexOf(pos) < 0) pos = "br";
+    root.className = `medcof-coord-chat-root--${pos}`;
+    try {
+      localStorage.setItem(COF_CORNER_KEY, pos);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function loadCofbotCorner() {
+    let pos = "br";
+    try {
+      pos = localStorage.getItem(COF_CORNER_KEY) || "br";
+    } catch {
+      /* ignore */
+    }
+    applyCofbotCorner(pos);
+  }
+
+  loadCofbotCorner();
+
+  root.querySelectorAll("[data-cofbot-corner]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      applyCofbotCorner(btn.getAttribute("data-cofbot-corner") || "br");
+    });
+  });
+
   const panel = root.querySelector("#medcofCoordChatPanel");
+  const expandBtn = document.getElementById("medcofCoordChatExpand");
+  const dockBtn = document.getElementById("medcofCoordChatDock");
+  if (expandBtn && panel) {
+    expandBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const fs = panel.classList.toggle("medcof-cofbot-panel--fullscreen");
+      expandBtn.setAttribute("aria-pressed", fs ? "true" : "false");
+    });
+  }
+  if (dockBtn) {
+    dockBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      let cur = "br";
+      try {
+        cur = localStorage.getItem(COF_CORNER_KEY) || "br";
+      } catch {
+        /* ignore */
+      }
+      const idx = CORNERS.indexOf(cur);
+      const next = CORNERS[(idx < 0 ? 0 : idx + 1) % CORNERS.length];
+      applyCofbotCorner(next);
+    });
+  }
+
   const fab = root.querySelector("#medcofCoordChatFab");
   const closeBtn = root.querySelector("#medcofCoordChatClose");
   const insightEl = root.querySelector("#medcofCoordChatInsight");
@@ -3466,6 +5151,19 @@ function mountCoordenadorChat() {
   }
   document.addEventListener("pointerdown", onDocPointerDown, true);
 
+  const clearBtn = document.getElementById("medcofCoordChatClear");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      thread = [];
+      messagesEl.innerHTML = "";
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+      renderSuggestions();
+    });
+  }
+
   renderSuggestions();
 
   form.addEventListener("submit", async (e) => {
@@ -3540,8 +5238,21 @@ function mountCoordenadorChat() {
   });
 
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && panelOpen) setPanel(false);
+    if (ev.key !== "Escape" || !panelOpen) return;
+    if (panel && panel.classList.contains("medcof-cofbot-panel--fullscreen")) {
+      panel.classList.remove("medcof-cofbot-panel--fullscreen");
+      if (expandBtn) expandBtn.setAttribute("aria-pressed", "false");
+      return;
+    }
+    setPanel(false);
   });
+
+  window.medcofCofbotSubmitSniperPrompt = function (promptText, contextPayload) {
+    window.__MEDCOF_SNIPER_CONTEXT__ = contextPayload || null;
+    setPanel(true);
+    input.value = promptText || "";
+    form.requestSubmit();
+  };
 }
 
 // ── Exportar resultado do simulado como PDF (via print) ──

@@ -23,8 +23,14 @@
 <body data-page="simulados">
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="brand">
-        <div class="brand-mark" data-institution-initials>UN</div>
+      <div class="brand brand--home-cockpit">
+        <div class="topbar-logo-pair">
+          <div id="institutionLogoSlot" class="topbar-logo-ies">
+            <img class="home-institution-logo" src="logo_unifaa.png" alt="Instituição">
+          </div>
+          <span class="topbar-logo-connector" aria-hidden="true">×</span>
+          <img class="topbar-logo-medcof" src="logo-novo-medcof.avif" alt="Logo do Grupo MedCof">
+        </div>
         <div class="brand-copy">
           <div class="brand-title" data-institution-brand>UNIFAA × MedCof</div>
           <div class="brand-subtitle">Simulados — tendências e personalizados</div>
@@ -43,7 +49,14 @@
     </div>
   </header>
 
-  <main class="page-shell">
+  <main class="page-shell home-cockpit-main">
+    <section class="home-cockpit-intro">
+      <div class="section-kicker">Simulados</div>
+      <h1>Análise de simulados</h1>
+      <p class="home-cockpit-lead">Visualize resultados, evolução temporal e diagnósticos por área, tema e aluno.</p>
+    </section>
+
+
     <!-- Container principal — todo o conteúdo é injetado via JS -->
     <div id="simuladosRoot"></div>
   </main>

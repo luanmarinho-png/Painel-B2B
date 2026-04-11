@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MedCof B2B — Painel Administrativo</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/admin-cofbot.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/supabase-config.js"></script>
@@ -298,7 +301,7 @@ window.parseArr = function(v) {
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg); color: var(--text); min-height: 100vh;
     -webkit-font-smoothing: antialiased;
   }
@@ -368,8 +371,60 @@ window.parseArr = function(v) {
   .dashboard { display: none; min-height: 100vh; }
   .dashboard.visible { display: block; }
   .dash-topbar {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
     padding: 16px 32px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-card);
+  }
+  /* Barra de localização — alinhada à aba ativa (abaixo do topbar / acima das tabs) */
+  .admin-locate-bar.medcof-locate-bar {
+    --medcof-scroll: 0;
+    width: 100%;
+    margin: 0 0 10px;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  .medcof-locate-bar__inner {
+    position: relative;
+    height: 11px;
+    margin-top: 2px;
+  }
+  .medcof-locate-bar__track {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #eef1f5 0%, #e2e6ed 100%);
+    box-shadow: inset 0 2px 5px rgba(15, 23, 42, 0.1);
+  }
+  html[data-theme="dark"] .medcof-locate-bar__track {
+    background: linear-gradient(180deg, #2f3548 0%, #232836 100%);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+  }
+  .medcof-locate-bar__notch {
+    position: absolute;
+    left: calc(var(--medcof-scroll, 0) * 100%);
+    top: 0;
+    width: 22px;
+    height: 22px;
+    margin-left: -11px;
+    margin-top: -11px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    pointer-events: none;
+    z-index: 1;
+    transition: left 0.22s ease;
+  }
+  .medcof-locate-bar__dot {
+    position: absolute;
+    left: calc(var(--medcof-scroll, 0) * 100%);
+    top: -5.5px;
+    width: 11px;
+    height: 11px;
+    margin-left: -5.5px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 1px 4px rgba(220, 38, 38, 0.45);
+    pointer-events: none;
+    z-index: 2;
+    transition: left 0.22s ease;
   }
   .dash-topbar-brand { display: flex; align-items: center; gap: 14px; }
   .dash-topbar-logo { height: 32px; }
@@ -391,6 +446,126 @@ window.parseArr = function(v) {
   .dash-theme-toggle svg { width: 18px; height: 18px; display: block; }
   html[data-theme="dark"] .dash-theme-icon-for-light { display: none; }
   html[data-theme="light"] .dash-theme-icon-for-dark { display: none; }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ── Toggle céu (sol/lua) — estilo referência ── */
+  .dash-sky-toggle {
+    position: relative;
+    width: 62px;
+    height: 30px;
+    padding: 0;
+    border: 2px solid #0a0a0a;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+  .dash-sky-toggle:hover {
+    border-color: #0a0a0a;
+    background: transparent;
+    filter: brightness(1.05);
+  }
+  .dash-sky-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+  .dash-sky-toggle-track {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    overflow: hidden;
+    background: linear-gradient(180deg, #4a5d8a 0%, #7e9bc8 55%, #8da6d4 100%);
+    box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.12);
+  }
+  html[data-theme="light"] .dash-sky-toggle {
+    border-width: 3px;
+    padding: 3px;
+    background: #fff;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  }
+  html[data-theme="light"] .dash-sky-toggle-track {
+    border-radius: 999px;
+    background: linear-gradient(180deg, #89b1f8 0%, #b8d4ff 52%, #e8f2ff 100%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  }
+  .dash-sky-toggle-stars,
+  .dash-sky-toggle-clouds {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    transition: opacity 0.35s ease;
+  }
+  .dash-sky-toggle-stars {
+    opacity: 1;
+    color: #dce4f2;
+    font-size: 7px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+  .dash-sky-toggle-stars span {
+    position: absolute;
+    opacity: 0.95;
+    text-shadow: 0 0 4px rgba(220, 228, 242, 0.5);
+  }
+  .dash-sky-toggle-stars .s1 { right: 10px; top: 6px; font-size: 9px; }
+  .dash-sky-toggle-stars .s2 { right: 22px; top: 14px; font-size: 5px; opacity: 0.85; }
+  .dash-sky-toggle-stars .s3 { right: 6px; top: 16px; font-size: 6px; }
+  .dash-sky-toggle-stars .s4 { right: 16px; top: 5px; font-size: 4px; opacity: 0.75; }
+  .dash-sky-toggle-clouds {
+    opacity: 0;
+  }
+  .dash-sky-toggle-clouds span {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 999px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+  .dash-sky-toggle-clouds .c1 { width: 14px; height: 8px; left: 8px; top: 11px; }
+  .dash-sky-toggle-clouds .c2 { width: 10px; height: 6px; left: 16px; top: 15px; opacity: 0.9; }
+  .dash-sky-toggle-clouds .c3 { width: 11px; height: 7px; left: 22px; top: 8px; opacity: 0.85; }
+  html[data-theme="light"] .dash-sky-toggle-stars { opacity: 0; }
+  html[data-theme="light"] .dash-sky-toggle-clouds { opacity: 1; }
+  .dash-sky-toggle-knob {
+    position: absolute;
+    top: 50%;
+    left: 4px;
+    width: 22px;
+    height: 22px;
+    margin-top: -11px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #f0f4fc 0%, #d8e0f0 100%);
+    box-shadow:
+      inset -3px 0 4px rgba(30, 40, 60, 0.18),
+      0 2px 6px rgba(0, 0, 0, 0.25);
+    transition: transform 0.38s cubic-bezier(0.4, 0, 0.2, 1), background 0.35s ease, box-shadow 0.35s ease;
+    z-index: 3;
+  }
+  html[data-theme="light"] .dash-sky-toggle-knob {
+    left: auto;
+    right: 5px;
+    background: radial-gradient(circle at 35% 35%, #fde047 0%, #f9d71c 45%, #eab308 100%);
+    box-shadow:
+      0 0 0 2px rgba(180, 130, 0, 0.35),
+      inset 0 -2px 4px rgba(180, 100, 0, 0.2),
+      0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+  html[data-theme="dark"] .dash-sky-toggle-knob {
+    left: 5px;
+    right: auto;
+  }
   .dash-topbar-user { font-size: 0.82rem; color: var(--text-soft); }
   .dash-logout-btn {
     padding: 7px 16px; border-radius: var(--radius-sm);
@@ -401,22 +576,73 @@ window.parseArr = function(v) {
   .dash-logout-btn:hover { color: var(--accent); border-color: var(--accent); }
   .dash-content { max-width: 1100px; margin: 0 auto; padding: 40px 32px 60px; }
 
-  /* ── Tabs ── */
+  /* ── Tabs — tipografia alinhada ao app MedCof (Inter 16px / 400 inativo) ── */
   .dash-tabs {
-    display: flex; gap: 4px; background: var(--bg-elevated);
-    border-radius: 14px; padding: 4px; margin-bottom: 36px;
-    border: 1px solid var(--border-subtle);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+    margin-bottom: 28px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: transparent;
+    border-radius: 0;
+    padding-top: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  html[data-theme="light"] .dash-tabs {
+    border-bottom-color: rgb(228, 228, 231);
   }
   .dash-tab {
-    flex: 1; padding: 12px 20px; border: none; background: transparent;
-    color: var(--text-muted); font-size: 0.85rem; font-weight: 600;
-    border-radius: 10px; cursor: pointer; transition: all 0.25s;
-    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 4px 2px;
+    border: none;
+    background: transparent;
+    color: #525252;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 24px;
+    border-radius: 0;
+    cursor: pointer;
+    transition: color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+      background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
   }
-  .dash-tab:hover { color: var(--text-soft); background: var(--tab-hover-bg); }
-  .dash-tab.active { color: var(--text); background: var(--bg-card); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
-  html[data-theme="dark"] .dash-tab.active { box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
-  .dash-tab svg { width: 16px; height: 16px; }
+  html[data-theme="dark"] .dash-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-soft);
+  }
+  .dash-tab:hover {
+    color: #171717;
+    background: transparent;
+  }
+  html[data-theme="dark"] .dash-tab:hover {
+    color: var(--text);
+    background: transparent;
+  }
+  .dash-tab.active {
+    color: #0a0a0a;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+  html[data-theme="dark"] .dash-tab.active {
+    color: var(--text);
+    font-weight: 700;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+  .dash-tab svg { width: 18px; height: 18px; flex-shrink: 0; stroke: currentColor; }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
@@ -1138,20 +1364,45 @@ window.parseArr = function(v) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         <span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:#dc2626;color:#fff;font-size:0.6rem;font-weight:800;min-width:16px;height:16px;border-radius:50%;line-height:16px;text-align:center;padding:0 3px">0</span>
       </button>
-      <button type="button" id="adminThemeToggle" class="dash-theme-toggle" onclick="window._toggleAdminTheme()" aria-pressed="false" title="Alternar tema claro/escuro">
-        <span class="dash-theme-icon dash-theme-icon-for-dark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg></span>
-        <span class="dash-theme-icon dash-theme-icon-for-light" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
+      <button type="button" id="adminThemeToggle" class="dash-sky-toggle" onclick="window._toggleAdminTheme()" aria-pressed="false" title="Alternar tema claro/escuro">
+        <span class="dash-sky-toggle-track" aria-hidden="true"></span>
+        <span class="dash-sky-toggle-stars" aria-hidden="true">
+          <span class="s1">★</span><span class="s2">·</span><span class="s3">✦</span><span class="s4">·</span>
+        </span>
+        <span class="dash-sky-toggle-clouds" aria-hidden="true">
+          <span class="c1"></span><span class="c2"></span><span class="c3"></span>
+        </span>
+        <span class="dash-sky-toggle-knob" aria-hidden="true"></span>
+        <span class="visually-hidden">Alternar tema claro ou escuro</span>
       </button>
-      <span class="dash-topbar-user" id="topbarUser" style="cursor:pointer;position:relative" onclick="window._toggleAdminPopover()">—</span>
-      <div id="adminPopover" style="display:none;position:absolute;top:48px;right:80px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,0.25);z-index:100;min-width:280px;max-width:360px">
-        <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:8px" id="popoverUserName"></div>
-        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px" id="popoverUserRole"></div>
-        <div style="font-size:0.78rem;font-weight:600;color:var(--text);margin-bottom:6px">IES responsáveis:</div>
-        <div id="popoverIesList" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;max-height:200px;overflow-y:auto"></div>
+      <span id="topbarUserTrigger" class="dash-topbar-user-wrap" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;position:relative" onclick="window._toggleAdminPopover()">
+        <img id="topbarUserAvatar" alt="" width="32" height="32" style="display:none;width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid var(--border);flex-shrink:0" decoding="async" />
+        <span class="dash-topbar-user" id="topbarUser">—</span>
+      </span>
+      <input type="file" id="adminAvatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" />
+      <div id="adminPopover" style="display:none;position:absolute;top:48px;right:80px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,0.25);z-index:100;min-width:300px;max-width:400px">
+        <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
+          <div style="flex-shrink:0">
+            <img id="popoverAvatarImg" alt="" width="56" height="56" style="display:none;width:56px;height:56px;border-radius:50%;object-fit:cover;border:1px solid var(--border)" decoding="async" />
+            <div id="popoverAvatarPlaceholder" style="width:56px;height:56px;border-radius:50%;background:var(--bg-elevated);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:1.35rem;color:var(--text-muted)">👤</div>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:4px;word-break:break-word" id="popoverUserName"></div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:10px" id="popoverUserRole"></div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              <button type="button" class="btn-secondary" style="padding:6px 10px;font-size:0.74rem" onclick="document.getElementById('adminAvatarInput').click()">Adicionar / trocar foto</button>
+              <button type="button" class="btn-secondary" style="padding:6px 10px;font-size:0.74rem" onclick="window._adminRequestPasswordReset()">Trocar senha (e-mail)</button>
+            </div>
+            <div style="font-size:0.7rem;color:var(--text-muted);margin-top:6px;line-height:1.35">A nova senha é definida pelo link enviado ao seu e-mail (mesmo fluxo de recuperação).</div>
+          </div>
+        </div>
+        <div style="font-size:0.78rem;font-weight:600;color:var(--text);margin-bottom:6px">IES no painel (suas responsáveis)</div>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;line-height:1.4">Marque quais deseja ver ao usar <strong>Só minhas IES</strong>. Se nenhuma estiver marcada, usamos todas as vinculadas.</div>
+        <div id="popoverIesList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:200px;overflow-y:auto"></div>
         <hr style="border:none;border-top:1px solid var(--border);margin:10px 0">
-        <div style="display:flex;gap:8px">
-          <button onclick="window._setAdminFilter('mine')" class="btn-secondary" style="flex:1;padding:8px;font-size:0.76rem">Só minhas IES</button>
-          <button onclick="window._setAdminFilter('all')" class="btn-secondary" style="flex:1;padding:8px;font-size:0.76rem">Ver todas</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" onclick="window._setAdminFilter('mine')" class="btn-secondary" style="flex:1;min-width:120px;padding:8px;font-size:0.76rem">Só minhas IES</button>
+          <button type="button" onclick="window._setAdminFilter('all')" class="btn-secondary" style="flex:1;min-width:120px;padding:8px;font-size:0.76rem">Ver todas</button>
         </div>
       </div>
       <button class="dash-logout-btn" id="logoutBtn">Sair</button>
@@ -1171,6 +1422,14 @@ window.parseArr = function(v) {
   </div>
 
   <div class="dash-content">
+
+    <div id="medcofLocateBar" class="medcof-locate-bar admin-locate-bar" aria-hidden="false">
+      <div class="medcof-locate-bar__inner">
+        <div class="medcof-locate-bar__track"></div>
+        <div class="medcof-locate-bar__notch"></div>
+        <div class="medcof-locate-bar__dot"></div>
+      </div>
+    </div>
 
     <div class="dash-tabs">
       <button class="dash-tab active" data-tab="institutions">
@@ -1615,20 +1874,7 @@ window.parseArr = function(v) {
         </div>
       </div>
 
-      <!-- ── UPLOAD DE RESULTADO: gatilho + modal ── -->
-      <div id="simUploadTriggerBar" style="margin-bottom:24px;border:1.5px solid var(--border);border-radius:14px;background:var(--bg-card);display:flex;align-items:center;justify-content:space-between;padding:14px 18px;gap:12px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:10px;min-width:0">
-          <span style="font-size:1.1rem;flex-shrink:0">⬆</span>
-          <div>
-            <div style="font-size:0.85rem;font-weight:700;color:var(--text)">Upload de Resultado</div>
-            <div style="font-size:0.73rem;color:var(--text-muted)">Abra o assistente para subir a planilha (Remark ou export) do simulado fechado no Banco de Questões</div>
-          </div>
-        </div>
-        <button type="button" class="btn-primary" onclick="window._openSimUploadModal()" style="padding:10px 18px;font-size:0.82rem;font-weight:700;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;flex-shrink:0">
-          ⬆ Abrir upload
-        </button>
-      </div>
-
+      <!-- ── UPLOAD DE RESULTADO: modal (aberto pelos botões ⬆ da grade, com IES+simulado pré-selecionados) ── -->
       <div id="simUploadModal" style="display:none;position:fixed;inset:0;z-index:340;background:rgba(0,0,0,0.78);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:16px;overflow-y:auto;box-sizing:border-box">
         <div style="background:var(--bg-card);border:1.5px solid var(--border);border-radius:16px;width:min(100%,720px);max-height:min(92vh,900px);overflow:hidden;display:flex;flex-direction:column;position:relative;margin:auto;box-shadow:0 24px 64px rgba(0,0,0,0.35)">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border-subtle);flex-shrink:0">
@@ -1642,21 +1888,7 @@ window.parseArr = function(v) {
             <div id="simUploadPostStep" style="display:none;padding-top:18px;text-align:center">
               <div style="font-size:2.5rem;margin-bottom:8px">✅</div>
               <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:6px">Processamento concluído</div>
-              <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:16px;line-height:1.45">O resultado foi cadastrado. Preencha os links abaixo (opcional), salve e siga para boletins ou relatórios.</div>
-              <div style="text-align:left;max-width:440px;margin:0 auto 20px;padding:14px 16px;border-radius:12px;border:1px solid var(--border-subtle);background:var(--bg-elevated)">
-                <div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px">Links no painel do coordenador <span style="font-weight:600;text-transform:none;letter-spacing:0;color:var(--text-soft)">(opcional)</span></div>
-                <div class="field" style="margin-bottom:12px">
-                  <label style="font-size:0.76rem" for="bqLinkGabarito">URL do gabarito</label>
-                  <input type="url" id="bqLinkGabarito" placeholder="https://drive.google.com/file/d/..." style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg-card);color:var(--text);font-size:0.85rem;outline:none;box-sizing:border-box">
-                  <div class="hint" style="margin-top:4px">Google Drive, PDF, etc.</div>
-                </div>
-                <div class="field" style="margin-bottom:12px">
-                  <label style="font-size:0.76rem" for="bqLinkBoletins">URL dos boletins (pasta)</label>
-                  <input type="url" id="bqLinkBoletins" placeholder="https://drive.google.com/drive/folders/..." style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg-card);color:var(--text);font-size:0.85rem;outline:none;box-sizing:border-box">
-                  <div class="hint" style="margin-top:4px">Pasta no Drive com os PDFs dos boletins.</div>
-                </div>
-                <button type="button" class="btn-secondary" id="simUploadPostSaveLinks" style="width:100%;padding:10px 14px;font-size:0.82rem;font-weight:600">Salvar links</button>
-              </div>
+              <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:16px;line-height:1.45">O resultado foi cadastrado. O link do gabarito no painel do coordenador vem do cadastro do simulado (Banco de Questões → Editar). Boletins ficam no Storage.</div>
               <div style="display:flex;flex-direction:column;gap:10px;max-width:400px;margin:0 auto">
                 <button type="button" class="btn-primary" id="simUploadPostBtnBoletins" style="width:100%;padding:12px 16px">📄 Emitir boletins</button>
                 <button type="button" class="btn-secondary" id="simUploadPostBtnEmail" style="width:100%;padding:12px 16px;border:1.5px solid var(--border)">📧 Enviar e-mail</button>
@@ -2001,6 +2233,49 @@ window.parseArr = function(v) {
                   <tr><td colspan="7" class="bq-empty">Nenhuma questão pendente.</td></tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+         </div>
+        </div>
+
+        <!-- ── SUPERADMIN: Mentor (planejamento) — abaixo de Revisão de questões ── -->
+        <div id="bqPanelMentor" style="display:none;margin-bottom:16px">
+         <div style="border:1.5px solid var(--border);border-radius:14px;background:var(--bg-card);overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;cursor:pointer;user-select:none" onclick="toggleCollapse('bqBody_mentor', this)">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:1rem">🧭</span>
+              <div style="font-size:0.87rem;font-weight:700;color:var(--text)">Mentor — planejamento do simulado</div>
+            </div>
+            <span class="collapse-chev" style="color:var(--text-muted);font-size:0.8rem">▼</span>
+          </div>
+          <div id="bqBody_mentor" style="display:none;padding:0 18px 18px">
+            <div style="padding:4px 0 16px;border-bottom:1px solid var(--border)">
+              <h3 style="margin:0 0 8px;font-size:0.95rem;font-weight:800;color:var(--text)">Liberação nos painéis (todas as IES)</h3>
+              <p style="margin:0 0 12px;font-size:0.82rem;color:var(--text-muted);line-height:1.5">Quando estiver pronto, libere o <strong>card Mentor na aba Simulados</strong> para coordenadores de todas as instituições. Requer migração <code style="font-size:0.78rem">scripts/sql/medcof_app_config.sql</code> (ou documento equivalente no Mongo).</p>
+              <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
+                <span id="saMentorReleaseStatus" style="font-size:0.82rem;font-weight:700;color:var(--text)">Status: —</span>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:10px">
+                <button type="button" class="btn-primary" id="saMentorReleaseBtn" style="padding:10px 18px;font-size:0.85rem">Liberar Mentor para coordenadores</button>
+                <button type="button" class="btn-secondary" id="saMentorHideBtn" style="padding:10px 18px;font-size:0.85rem">Ocultar Mentor nos painéis</button>
+              </div>
+              <p id="saMentorReleaseHint" style="margin:12px 0 0;font-size:0.75rem;color:var(--text-muted);line-height:1.45"></p>
+            </div>
+            <div style="padding-top:16px">
+              <div class="dash-hero-pill" style="display:inline-block;margin-bottom:8px">Interno MedCof</div>
+              <h3 style="margin:0 0 8px;font-size:1rem;font-weight:800;color:var(--text)">Testar no contexto de uma IES</h3>
+              <p class="section-desc" style="margin:0 0 14px;max-width:720px;font-size:0.84rem;line-height:1.5;color:var(--text-muted)">Escolha a instituição e abra no iframe (sua sessão superadmin autoriza o planejamento).</p>
+              <label style="display:block;font-size:0.72rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">Instituição</label>
+              <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px">
+                <select id="saMentorPilotInst" style="flex:1;min-width:220px;max-width:420px;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
+                  <option value="">Selecione a IES…</option>
+                </select>
+                <button type="button" class="btn-primary" id="saMentorPilotOpenBtn" style="padding:10px 18px;font-size:0.85rem">Abrir Mentor nesta IES</button>
+              </div>
+              <p id="saMentorPilotHint" style="font-size:0.78rem;color:var(--text-muted);margin:0 0 14px;line-height:1.45">Selecione uma IES e confirme para carregar o fluxo na área abaixo.</p>
+              <div style="border:1.5px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg-elevated);max-width:min(100%,1100px);min-height:min(72vh,780px)">
+                <iframe id="saMentorPilotFrame" title="Mentor piloto — contexto da IES" style="display:block;width:100%;height:min(72vh,780px);border:0;background:#fff" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+              </div>
             </div>
           </div>
          </div>
@@ -2480,6 +2755,46 @@ window.parseArr = function(v) {
 
   initAdminTheme();
 
+  /**
+   * Posiciona o indicador vermelho da barra sob a aba ativa (mesma largura útil das tabs).
+   */
+  function initAdminLocateBar() {
+    const bar = document.getElementById("medcofLocateBar");
+    const inner = bar?.querySelector(".medcof-locate-bar__inner");
+    if (!bar || !inner) return;
+
+    function updateAdminTabLocate() {
+      const active = document.querySelector(".dash-tab.active");
+      if (!active || active.offsetParent === null) return;
+      const ir = inner.getBoundingClientRect();
+      const tr = active.getBoundingClientRect();
+      const trackW = ir.width;
+      if (trackW <= 0) return;
+      const center = tr.left + tr.width / 2;
+      const p = (center - ir.left) / trackW;
+      bar.style.setProperty("--medcof-scroll", String(Math.min(1, Math.max(0, p))));
+    }
+
+    window._updateAdminTabLocate = updateAdminTabLocate;
+
+    updateAdminTabLocate();
+    window.addEventListener("resize", updateAdminTabLocate, { passive: true });
+    window.addEventListener("scroll", updateAdminTabLocate, { passive: true });
+
+    const tabsRoot = document.querySelector(".dash-tabs");
+    if (tabsRoot) {
+      const mo = new MutationObserver(() => updateAdminTabLocate());
+      mo.observe(tabsRoot, { attributes: true, attributeFilter: ["class", "style"], subtree: true });
+    }
+
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => {
+        requestAnimationFrame(updateAdminTabLocate);
+      });
+    }
+  }
+  initAdminLocateBar();
+
   function showDashboard(email) {
     overlay.classList.add("hidden");
     dashboard.classList.add("visible");
@@ -2488,6 +2803,38 @@ window.parseArr = function(v) {
     // Carregar dados do admin logado para popover e filtro
     _loadAdminProfile();
     if (typeof window.mountAdminCofbot === "function") window.mountAdminCofbot();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (typeof window._updateAdminTabLocate === "function") window._updateAdminTabLocate();
+      });
+    });
+  }
+
+  function _adminApplyAvatarToDom(url) {
+    const u = url && String(url).trim();
+    const topImg = document.getElementById('topbarUserAvatar');
+    const popImg = document.getElementById('popoverAvatarImg');
+    const popPh = document.getElementById('popoverAvatarPlaceholder');
+    if (topImg) {
+      if (u) {
+        topImg.src = u;
+        topImg.style.display = '';
+      } else {
+        topImg.removeAttribute('src');
+        topImg.style.display = 'none';
+      }
+    }
+    if (popImg && popPh) {
+      if (u) {
+        popImg.src = u;
+        popImg.style.display = '';
+        popPh.style.display = 'none';
+      } else {
+        popImg.removeAttribute('src');
+        popImg.style.display = 'none';
+        popPh.style.display = '';
+      }
+    }
   }
 
   async function _loadAdminProfile() {
@@ -2501,35 +2848,202 @@ window.parseArr = function(v) {
         nome: meta.nome || user.email.split('@')[0],
         role: meta.role || 'admin',
         instituicao: meta.instituicao || '',
-        instituicoes_responsavel: meta.instituicoes_responsavel || []
+        instituicoes_responsavel: meta.instituicoes_responsavel || [],
+        avatar_url: meta.avatar_url || ''
       };
-      // Atualizar topbar com nome (não email)
       const topbar = document.getElementById('topbarUser');
       if (topbar) topbar.textContent = window._adminProfile.nome || user.email;
-      // Inicializar filtro
+      _adminApplyAvatarToDom(window._adminProfile.avatar_url);
       const saved = localStorage.getItem('admin_ies_filter');
-      window._adminIesFilter = saved || 'all'; // 'all' ou 'mine'
+      window._adminIesFilter = saved || 'all';
     } catch(_) {}
   }
+
+  window._adminRequestPasswordReset = async function() {
+    const email = window._adminProfile && window._adminProfile.email;
+    if (!email) {
+      if (typeof showToast === 'function') showToast('E-mail não disponível.', 'error');
+      return;
+    }
+    try {
+      const resp = await fetch('/.netlify/functions/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok && data.error) {
+        if (typeof showToast === 'function') showToast(String(data.error), 'error');
+        return;
+      }
+      if (typeof showToast === 'function') {
+        showToast('Se o e-mail estiver cadastrado, você receberá o link para criar uma nova senha.', 'success');
+      }
+    } catch (e) {
+      if (typeof showToast === 'function') showToast('Erro ao solicitar o e-mail.', 'error');
+    }
+    const pop = document.getElementById('adminPopover');
+    if (pop) pop.style.display = 'none';
+  };
+
+  function _adminResizeImageToJpegBlob(file, maxDim) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        const m = maxDim || 320;
+        if (w > m || h > m) {
+          if (w >= h) {
+            h = Math.round((h * m) / w);
+            w = m;
+          } else {
+            w = Math.round((w * m) / h);
+            h = m;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Não foi possível processar a imagem'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error('Falha ao gerar imagem'));
+          },
+          'image/jpeg',
+          0.88
+        );
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Imagem inválida'));
+      };
+      img.src = url;
+    });
+  }
+
+  async function _adminOnAvatarFileChange(ev) {
+    const input = ev.target;
+    const f = input.files && input.files[0];
+    if (!f || !f.type.startsWith('image/')) {
+      if (input) input.value = '';
+      return;
+    }
+    try {
+      const blob = await _adminResizeImageToJpegBlob(f, 320);
+      const j = await window._adminProxyAction({ action: 'admin_avatar_signed_upload', ext: 'jpg' });
+      const put = await fetch(j.signedUrl, {
+        method: 'PUT',
+        body: blob,
+        headers: {
+          'Content-Type': j.contentType || 'image/jpeg',
+          'x-upsert': 'true'
+        }
+      });
+      if (!put.ok) throw new Error('Falha ao enviar foto');
+      const sb = getSupabaseClient();
+      const { error } = await sb.auth.updateUser({ data: { avatar_url: j.publicUrl } });
+      if (error) throw error;
+      await _loadAdminProfile();
+      if (typeof showToast === 'function') showToast('Foto atualizada', 'success');
+    } catch (e) {
+      const msg = e && e.message ? e.message : 'Erro ao atualizar foto';
+      if (typeof showToast === 'function') showToast(msg, 'error');
+    } finally {
+      if (input) input.value = '';
+    }
+  }
+
+  const _adminAvatarInputEl = document.getElementById('adminAvatarInput');
+  if (_adminAvatarInputEl) _adminAvatarInputEl.addEventListener('change', _adminOnAvatarFileChange);
+
+  function _adminGetVisibleIesSelection() {
+    const ies = (window._adminProfile && window._adminProfile.instituicoes_responsavel) || [];
+    let subset = null;
+    try {
+      subset = JSON.parse(localStorage.getItem('admin_visible_ies') || 'null');
+    } catch (_) {
+      subset = null;
+    }
+    if (!Array.isArray(subset) || !subset.length) return null;
+    const filtered = subset.filter((s) => ies.includes(s));
+    return filtered.length ? filtered : null;
+  }
+
+  window._adminOnVisibleIesChange = function() {
+    const list = document.getElementById('popoverIesList');
+    if (!list) return;
+    const boxes = list.querySelectorAll('input[type="checkbox"][data-ies-slug]');
+    const ies = (window._adminProfile && window._adminProfile.instituicoes_responsavel) || [];
+    const selected = [];
+    boxes.forEach((cb) => {
+      if (cb.checked) selected.push(cb.dataset.iesSlug);
+    });
+    try {
+      if (selected.length === ies.length || selected.length === 0) {
+        localStorage.removeItem('admin_visible_ies');
+      } else {
+        localStorage.setItem('admin_visible_ies', JSON.stringify(selected));
+      }
+    } catch (_) {}
+    if (window._adminIesFilter === 'mine' && typeof loadAndRenderInstitutions === 'function') {
+      try {
+        localStorage.removeItem('_admc_inst');
+      } catch (_) {}
+      loadAndRenderInstitutions();
+    }
+    if (typeof window._updateInstSectionTitle === 'function') window._updateInstSectionTitle();
+  };
 
   window._toggleAdminPopover = function() {
     const pop = document.getElementById('adminPopover');
     if (!pop) return;
-    if (pop.style.display === 'block') { pop.style.display = 'none'; return; }
+    if (pop.style.display === 'block') {
+      pop.style.display = 'none';
+      return;
+    }
     const p = window._adminProfile || {};
     document.getElementById('popoverUserName').textContent = p.nome || p.email || '—';
-    document.getElementById('popoverUserRole').textContent = (p.role || 'admin').toUpperCase() + (p.instituicao ? ` · ${p.instituicao.toUpperCase()}` : '');
+    document.getElementById('popoverUserRole').textContent =
+      (p.role || 'admin').toUpperCase() + (p.instituicao ? ` · ${p.instituicao.toUpperCase()}` : '');
+    _adminApplyAvatarToDom(p.avatar_url || '');
     const list = document.getElementById('popoverIesList');
     const ies = p.instituicoes_responsavel || [];
+    const vis = _adminGetVisibleIesSelection();
     if (ies.length) {
-      list.innerHTML = ies.map(s => `<span style="padding:3px 10px;border-radius:6px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);color:#22c55e;font-size:0.75rem;font-weight:600">${s.toUpperCase().replace(/-/g,' ')}</span>`).join('');
+      const checked = (slug) => (vis === null ? true : vis.includes(slug));
+      list.innerHTML = ies
+        .map((slug) => {
+          const label = slug.toUpperCase().replace(/-/g, ' ');
+          const id = `iesVis_${slug.replace(/[^a-z0-9_-]/gi, '_')}`;
+          const ch = checked(slug) ? ' checked' : '';
+          return `<label for="${id}" style="display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text);cursor:pointer;padding:4px 6px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated)">
+            <input type="checkbox" id="${id}" data-ies-slug="${slug.replace(/"/g, '')}"${ch} onchange="window._adminOnVisibleIesChange()" style="accent-color:var(--accent);width:15px;height:15px;flex-shrink:0" />
+            <span style="font-weight:600">${label}</span>
+          </label>`;
+        })
+        .join('');
     } else {
-      list.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Nenhuma IES vinculada — vendo todas</span>';
+      list.innerHTML =
+        '<span style="font-size:0.78rem;color:var(--text-muted)">Nenhuma IES vinculada — em <strong>Só minhas IES</strong> o painel mostra todas as instituições.</span>';
     }
     pop.style.display = 'block';
-    // Fechar ao clicar fora
     setTimeout(() => {
-      const close = (e) => { if (!pop.contains(e.target) && e.target.id !== 'topbarUser') { pop.style.display = 'none'; document.removeEventListener('click', close); } };
+      const close = (e) => {
+        const t = e.target;
+        if (!pop.contains(t) && t.id !== 'topbarUserTrigger' && !t.closest('#topbarUserTrigger')) {
+          pop.style.display = 'none';
+          document.removeEventListener('click', close);
+        }
+      };
       document.addEventListener('click', close);
     }, 50);
   };
@@ -2551,7 +3065,8 @@ window.parseArr = function(v) {
     const isMine = window._adminIesFilter === 'mine';
     if (isMine) {
       const myIes = window._adminProfile?.instituicoes_responsavel || [];
-      const count = myIes.length;
+      const vis = _adminGetVisibleIesSelection();
+      const count = vis && vis.length ? vis.length : myIes.length;
       titleEl.textContent = `Minhas Instituições (${count})`;
     } else {
       const total = document.querySelectorAll('#instGrid .inst-card').length;
@@ -2559,12 +3074,23 @@ window.parseArr = function(v) {
     }
   };
 
-  // Função global para checar se uma IES pertence ao admin
+  // Função global para checar se uma IES aparece para o admin (filtro "minhas" + seleção no perfil)
   window._isMyIes = function(slug) {
     if (window._adminIesFilter !== 'mine') return true;
     const ies = window._adminProfile?.instituicoes_responsavel || [];
-    if (!ies.length) return true; // sem vínculo = vê tudo
-    return ies.includes(slug);
+    if (!ies.length) return true;
+    let subset = null;
+    try {
+      subset = JSON.parse(localStorage.getItem('admin_visible_ies') || 'null');
+    } catch (_) {
+      subset = null;
+    }
+    let allowed = ies;
+    if (Array.isArray(subset) && subset.length) {
+      allowed = subset.filter((s) => ies.includes(s));
+      if (!allowed.length) allowed = ies;
+    }
+    return allowed.includes(slug);
   };
 
   function showLogin() {
@@ -2698,8 +3224,34 @@ window.parseArr = function(v) {
       document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
       tab.classList.add("active");
       $("tab-" + tab.dataset.tab).classList.add("active");
+      requestAnimationFrame(() => {
+        if (typeof window._updateAdminTabLocate === "function") window._updateAdminTabLocate();
+      });
     });
   });
+
+  /**
+   * Carrega o Mentor no iframe (piloto superadmin) no contexto da IES escolhida.
+   */
+  window._openMentorPilotIframe = function () {
+    const sel = document.getElementById("saMentorPilotInst");
+    const frame = document.getElementById("saMentorPilotFrame");
+    const hint = document.getElementById("saMentorPilotHint");
+    if (!sel || !frame) return;
+    const slug = String(sel.value || "").trim();
+    if (!slug) {
+      if (hint) hint.textContent = "Selecione uma IES na lista acima.";
+      return;
+    }
+    const base = String(window.location.origin || "").replace(/\/$/, "");
+    const url = `${base}/${encodeURIComponent(slug)}/mentor.html`;
+    frame.src = url;
+    if (hint) {
+      hint.textContent = "Carregando o Mentor no contexto desta IES…";
+    }
+  };
+  const _mentorPilotBtn = document.getElementById("saMentorPilotOpenBtn");
+  if (_mentorPilotBtn) _mentorPilotBtn.addEventListener("click", () => window._openMentorPilotIframe());
 })();
 </script>
 
@@ -2916,6 +3468,7 @@ function populateInstSelects(data) {
     { id: 'createInst',      first: '<option value="">Selecione...</option>' },
     { id: 'updateInst',      first: '<option value="">Selecione...</option>' },
     { id: 'simInst',         first: '<option value="">Selecione...</option>' },
+    { id: 'saMentorPilotInst', first: '<option value="">Selecione a IES…</option>' },
   ];
   const sorted = [...data].sort((a, b) =>
     (a.nome || a.slug).localeCompare(b.nome || b.slug, 'pt-BR', { sensitivity: 'base' })
@@ -3460,27 +4013,10 @@ window._renderGestaoGrid = function() {
     }
   }
 
-  // Build set of sim refs that have uploaded results (upload bar usa iesData inteiro, não o filtro)
+  // Build set of sim refs that have uploaded results (usa iesData inteiro, não o filtro)
   const _uploadedRefs = new Set();
   (window._boletimSimRefs || []).forEach(r => _uploadedRefs.add(r.simulado_ref));
   window._uploadedRefs = _uploadedRefs;
-
-  const uploadBar = document.getElementById('simUploadTriggerBar');
-  if (uploadBar) {
-    let pendingUpload = false;
-    for (const ic of iesData) {
-      for (const r of ic.simRows) {
-        if (r.sim.status !== 'fechado') continue;
-        const ref = 'bq_' + ic.slug + '_' + r.sim.id.slice(0, 8);
-        if (!_uploadedRefs.has(ref)) {
-          pendingUpload = true;
-          break;
-        }
-      }
-      if (pendingUpload) break;
-    }
-    uploadBar.style.display = pendingUpload ? '' : 'none';
-  }
 
   // ── Render ─────────────────────────────────────────────────────────
   if (!filtered.length) {
@@ -3548,7 +4084,6 @@ window._renderGestaoGrid = function() {
             if (hasResult) {
               return '<button onclick="window._openBoletimModal(\'' + slug + '\',\'' + s.id + '\')" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Gerar Boletins">📄 Boletins</button>'
                    + '<button onclick="window._openBoletimEmailCoordModal(\'' + slug + '\',\'' + s.id + '\')" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Avisar coordenador por e-mail (boletins disponíveis)">📧</button>'
-                   + '<button onclick="window._editSimLinks(\'' + slug + '\',\'' + s.id + '\',\'' + simTituloEsc + '\')" style="padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.72rem;cursor:pointer" title="Editar link do gabarito">🔗</button>'
                    + '<button onclick="window._clearSimResult(\'' + slug + '\',\'' + s.id + '\',\'' + simTituloEsc + '\')" style="padding:4px 10px;border-radius:7px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.07);color:#ef4444;font-size:0.72rem;cursor:pointer" title="Apagar resultado — permite novo upload">🗑️</button>';
             } else {
               return '<button disabled style="padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.72rem;cursor:not-allowed;opacity:0.5" title="Boletins indisponível — faça upload do resultado primeiro">📄 Boletins</button>';
@@ -3830,90 +4365,6 @@ window._desvincularSimIES = async function(simId, slug) {
       if (typeof window._renderGestaoGrid === 'function') window._renderGestaoGrid();
     }
   } catch(e) { console.warn('Re-fetch simulados_banco falhou:', e); }
-};
-
-// ── Edição rápida: link do gabarito (PATCH no __RANKING__) ──
-window._editSimLinks = async function(slug, simId, simTitulo) {
-  const simRef = `bq_${slug}_${simId.slice(0,8)}`;
-
-  // Buscar __RANKING__ atual para preencher o campo
-  let currentLink = '';
-  let currentBoletinsLink = '';
-  try {
-    const rows = await window._supaRest(
-      'simulado_respostas',
-      `simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&select=respostas`
-    );
-    if (rows && rows.length && rows[0].respostas) {
-      currentLink = rows[0].respostas.link_gabarito || '';
-      currentBoletinsLink = rows[0].respostas.link_boletins || '';
-    }
-  } catch(_e) {}
-
-  // Modal overlay
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
-  overlay.innerHTML = `
-    <div style="background:var(--bg-card);border:1.5px solid var(--border);border-radius:16px;padding:28px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-        <h3 style="font-size:1rem;font-weight:800;color:var(--text);margin:0">🔗 Editar links</h3>
-        <button onclick="this.closest('div[style*=fixed]').remove()" style="background:none;border:none;color:var(--text-muted);font-size:1.2rem;cursor:pointer;padding:4px">✕</button>
-      </div>
-      <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 16px">${simTitulo}</p>
-      <label style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;display:block;margin-bottom:6px">Link do gabarito</label>
-      <input id="_editGabLink" type="url" value="${currentLink}" placeholder="https://drive.google.com/file/d/..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.85rem;outline:none;box-sizing:border-box">
-      <div style="font-size:0.68rem;color:var(--text-muted);margin:6px 0 16px">Cole o link público do gabarito (Google Drive, PDF, etc.)</div>
-      <label style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;display:block;margin-bottom:6px">Link dos boletins</label>
-      <input id="_editBoletinsLink" type="url" value="${currentBoletinsLink}" placeholder="https://drive.google.com/drive/folders/..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.85rem;outline:none;box-sizing:border-box">
-      <div style="font-size:0.68rem;color:var(--text-muted);margin:6px 0 20px">Cole o link da pasta do Google Drive com os boletins em PDF.</div>
-      <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button onclick="this.closest('div[style*=fixed]').remove()" style="padding:8px 20px;border-radius:10px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.82rem;font-weight:600;cursor:pointer">Cancelar</button>
-        <button id="_editGabSave" style="padding:8px 24px;border-radius:10px;border:none;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;font-size:0.82rem;font-weight:700;cursor:pointer">Salvar</button>
-      </div>
-      <div id="_editGabFeedback" style="margin-top:10px;font-size:0.78rem;text-align:center"></div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  // Focus input
-  setTimeout(() => document.getElementById('_editGabLink')?.focus(), 100);
-
-  // Save handler
-  document.getElementById('_editGabSave').onclick = async () => {
-    const newLink = (document.getElementById('_editGabLink')?.value || '').trim();
-    const newBoletinsLink = (document.getElementById('_editBoletinsLink')?.value || '').trim();
-    const fb = document.getElementById('_editGabFeedback');
-    const btn = document.getElementById('_editGabSave');
-    btn.disabled = true; btn.textContent = 'Salvando...';
-
-    try {
-      const rows = await window._supaRest(
-        'simulado_respostas',
-        `simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&select=respostas`
-      );
-      if (!rows || !rows.length) throw new Error('Ranking não encontrado');
-
-      const updated = { ...rows[0].respostas, link_gabarito: newLink || null, link_boletins: newBoletinsLink || null };
-      updated.link_boletins_pacotes = null;
-      updated.link_boletins_pacotes_rotulos = null;
-      updated.link_boletins_rotulo = null;
-      const patchResp = await window._supaWrite(
-        `simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__`,
-        'PATCH',
-        { respostas: updated },
-        { prefer: 'return=minimal' }
-      );
-      if (!patchResp.ok) throw new Error('Erro HTTP ' + patchResp.status);
-
-      fb.style.color = 'var(--green)';
-      fb.textContent = '✓ Link salvo com sucesso!';
-      setTimeout(() => overlay.remove(), 1200);
-    } catch(e) {
-      fb.style.color = '#ef4444';
-      fb.textContent = 'Erro: ' + e.message;
-      btn.disabled = false; btn.textContent = 'Salvar';
-    }
-  };
 };
 
 // ── Apagar apenas o resultado (simulado_respostas) sem desvincular o simulado da IES ──
@@ -6145,7 +6596,7 @@ window._confirmProfExclListBeforeUpload = async function(slugHint) {
     } catch(e) { log("Erro: "+(e?.message||String(e)||'desconhecido'),"err"); console.error(e); }
     finally {
       $("btnProcess").disabled=false;
-      $("btnProcess").innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg> Processar e gerar arquivo';
+      $("btnProcess").innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg> Processar e publicar';
       updateBtn();
     }
   });
@@ -6751,27 +7202,6 @@ window._netlifyDeploy = async function(filesObj, progressEl, onSuccess) {
     <section class="section-shell">
       <div class="section-head">
         <div>
-          <div class="section-kicker">Evolução do ciclo</div>
-          <h2>Progressão mensal de uso e resolução de questões</h2>
-          <p>O gráfico abaixo facilita a leitura do comportamento do grupo ao longo do tempo, com comparação entre horas de acesso e questões realizadas.</p>
-        </div>
-      </div>
-      <div class="grid-2">
-        <div class="panel-card">
-          <div class="chart-frame" id="engagementMonthlyChart"></div>
-        </div>
-        <div class="panel-card">
-          <div class="section-kicker">Destaques do ciclo</div>
-          <h3>Insights de engajamento</h3>
-          <p class="helper-text">Leitura rápida dos principais pontos de atenção e destaque do comportamento do grupo.</p>
-          <div class="chart-summary" id="engagementInsights" style="margin-top:14px"></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="section-shell">
-      <div class="section-head">
-        <div>
           <div class="section-kicker">Destaques do grupo</div>
           <h2>Quem impulsiona e quem precisa de mais engajamento</h2>
           <p>Comparativo rápido para apoiar alinhamentos com professores, coordenação e acompanhamento de rotina.</p>
@@ -6855,7 +7285,7 @@ window._netlifyDeploy = async function(filesObj, progressEl, onSuccess) {
         <div>
           <div class="section-kicker">Seleção de período</div>
           <h2>Escolha o recorte que deseja analisar</h2>
-          <p>Cada cartão representa um período da base. Ao selecionar um recorte, a página atualiza automaticamente os KPIs, destaques e a tabela detalhada.</p>
+          <p>Selecione um recorte para ver KPIs, destaques e tabela.</p>
         </div>
       </div>
       <div class="period-selector-grid" id="periodSelectorGrid"></div>
@@ -6875,7 +7305,7 @@ window._netlifyDeploy = async function(filesObj, progressEl, onSuccess) {
             </div>
             <div>
               <h3>Baixar análises em Excel</h3>
-              <p>Marque os períodos desejados e baixe uma planilha compatível com Excel para uso da coordenação.</p>
+              <p>Uma aba por recorte no arquivo (.xlsm), com filtros no Excel.</p>
             </div>
           </div>
         </div>
@@ -6883,7 +7313,7 @@ window._netlifyDeploy = async function(filesObj, progressEl, onSuccess) {
           <div class="export-options" id="exportPeriodOptions"></div>
           <div class="export-actions">
             <button class="btn-select-all" type="button" onclick="toggleAllExportPeriods()">Selecionar ou limpar todos</button>
-            <button class="btn-export" type="button" onclick="downloadSelectedPeriods()">Baixar planilha Excel (.csv)</button>
+            <button class="btn-export" type="button" onclick="downloadSelectedPeriods()">Baixar planilha Excel (.xlsm)</button>
             <div class="export-hint" id="exportHint">Nenhum período selecionado.</div>
           </div>
         </div>
@@ -8531,10 +8961,6 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     if (!m) return;
     window._resetSimUploadModalViews();
     window._simUploadPendingLockSimId = null;
-    const _g = $('bqLinkGabarito');
-    const _b = $('bqLinkBoletins');
-    if (_g) _g.value = '';
-    if (_b) _b.value = '';
     m.style.display = 'flex';
     m.onclick = function(ev) {
       if (ev.target === m) window._closeSimUploadModal();
@@ -8582,46 +9008,6 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     if (z) z.scrollTop = 0;
   };
 
-  /**
-   * Grava gabarito e pasta de boletins no __RANKING__ (mesmo fluxo da edição rápida na grade).
-   * @param {{ silent?: boolean }} [opts]
-   * @returns {Promise<boolean>}
-   */
-  window._saveSimUploadPostLinks = async function(opts) {
-    const silent = !!(opts && opts.silent);
-    const c = window._simUploadPostCtx;
-    if (!c || !c.slug || !c.simId) {
-      if (!silent) showToast('Contexto do upload não encontrado.', 'error');
-      return false;
-    }
-    const simRef = 'bq_' + c.slug + '_' + c.simId.slice(0, 8);
-    const newLink = (document.getElementById('bqLinkGabarito')?.value || '').trim();
-    const newBoletinsLink = (document.getElementById('bqLinkBoletins')?.value || '').trim();
-    try {
-      const rows = await window._supaRest(
-        'simulado_respostas',
-        `simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(c.slug)}&aluno_nome=eq.__RANKING__&select=respostas`
-      );
-      if (!rows || !rows.length) throw new Error('Ranking não encontrado');
-      const updated = { ...rows[0].respostas, link_gabarito: newLink || null, link_boletins: newBoletinsLink || null };
-      updated.link_boletins_pacotes = null;
-      updated.link_boletins_pacotes_rotulos = null;
-      updated.link_boletins_rotulo = null;
-      const patchResp = await window._supaWrite(
-        `simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(c.slug)}&aluno_nome=eq.__RANKING__`,
-        'PATCH',
-        { respostas: updated },
-        { prefer: 'return=minimal' }
-      );
-      if (!patchResp.ok) throw new Error('Erro HTTP ' + patchResp.status);
-      if (!silent) showToast('Links salvos.', 'success');
-      return true;
-    } catch (e) {
-      showToast('Erro ao salvar links: ' + e.message, 'error');
-      return false;
-    }
-  };
-
   /** Abre o upload a partir do botão na grade (IES + simulado da linha). */
   window._simOpenUpload = function(slug, simId, anchorEl) {
     document.querySelectorAll('.sim-dropdown').forEach(d => d.remove());
@@ -8657,25 +9043,15 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     const btnMail = document.getElementById('simUploadPostBtnEmail');
     const btnRel = document.getElementById('simUploadPostBtnRel');
     const btnNovo = document.getElementById('simUploadPostBtnNovo');
-    const btnSaveLinks = document.getElementById('simUploadPostSaveLinks');
     const go = async (fn) => {
       const c = window._simUploadPostCtx;
       if (!c || !c.slug || !c.simId) {
         showToast('Contexto do upload não encontrado.', 'error');
         return;
       }
-      if (typeof window._saveSimUploadPostLinks === 'function') {
-        const ok = await window._saveSimUploadPostLinks({ silent: true });
-        if (!ok) return;
-      }
       window._closeSimUploadModal();
       fn(c.slug, c.simId);
     };
-    if (btnSaveLinks) {
-      btnSaveLinks.addEventListener('click', async () => {
-        if (typeof window._saveSimUploadPostLinks === 'function') await window._saveSimUploadPostLinks();
-      });
-    }
     if (btnBol) {
       btnBol.addEventListener('click', () => go((slug, simId) => {
         if (typeof window._openBoletimModal === 'function') window._openBoletimModal(slug, simId);
@@ -8693,10 +9069,6 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     }
     if (btnNovo) {
       btnNovo.addEventListener('click', () => {
-        const _g = $('bqLinkGabarito');
-        const _b = $('bqLinkBoletins');
-        if (_g) _g.value = '';
-        if (_b) _b.value = '';
         window._simUploadPendingLockSimId = null;
         if (typeof window._setSimUploadLockedUI === 'function') window._setSimUploadLockedUI(false);
         window._resetSimUploadModalViews();
@@ -10959,6 +11331,17 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         opt.textContent = `${s.titulo} (${comp.length} questões)`;
         sel.appendChild(opt);
       });
+      // Auto-select simulado when opened from locked flow (grid button)
+      if (window._simUploadPendingLockSimId) {
+        const pendingId = window._simUploadPendingLockSimId;
+        sel.value = pendingId;
+        const matched = filtered.find(s => String(s.id) === String(pendingId));
+        const tSim = $('simUploadLockedSimTitle');
+        if (tSim && matched) tSim.textContent = matched.titulo;
+        else if (tSim) tSim.textContent = sel.selectedOptions[0]?.textContent || '—';
+        // Trigger change handlers so buttons/hints update
+        sel.dispatchEvent(new Event('change'));
+      }
     } catch(e) {
       sel.innerHTML = '<option value="">Erro ao carregar simulados</option>';
       window._simUploadPendingLockSimId = null;
@@ -11571,7 +11954,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
       // META: questões com gabarito e área (compartilhadas por todos os alunos)
       const compactQuestions = questoesMeta.map((qm, qi) =>
-        ({ q: qm.q, area: qm.area, tema: qm.tema, gab: qm.gab, dificuldade: qm.dificuldade, mediaPct: qm.mediaPct, anulada: anuladasIdx.has(qi) }));
+        ({ q: qm.q, area: qm.area, tema: qm.tema, gab: qm.gab, dificuldade: qm.dificuldade, mediaPct: qm.mediaPct, anulada: anuladasIdx.has(qi), qid: qm.qid }));
       const anuladasInfo = totalAnuladas > 0 ? { indices: [...anuladasIdx], tratamento: anuladaTrat, numeros: [...anuladasIdx].map(i => i+1) } : null;
       simLog(logId, `💾 Salvando metadados (${compactQuestions.length} questões${totalAnuladas > 0 ? `, ${totalAnuladas} anulada(s)` : ''})...`);
       const metaResp = await window._supaWrite(
@@ -11629,8 +12012,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
       // ── 13. Salvar métricas comparativas (__RANKING__) ────────────────
       const mediaIes = _mediaIesFinal;
-      const _linkGab = (document.getElementById('bqLinkGabarito')?.value || '').trim();
-      const _linkBol = (document.getElementById('bqLinkBoletins')?.value || '').trim();
+      const _linkGab = (String(sim.link_gabarito || '').trim()) || null;
       const rankMeta = {
         ranking_nacional:       parseInt(document.getElementById('bqRankNac')?.value) || null,
         ranking_nacional_total: parseInt(document.getElementById('bqRankNacTotal')?.value) || null,
@@ -11642,8 +12024,11 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         anuladas_tratamento: anuladaTrat,
         simulado_titulo: sim.titulo,
         processado_em:   new Date().toISOString(),
-        link_gabarito: _linkGab || null,
-        link_boletins: _linkBol || null
+        link_gabarito: _linkGab,
+        link_boletins: null,
+        link_boletins_pacotes: null,
+        link_boletins_pacotes_rotulos: null,
+        link_boletins_rotulo: null
       };
       // Validar coerência do ranking antes de gravar
       if (rankMeta.ranking_nacional != null && rankMeta.ranking_nacional_total != null) {
@@ -11981,6 +12366,7 @@ CREATE TABLE simulados_banco (
   questoes_anuladas   jsonb DEFAULT '[]'::jsonb,
   questoes_anuladas_tratamento text DEFAULT 'creditar',
   instituicoes_destino jsonb DEFAULT '[]'::jsonb,
+  link_gabarito       text DEFAULT '',
   pdf_instituicao    text DEFAULT '',
   pdf_cor            text DEFAULT '',
   criado_por          text DEFAULT '',
@@ -12026,6 +12412,7 @@ CREATE POLICY bq_q_auth ON simulados_questoes FOR ALL TO authenticated USING (tr
 -- ALTER TABLE simulados_banco    ADD COLUMN IF NOT EXISTS instituicoes_destino jsonb DEFAULT '[]'::jsonb;
 -- ALTER TABLE simulados_banco    ADD COLUMN IF NOT EXISTS pdf_instituicao text DEFAULT '';
 -- ALTER TABLE simulados_banco    ADD COLUMN IF NOT EXISTS pdf_cor text DEFAULT '';
+-- ALTER TABLE simulados_banco    ADD COLUMN IF NOT EXISTS link_gabarito text DEFAULT '';
 -- ALTER TABLE simulados_questoes ADD COLUMN IF NOT EXISTS codigo_questao text DEFAULT '';
 -- ALTER TABLE simulados_banco    ADD COLUMN IF NOT EXISTS questoes_por_area_map jsonb DEFAULT '{}'::jsonb;
 -- ALTER TABLE alunos_master      ADD COLUMN IF NOT EXISTS cpf text DEFAULT '';
@@ -12179,6 +12566,7 @@ async function bqInit() {
   }
   if (_isSuperadmin) {
     showEl('bqPanelReview', true, 'block');
+    showEl('bqPanelMentor', true, 'block');
     document.body.classList.add('is-superadmin');
   }
   if (_curRole === 'admin') {
@@ -12216,6 +12604,9 @@ async function bqInit() {
   showEl('bqLoading', false);
   showEl('bqContent', true, 'block');
   renderAll();
+  if (_isSuperadmin && typeof window._refreshMentorPilotReleaseUi === 'function') {
+    window._refreshMentorPilotReleaseUi();
+  }
 }
 
 function showEl(id, show, displayType) {
@@ -14536,6 +14927,11 @@ window.bqOpenEditSimModal = function(simId) {
         ${window._bqIESFilterInput('bqEditDestIESWrap')}
         <div style="display:flex;flex-wrap:wrap;gap:8px" id="bqEditDestIESWrap">${iesHtml}</div>
       </div>
+      <div style="margin-bottom:14px">
+        <div class="bq-alt-label">Link público do gabarito (painel do coordenador)</div>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px">Google Drive, PDF público, etc. Espelhado na análise do simulado para todas as IES deste simulado.</div>
+        <input id="bqEditLinkGabarito" class="bq-finput" type="url" value="${esc(sim.link_gabarito||'')}" placeholder="https://..." style="width:100%;max-width:520px">
+      </div>
       <div style="padding:14px 16px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg-elevated)">
         <div class="bq-alt-label" style="margin-bottom:10px;font-size:0.82rem">Personalização do PDF</div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
@@ -14577,6 +14973,7 @@ window.bqSaveEditSim = async function(simId) {
   let pdfCor = ($b('bqEditPdfCorHex')?.value||'').trim();
   if (pdfCor && !/^#[0-9a-fA-F]{6}$/.test(pdfCor)) pdfCor = '';
   /** Persistência no mesmo backend que o BQ lê (Mongo via admin-proxy ou Supabase via service role) — PATCH direto com anon não atualiza Mongo. */
+  const _lg = ($b('bqEditLinkGabarito')?.value || '').trim();
   const _er = await window._supaWrite(
     `simulados_banco?id=eq.${encodeURIComponent(simId)}`,
     'PATCH',
@@ -14588,7 +14985,8 @@ window.bqSaveEditSim = async function(simId) {
       data_padrao: $b('bqEditDataPadrao')?.value || null,
       instituicoes_destino: ies,
       pdf_instituicao: pdfIes,
-      pdf_cor: pdfCor
+      pdf_cor: pdfCor,
+      link_gabarito: _lg || null
     },
     { prefer: 'return=minimal' }
   );
@@ -14926,49 +15324,81 @@ function closeInstSettings() {
 }
 
 /**
- * Modal Nova IES — cria linha em `instituicoes` (apenas superadmin; validado no admin-proxy).
+ * Modal Nova IES — fluxo em 2 fases: dados + cadastro de turma(s). POST em `instituicoes` só ao processar planilhas (fase 2).
  */
-window._openNewInstModal = function() {
+window._newInstUploadBundleParent = null;
+window._newInstUploadBundleNext = null;
+
+window._moveNewInstUploadBundle = function() {
+  var bundle = document.getElementById('uploadEngajMovable');
+  var host = document.getElementById('newInstUploadHost');
+  if (!bundle || !host) return;
+  if (!window._newInstUploadBundleParent) {
+    window._newInstUploadBundleParent = bundle.parentNode;
+    window._newInstUploadBundleNext = bundle.nextSibling;
+  }
+  host.appendChild(bundle);
+};
+
+window._restoreNewInstUploadBundle = function() {
+  var bundle = document.getElementById('uploadEngajMovable');
+  var parent = window._newInstUploadBundleParent;
+  if (!bundle || !parent) return;
+  if (window._newInstUploadBundleNext) {
+    parent.insertBefore(bundle, window._newInstUploadBundleNext);
+  } else {
+    parent.appendChild(bundle);
+  }
+};
+
+/**
+ * Insere linha em `instituicoes` (superadmin; admin-proxy).
+ * @param {string} rawSlug
+ * @param {string} nome
+ * @param {string} cidade
+ * @param {boolean} wip
+ */
+window._postNewInstituicaoRow = async function(rawSlug, nome, cidade, wip) {
+  var row = {
+    slug: rawSlug,
+    nome: nome,
+    path: '/' + rawSlug + '/',
+    cidade: cidade || null,
+    ativo: true,
+    wip: wip,
+    stripe: 'neutro'
+  };
+  var resp = await window._supaWrite('instituicoes', 'POST', row, {
+    requireSuperadmin: true,
+    prefer: 'return=representation'
+  });
+  var txt = await resp.text();
+  if (!resp.ok) {
+    var msg = txt;
+    try {
+      var j = JSON.parse(txt);
+      if (j.message) msg = j.message;
+      if (j.error && typeof j.error === 'string') msg = j.error;
+      if (j.hint) msg += ' — ' + j.hint;
+    } catch (_) {}
+    throw new Error(msg || ('Erro HTTP ' + resp.status));
+  }
+};
+
+window._newInstWizardContinue = function() {
   if (!document.body.classList.contains('is-superadmin')) {
     showToast('Apenas superadmin pode criar uma nova IES.', 'error');
     return;
   }
-  const slugEl = document.getElementById('newInstSlug');
-  const prev = document.getElementById('newInstSlugPreview');
-  if (slugEl) slugEl.value = '';
-  if (prev) prev.textContent = 'slug';
-  const nomeEl = document.getElementById('newInstNome');
-  if (nomeEl) nomeEl.value = '';
-  const cidEl = document.getElementById('newInstCidade');
-  if (cidEl) cidEl.value = '';
-  const wipEl = document.getElementById('newInstWip');
-  if (wipEl) wipEl.checked = true;
-  const errEl = document.getElementById('newInstError');
+  var errEl = document.getElementById('newInstError');
   if (errEl) errEl.textContent = '';
-  const modal = document.getElementById('newInstModal');
-  if (!modal) return;
-  modal.style.display = 'flex';
-  modal.onclick = function(e) { if (e.target === modal) window._closeNewInstModal(); };
-  if (slugEl) setTimeout(function() { slugEl.focus(); }, 80);
-};
-
-window._closeNewInstModal = function() {
-  const modal = document.getElementById('newInstModal');
-  if (modal) {
-    modal.style.display = 'none';
-    modal.onclick = null;
-  }
-};
-
-window._submitNewInst = async function() {
-  const errEl = document.getElementById('newInstError');
-  const btn = document.getElementById('newInstSubmitBtn');
-  if (errEl) errEl.textContent = '';
-  const rawSlug = (document.getElementById('newInstSlug') && document.getElementById('newInstSlug').value || '').trim().toLowerCase();
-  const nome = (document.getElementById('newInstNome') && document.getElementById('newInstNome').value || '').trim();
-  const cidade = (document.getElementById('newInstCidade') && document.getElementById('newInstCidade').value || '').trim();
-  const wipEl = document.getElementById('newInstWip');
-  const wip = wipEl ? wipEl.checked : true;
+  var rawSlug = (document.getElementById('newInstSlug') && document.getElementById('newInstSlug').value || '').trim().toLowerCase();
+  var nome = (document.getElementById('newInstNome') && document.getElementById('newInstNome').value || '').trim();
+  var cidade = (document.getElementById('newInstCidade') && document.getElementById('newInstCidade').value || '').trim();
+  var wipEl = document.getElementById('newInstWip');
+  var wip = wipEl ? wipEl.checked : true;
+  var deployEl = document.getElementById('newInstDeploy');
+  var deploy = deployEl ? deployEl.checked : false;
 
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(rawSlug)) {
     if (errEl) errEl.textContent = 'Slug inválido: use minúsculas, números e hífen (ex: minha-ies).';
@@ -14983,64 +15413,135 @@ window._submitNewInst = async function() {
     return;
   }
 
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Salvando...';
-  }
-  try {
-    var row = {
-      slug: rawSlug,
-      nome: nome,
-      path: '/' + rawSlug + '/',
-      cidade: cidade || null,
-      ativo: true,
-      wip: wip,
-      stripe: 'neutro'
-    };
-    var resp = await window._supaWrite('instituicoes', 'POST', row, {
-      requireSuperadmin: true,
-      prefer: 'return=representation'
-    });
-    var txt = await resp.text();
-    if (!resp.ok) {
-      var msg = txt;
-      try {
-        var j = JSON.parse(txt);
-        if (j.message) msg = j.message;
-        if (j.error && typeof j.error === 'string') msg = j.error;
-        if (j.hint) msg += ' — ' + j.hint;
-      } catch (_) {}
-      throw new Error(msg || ('Erro HTTP ' + resp.status));
-    }
-    showToast('IES registrada: ' + rawSlug, 'success');
+  window._newInstWizardPending = { slug: rawSlug, nome: nome, cidade: cidade, wip: wip, deploy: deploy };
+  window._newInstWizardActive = true;
 
-    // Deploy automático da pasta se checkbox marcado
-    const deployCheck = document.getElementById('newInstDeploy');
-    if (deployCheck && deployCheck.checked) {
-      if (btn) btn.textContent = 'Gerando pasta...';
-      try {
-        await window._deployNewIesFolder(rawSlug, nome, cidade);
-        showToast('Pasta gerada e deploy realizado!', 'success');
-      } catch (de) {
-        showToast('Registro criado, mas erro no deploy: ' + de.message, 'warn');
-        console.error('Deploy IES:', de);
-      }
-    }
+  var ph1 = document.getElementById('newInstPhase1');
+  var ph2 = document.getElementById('newInstPhase2');
+  if (ph1) ph1.style.display = 'none';
+  if (ph2) ph2.style.display = 'block';
+  var lab = document.getElementById('newInstPhase2Slug');
+  if (lab) lab.textContent = 'Slug: ' + rawSlug;
 
-    window._closeNewInstModal();
-    try { localStorage.removeItem('_admc_inst'); } catch (e) {}
-    if (typeof loadAndRenderInstitutions === 'function') await loadAndRenderInstitutions();
-    if (typeof window._refreshInstGrid === 'function') window._refreshInstGrid();
-  } catch (e) {
-    var em = e && e.message ? e.message : String(e);
-    if (errEl) errEl.textContent = em;
-    showToast(em, 'error');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Criar registro';
-    }
+  window._moveNewInstUploadBundle();
+
+  window._selectedMode = 'new-turma';
+  window._uploadMode = 'first-time';
+  window._masterByCpf = {};
+  window._masterByNome = {};
+  var nf = document.getElementById('newTurmaField');
+  if (nf) nf.style.display = 'block';
+  var nti = document.getElementById('newTurmaInput');
+  if (nti) nti.value = '';
+  var s1t = document.getElementById('step1Title');
+  if (s1t) s1t.textContent = 'Nova turma — ' + nome;
+  if (typeof window._generatePeriodSlots === 'function') window._generatePeriodSlots();
+  var u1 = document.getElementById('uploadStep1');
+  if (u1) u1.style.display = 'block';
+  var u2 = document.getElementById('uploadStep2');
+  if (u2) u2.style.display = 'none';
+  var pl = document.getElementById('processLog');
+  if (pl) { pl.innerHTML = ''; pl.style.display = 'none'; }
+  var pc = document.getElementById('previewCard');
+  if (pc) pc.style.display = 'none';
+  var sb = document.getElementById('successBanner');
+  if (sb) sb.classList.remove('visible');
+  if (typeof window._updateMultiBtn === 'function') window._updateMultiBtn();
+};
+
+window._newInstWizardBack = function() {
+  window._restoreNewInstUploadBundle();
+  window._newInstWizardActive = false;
+  window._newInstWizardPending = null;
+  var ph1 = document.getElementById('newInstPhase1');
+  var ph2 = document.getElementById('newInstPhase2');
+  if (ph1) ph1.style.display = 'block';
+  if (ph2) ph2.style.display = 'none';
+  window._selectedMode = null;
+  var u1b = document.getElementById('uploadStep1');
+  if (u1b) u1b.style.display = 'none';
+  var nfb = document.getElementById('newTurmaField');
+  if (nfb) nfb.style.display = 'none';
+  if (typeof window._generatePeriodSlots === 'function') window._generatePeriodSlots();
+  if (typeof window._updateMultiBtn === 'function') window._updateMultiBtn();
+};
+
+/**
+ * @param {number} alunosN
+ * @param {number} periodosN
+ */
+window._newInstWizardOnSuccessClose = function(alunosN, periodosN) {
+  if (!window._newInstWizardActive) return;
+  window._restoreNewInstUploadBundle();
+  window._newInstWizardActive = false;
+  window._newInstWizardPending = null;
+  try { localStorage.removeItem('_admc_inst'); } catch (e) {}
+  window._closeNewInstModal();
+  if (typeof window._resetUploadForm === 'function') window._resetUploadForm();
+  showToast('Nova IES criada e turmas cadastradas (' + (periodosN || 0) + ' período(s), ' + (alunosN || 0) + ' alunos).', 'success');
+};
+
+window._openNewInstModal = function() {
+  if (!document.body.classList.contains('is-superadmin')) {
+    showToast('Apenas superadmin pode criar uma nova IES.', 'error');
+    return;
   }
+  var host = document.getElementById('newInstUploadHost');
+  var bundle = document.getElementById('uploadEngajMovable');
+  if (host && bundle && host.contains(bundle)) {
+    window._restoreNewInstUploadBundle();
+  }
+  window._newInstWizardActive = false;
+  window._newInstWizardPending = null;
+  var ph1 = document.getElementById('newInstPhase1');
+  var ph2 = document.getElementById('newInstPhase2');
+  if (ph1) ph1.style.display = 'block';
+  if (ph2) ph2.style.display = 'none';
+
+  var slugEl = document.getElementById('newInstSlug');
+  var prev = document.getElementById('newInstSlugPreview');
+  if (slugEl) slugEl.value = '';
+  if (prev) prev.textContent = 'slug';
+  var nomeEl = document.getElementById('newInstNome');
+  if (nomeEl) nomeEl.value = '';
+  var cidEl = document.getElementById('newInstCidade');
+  if (cidEl) cidEl.value = '';
+  var wipEl = document.getElementById('newInstWip');
+  if (wipEl) wipEl.checked = true;
+  var errEl = document.getElementById('newInstError');
+  if (errEl) errEl.textContent = '';
+  var modal = document.getElementById('newInstModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  modal.onclick = function(e) { if (e.target === modal) window._closeNewInstModal(); };
+  if (slugEl) setTimeout(function() { slugEl.focus(); }, 80);
+};
+
+window._closeNewInstModal = function() {
+  var host = document.getElementById('newInstUploadHost');
+  var bundle = document.getElementById('uploadEngajMovable');
+  if (host && bundle && host.contains(bundle)) {
+    window._restoreNewInstUploadBundle();
+  }
+  if (window._newInstWizardActive && typeof window._resetUploadForm === 'function') {
+    window._resetUploadForm();
+  }
+  window._newInstWizardActive = false;
+  window._newInstWizardPending = null;
+  var ph1 = document.getElementById('newInstPhase1');
+  var ph2 = document.getElementById('newInstPhase2');
+  if (ph1) ph1.style.display = 'block';
+  if (ph2) ph2.style.display = 'none';
+  var modal = document.getElementById('newInstModal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.onclick = null;
+  }
+};
+
+/** @deprecated Use _newInstWizardContinue — mantido por compatibilidade. */
+window._submitNewInst = function() {
+  window._newInstWizardContinue();
 };
 
 /**
@@ -15085,6 +15586,8 @@ window._deployNewIesFolder = async function(slug, nome, cidade) {
 
   const simHtml = `${makeHead('Simulados')}<body data-page="simulados">${makeHeader('Simulados — tendências e personalizados','sim')}<main class="page-shell"><div id="simuladosRoot"></div></main>${makeFooter()}</body></html>`;
 
+  const mentorHtml = `${makeHead('Mentor')}<body data-page="mentor">${makeHeader('Mentor — planejamento do simulado','mentor')}<main class="page-shell home-cockpit-main"><div id="mentorRoot"></div></main>${makeFooter()}</body></html>`;
+
   const configJson = JSON.stringify({ slug, name: nome, city: cidade || '', brand, initials, logo: 'logo_' + slug + '.png', themeClass: 'theme-facene', tema: 'azul' }, null, 2);
   const dashboardData = `/* === ${nome} — dashboard-data.js === */\n/* Gerado via Painel Admin — NÃO editar manualmente */\n\nconst ${varName}_ALL_DATA = [];\n`;
 
@@ -15096,6 +15599,7 @@ window._deployNewIesFolder = async function(slug, nome, cidade) {
   files[`${slug}/engajamento.html`] = enc(engHtml);
   files[`${slug}/periodo-detalhado.html`] = enc(perHtml);
   files[`${slug}/simulado-personalizado.html`] = enc(simHtml);
+  files[`${slug}/mentor.html`] = enc(mentorHtml);
   files[`${slug}/config.json`] = enc(configJson);
   files[`${slug}/dashboard-data.js`] = enc(dashboardData);
   files[`${slug}/shared.css`] = enc(sharedCss);
@@ -15236,15 +15740,20 @@ async function saveInstSettings() {
         .from('logos')
         .upload(filePath, _instSettingsLogoFile, { upsert: true, contentType: 'image/webp' });
       if (upErr) throw new Error('Erro ao enviar logo: ' + upErr.message);
-      updates.logo_url = 'https://cvwwucxjrpsfoxarsipr.supabase.co/storage/v1/object/public/logos/' + filePath;
+      const baseLogo = 'https://cvwwucxjrpsfoxarsipr.supabase.co/storage/v1/object/public/logos/' + filePath;
+      updates.logo_url = baseLogo + (baseLogo.includes('?') ? '&' : '?') + 'v=' + Date.now();
     }
 
-    // Update na tabela
-    const { error: dbErr } = await sb
-      .from('instituicoes')
-      .update(updates)
-      .eq('slug', slug);
-    if (dbErr) throw new Error('Erro ao salvar: ' + dbErr.message);
+    // Update na tabela — via admin-proxy para persistir no mesmo backend da leitura (ex.: Mongo com DATA_BACKEND=mongo)
+    const patchResp = await window._supaWrite(
+      'instituicoes?slug=eq.' + encodeURIComponent(slug),
+      'PATCH',
+      updates
+    );
+    if (!patchResp.ok) {
+      const errTxt = await patchResp.text();
+      throw new Error('Erro ao salvar: ' + (errTxt || patchResp.status));
+    }
 
     closeInstSettings();
     showToast('Configurações salvas com sucesso!', 'success');
@@ -15607,6 +16116,13 @@ window._saveEnvio = async function() {
       <h3 style="font-size:1.1rem;font-weight:700">📄 Gerar Boletins Individuais</h3>
       <button onclick="document.getElementById('boletimModal').style.display='none'" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
     </div>
+    <div id="boletimContextLockedWrap" style="display:none;margin-bottom:16px;padding:14px 16px;border-radius:12px;border:2px solid #15803d;background:linear-gradient(135deg,rgba(22,163,74,0.18),rgba(21,128,61,0.12));box-shadow:0 0 0 1px rgba(22,163,74,0.25) inset">
+      <div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#166534;margin-bottom:10px">Contexto do envio · bloqueado</div>
+      <div style="font-size:0.95rem;font-weight:800;color:#14532d;line-height:1.35;word-break:break-word" id="boletimLockedIes"></div>
+      <div style="font-size:0.88rem;font-weight:700;color:#15803d;margin-top:8px;line-height:1.4;word-break:break-word" id="boletimLockedSim"></div>
+      <div style="font-size:0.72rem;color:#166534;margin-top:10px;opacity:0.95">IES e simulado vêm da linha em que você abriu este assistente — não é possível alterar aqui para evitar envio ao contexto errado.</div>
+    </div>
+    <div id="boletimContextSelectsWrap">
     <div class="field" style="margin-bottom:14px">
       <label style="display:block;font-size:0.78rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Instituição *</label>
       <select id="boletimIES" onchange="window._updateBoletimSimSelect()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
@@ -15618,6 +16134,7 @@ window._saveEnvio = async function() {
       <select id="boletimSim" onchange="window._updateBoletimBtn()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
         <option value="">Selecione o simulado...</option>
       </select>
+    </div>
     </div>
     <div id="boletimInfo" style="display:none;margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--bg-elevated);font-size:0.8rem;color:var(--text-muted)"></div>
     <div style="margin-bottom:10px">
@@ -15632,11 +16149,21 @@ window._saveEnvio = async function() {
         <span>Também baixar cópias destes ZIPs neste computador (opcional).</span>
       </label>
     </div>
-    <div style="margin-bottom:14px">
+    <div style="margin-bottom:10px">
       <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.82rem;color:var(--text);line-height:1.45">
-        <input type="checkbox" id="boletimEmailCoordAfterPublish" checked style="margin-top:3px;width:16px;height:16px;accent-color:#6366f1;flex-shrink:0">
-        <span><strong>E-mail automático à coordenação</strong> — após publicar no storage, envia Excel + links dos pacotes aos coordenadores cadastrados da IES (sem abrir outro modal).</span>
+        <input type="checkbox" id="boletimEmailCoordAfterPublish" checked onchange="window._updateBoletimLoteCoordDisabledState()" style="margin-top:3px;width:16px;height:16px;accent-color:#6366f1;flex-shrink:0">
+        <span><strong>E-mail automático à coordenação</strong> — após publicar no storage, envia Excel + links dos pacotes para os destinatários marcados abaixo (coordenadores cadastrados da IES + opcionais).</span>
       </label>
+    </div>
+    <div id="boletimLoteCoordSection" style="display:none;margin-bottom:14px;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg-elevated)">
+      <div style="font-size:0.72rem;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">Destinatários do e-mail</div>
+      <div id="boletimLoteCoordLoading" style="font-size:0.78rem;color:var(--text-muted);display:none">Carregando coordenadores…</div>
+      <div id="boletimLoteCoordEmpty" style="font-size:0.78rem;color:var(--text-muted);display:none"></div>
+      <div id="boletimLoteCoordCheckboxes" style="display:none;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto"></div>
+      <div class="field" style="margin-top:10px;margin-bottom:0">
+        <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px">E-mails adicionais <span style="font-weight:400;text-transform:none">(opcional · separados por vírgula)</span></label>
+        <input type="text" id="boletimLoteCoordEmailManual" placeholder="outro@inst.edu.br" style="width:100%;padding:8px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg-card);color:var(--text);font-size:0.85rem;outline:none;box-sizing:border-box" />
+      </div>
     </div>
     <div id="boletimProgress" style="display:none;margin-bottom:14px">
       <div style="font-size:0.8rem;font-weight:600;color:var(--text);margin-bottom:6px" id="boletimProgressText">Gerando...</div>
@@ -15778,7 +16305,7 @@ window._resolveSimIdFromBoletimRef = function(slug, simRef) {
 /**
  * Atualiza link_boletins no registro __RANKING__ (mesmo backend do admin-proxy).
  * @param {string|string[]} publicUrlOrUrls
- * @param {string[]|undefined} rotulosOpt Rótulos por pacote (ex.: "Alunos A – M"), mesmo comprimento que URLs quando vários pacotes.
+ * @param {string[]|undefined} rotulosOpt Rótulos por pacote (ex.: "Boletins part.1"), mesmo comprimento que URLs quando vários pacotes.
  */
 window._patchRankingLinkBoletins = async function(slug, simRef, publicUrlOrUrls, rotulosOpt) {
   const rows = await window._supaRest(
@@ -15853,6 +16380,87 @@ window._fetchCoordenadoresForIes = async function(slug) {
     if (Array.isArray(arr) && arr.some(x => String(x).toLowerCase() === slugLow)) return true;
     return false;
   }).map(u => ({ email: u.email, nome: u.nome || '' }));
+};
+
+/**
+ * Habilita/desabilita lista de destinatários conforme o checkbox de e-mail automático.
+ */
+window._updateBoletimLoteCoordDisabledState = function() {
+  const emailOn = document.getElementById('boletimEmailCoordAfterPublish')?.checked !== false;
+  const section = document.getElementById('boletimLoteCoordSection');
+  if (!section) return;
+  section.style.opacity = emailOn ? '1' : '0.55';
+  section.querySelectorAll('.boletim-lote-coord-cb').forEach((cb) => { cb.disabled = !emailOn; });
+  const manual = document.getElementById('boletimLoteCoordEmailManual');
+  if (manual) manual.disabled = !emailOn;
+};
+
+/**
+ * Carrega coordenadores da IES selecionada e preenche checkboxes (todos marcados por padrão).
+ */
+window._refreshBoletimLoteCoordRecipients = async function() {
+  const slug = document.getElementById('boletimIES')?.value || '';
+  const section = document.getElementById('boletimLoteCoordSection');
+  const loadEl = document.getElementById('boletimLoteCoordLoading');
+  const emptyEl = document.getElementById('boletimLoteCoordEmpty');
+  const cbWrap = document.getElementById('boletimLoteCoordCheckboxes');
+  if (!section || !loadEl || !emptyEl || !cbWrap) return;
+  if (!slug) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+  loadEl.style.display = 'block';
+  emptyEl.style.display = 'none';
+  emptyEl.textContent = '';
+  cbWrap.style.display = 'none';
+  cbWrap.innerHTML = '';
+  try {
+    const coords = await window._fetchCoordenadoresForIes(slug);
+    loadEl.style.display = 'none';
+    if (!coords.length) {
+      emptyEl.textContent = 'Nenhum coordenador cadastrado para esta IES. Informe e-mails adicionais abaixo ou cadastre usuários em Coordenadores.';
+      emptyEl.style.display = 'block';
+      window._updateBoletimLoteCoordDisabledState();
+      return;
+    }
+    const esc = (s) => String(s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    cbWrap.innerHTML = coords
+      .map(
+        (c) => `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:0.82rem;color:var(--text)">
+        <input type="checkbox" class="boletim-lote-coord-cb" value="${esc(c.email)}" data-nome="${esc(c.nome)}" checked style="accent-color:#6366f1;width:16px;height:16px;flex-shrink:0">
+        <span style="flex:1;min-width:0"><strong>${esc(c.nome || (c.email || '').split('@')[0])}</strong> <span style="color:var(--text-muted);font-size:0.75rem">· ${esc(c.email)}</span></span>
+      </label>`
+      )
+      .join('');
+    cbWrap.style.display = 'flex';
+  } catch (e) {
+    console.warn(e);
+    loadEl.style.display = 'none';
+    emptyEl.textContent = 'Não foi possível carregar coordenadores.';
+    emptyEl.style.display = 'block';
+  }
+  window._updateBoletimLoteCoordDisabledState();
+};
+
+/**
+ * E-mails selecionados para o e-mail pós-publicação (checkboxes + campo manual).
+ * @returns {string[]}
+ */
+window._collectBoletimLoteCoordEmails = function() {
+  const out = [];
+  document.querySelectorAll('.boletim-lote-coord-cb:checked').forEach((cb) => {
+    const v = String(cb.value || '').trim().toLowerCase();
+    if (v.includes('@')) out.push(v);
+  });
+  const manual = document.getElementById('boletimLoteCoordEmailManual')?.value || '';
+  manual
+    .split(/[,;]/)
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.includes('@'))
+    .forEach((e) => out.push(e));
+  return [...new Set(out)];
 };
 
 window._openEnviarBoletimAlunoModal = function(nome, instParam, iesSlug, cpf, email) {
@@ -16134,22 +16742,53 @@ window._submitBoletimCoordEmail = async function() {
   }
 };
 
+/**
+ * Modo somente leitura para IES/simulado (abertura a partir da grade). Os selects permanecem no DOM com valor + disabled para o fluxo de geração.
+ */
+window._applyBoletimModalContextLock = function(locked) {
+  window._boletimModalContextLocked = !!locked;
+  const wrapSel = document.getElementById('boletimContextSelectsWrap');
+  const wrapLock = document.getElementById('boletimContextLockedWrap');
+  const iesSel = document.getElementById('boletimIES');
+  const simSel = document.getElementById('boletimSim');
+  if (!wrapSel || !wrapLock) return;
+  if (locked) {
+    wrapSel.style.display = 'none';
+    wrapLock.style.display = 'block';
+    if (iesSel) iesSel.disabled = true;
+    if (simSel) simSel.disabled = true;
+  } else {
+    wrapSel.style.display = 'block';
+    wrapLock.style.display = 'none';
+    const li = document.getElementById('boletimLockedIes');
+    const ls = document.getElementById('boletimLockedSim');
+    if (li) li.textContent = '';
+    if (ls) ls.textContent = '';
+    if (iesSel) iesSel.disabled = false;
+    if (simSel) simSel.disabled = false;
+  }
+};
+
 // ── Modal de boletins ──
 window._openBoletimModal = function(preSlug, preSimId) {
   const modal = document.getElementById('boletimModal');
   const sel = document.getElementById('boletimIES');
+  window._applyBoletimModalContextLock(false);
   // Popular IES que têm boletim
   const refs = window._boletimSimRefs || [];
   const iesList = [...new Set(refs.map(r => r.ies_slug))].sort();
   sel.innerHTML = '<option value="">Selecione a IES...</option>' +
     iesList.map(s => `<option value="${s}">${(window._instData||[]).find(i=>i.slug===s)?.nome || s.toUpperCase()}</option>`).join('');
   document.getElementById('boletimSim').innerHTML = '<option value="">Selecione o simulado...</option>';
+  const _manLote = document.getElementById('boletimLoteCoordEmailManual');
+  if (_manLote) _manLote.value = '';
   document.getElementById('boletimInfo').style.display = 'none';
   document.getElementById('boletimProgress').style.display = 'none';
   document.getElementById('boletimGenBtn').disabled = true;
   document.getElementById('boletimGenBtn').style.opacity = '0.5';
   modal.style.display = 'flex';
   modal.onclick = e => { if(e.target === modal) modal.style.display = 'none'; };
+  const lockFromGrid = !!(preSlug && preSimId);
   // Pré-selecionar IES e simulado se fornecidos
   if (preSlug) {
     sel.value = preSlug;
@@ -16159,6 +16798,26 @@ window._openBoletimModal = function(preSlug, preSimId) {
       const simSel = document.getElementById('boletimSim');
       if (simSel) { simSel.value = simRef; window._updateBoletimBtn(); }
     }
+  } else {
+    const sec = document.getElementById('boletimLoteCoordSection');
+    if (sec) sec.style.display = 'none';
+    if (typeof window._refreshBoletimLoteCoordRecipients === 'function') {
+      window._refreshBoletimLoteCoordRecipients();
+    }
+  }
+  if (lockFromGrid) {
+    const simRef = `bq_${preSlug}_${preSimId.slice(0,8)}`;
+    const refRow = (window._boletimSimRefs || []).find((r) => r.ies_slug === preSlug && r.simulado_ref === simRef);
+    const simLine = refRow
+      ? `${refRow.titulo || 'Simulado'} (${refRow.count != null ? refRow.count + ' alunos' : '—'})`
+      : (document.getElementById('boletimSim')?.selectedOptions?.[0]?.textContent || simRef);
+    const inst = (window._instData || []).find((i) => i.slug === preSlug);
+    const iesLine = inst ? (inst.nome || preSlug.toUpperCase()) : String(preSlug).toUpperCase();
+    const elI = document.getElementById('boletimLockedIes');
+    const elS = document.getElementById('boletimLockedSim');
+    if (elI) elI.textContent = '🏛 ' + iesLine;
+    if (elS) elS.textContent = '📋 ' + simLine;
+    window._applyBoletimModalContextLock(true);
   }
 };
 
@@ -16172,6 +16831,9 @@ window._updateBoletimSimSelect = function() {
       return `<option value="${r.simulado_ref}">${label} (${r.count} alunos)</option>`;
     }).join('');
   window._updateBoletimBtn();
+  if (typeof window._refreshBoletimLoteCoordRecipients === 'function') {
+    window._refreshBoletimLoteCoordRecipients();
+  }
 };
 
 window._updateBoletimBtn = function() {
@@ -16983,7 +17645,8 @@ window._enviarBoletimEmail = async function(nome, instituicao, cpf, emailDestino
 
 // ── Geração em lote (ZIP) — lotes automáticos + storage ──
 window._BOLETIM_MAX_RAW_SEGMENT = 70 * 1024 * 1024;
-window._BOLETIM_MAX_ZIP_UPLOAD = 90 * 1024 * 1024;
+/** Limite por parte no upload ao Storage — deve ficar abaixo do máximo do projeto (Supabase: padrão ~50 MiB; ajuste no Dashboard se aumentar o teto). */
+window._BOLETIM_MAX_ZIP_UPLOAD = 48 * 1024 * 1024;
 
 /**
  * Rótulo por faixa alfabética do primeiro caractere do nome (ordenado pt-BR), ex.: "Alunos A – C".
@@ -17062,7 +17725,18 @@ window._uploadBoletimZipPart = async function(slug, simRef, zipBlob, partIndex, 
   });
   if (!putRes.ok) {
     const errTxt = await putRes.text().catch(() => '');
-    throw new Error('Upload HTTP ' + putRes.status + (errTxt ? ': ' + errTxt.slice(0, 200) : ''));
+    let detail = errTxt ? ': ' + errTxt.slice(0, 300) : '';
+    try {
+      const j = JSON.parse(errTxt);
+      if (String(j.statusCode) === '413' || /too large|maximum allowed size/i.test(String(j.message || j.error || ''))) {
+        detail =
+          ': o arquivo excede o limite do Supabase Storage. No projeto: Settings → Storage → aumente o limite de upload, ou mantenha pacotes menores (limite interno ' +
+          Math.round(window._BOLETIM_MAX_ZIP_UPLOAD / (1024 * 1024)) +
+          ' MiB por ZIP). ' +
+          errTxt.slice(0, 180);
+      }
+    } catch (_) {}
+    throw new Error('Upload HTTP ' + putRes.status + detail);
   }
   return up.publicUrl;
 };
@@ -17078,6 +17752,13 @@ window._generateBoletinsLote = async function() {
   if (!publishStorage && !downloadLocal) {
     showToast('Marque publicar no painel ou baixar cópias locais (ou ambos).', 'warn');
     return;
+  }
+  if (publishStorage && autoEmailCoord) {
+    const picked = typeof window._collectBoletimLoteCoordEmails === 'function' ? window._collectBoletimLoteCoordEmails() : [];
+    if (!picked.length) {
+      showToast('Selecione ao menos um coordenador ou informe um e-mail adicional para o aviso automático.', 'warn');
+      return;
+    }
   }
 
   const btn = document.getElementById('boletimGenBtn');
@@ -17151,7 +17832,7 @@ window._generateBoletinsLote = async function() {
 
     const urls = [];
     if (publishStorage) {
-      const rotulos = allZipParts.map((part) => part.label || '');
+      const rotulos = allZipParts.map((_, i) => 'Boletins part.' + (i + 1));
       for (let p = 0; p < totalParts; p++) {
         txt.textContent = `☁️ Enviando pacote ${p + 1}/${totalParts} ao storage…`;
         bar.style.width = ((p + 1) / totalParts * 100).toFixed(0) + '%';
@@ -17166,13 +17847,8 @@ window._generateBoletinsLote = async function() {
     if (publishStorage && autoEmailCoord) {
       txt.textContent = '📧 Enviando Excel à coordenação…';
       const simIdResolved = window._resolveSimIdFromBoletimRef(slug, simRef);
-      let coords = [];
-      try {
-        coords = await window._fetchCoordenadoresForIes(slug);
-      } catch (e) {
-        console.warn(e);
-      }
-      const coordEmails = coords.map((c) => c.email).filter(Boolean);
+      const coordEmails =
+        typeof window._collectBoletimLoteCoordEmails === 'function' ? window._collectBoletimLoteCoordEmails() : [];
       if (simIdResolved && coordEmails.length) {
         const refRow = (window._boletimSimRefs || []).find((r) => r.ies_slug === slug && r.simulado_ref === simRef);
         const tituloSim = refRow && refRow.titulo ? refRow.titulo : 'Simulado';
@@ -17199,7 +17875,7 @@ window._generateBoletinsLote = async function() {
           coordMailSuffix = ' E-mail à coordenação não enviado: ' + (err && err.message ? err.message : String(err)) + '.';
         }
       } else if (!coordEmails.length) {
-        coordMailSuffix = ' Nenhum coordenador cadastrado para e-mail automático.';
+        coordMailSuffix = ' Nenhum destinatário selecionado para e-mail automático.';
       } else {
         coordMailSuffix = ' Não foi possível enviar e-mail automático (simulado não resolvido).';
       }
@@ -18050,6 +18726,17 @@ window._saveAviso = async function() {
         <option value="urgent">🔴 Urgente</option>
       </select>
     </div>
+    <div class="field" style="margin-bottom:12px">
+      <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px">Painel do coordenador</div>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:0.82rem;color:var(--text);cursor:pointer;margin-bottom:8px;line-height:1.35">
+        <input type="radio" name="notifModoCoord" value="central" checked style="margin-top:3px;flex-shrink:0">
+        <span>Apenas na <strong>central de avisos</strong> (ícone do sino)</span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:0.82rem;color:var(--text);cursor:pointer;line-height:1.35">
+        <input type="radio" name="notifModoCoord" value="popup" style="margin-top:3px;flex-shrink:0">
+        <span><strong>Pop-up</strong> na tela ao abrir o painel (também fica na central)</span>
+      </label>
+    </div>
     <div id="notifSendFeedback" style="font-size:0.78rem;min-height:1.2em;margin-bottom:10px"></div>
     <div style="display:flex;gap:10px">
       <button onclick="document.getElementById('sendNotifModal').style.display='none'" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
@@ -18137,10 +18824,106 @@ window._runSuperadminExport = async function() {
   }
 };
 
+/**
+ * Atualiza texto de status da liberação do Mentor (superadmin).
+ */
+window._refreshMentorPilotReleaseUi = async function() {
+  const st = document.getElementById('saMentorReleaseStatus');
+  const hint = document.getElementById('saMentorReleaseHint');
+  if (!st) return;
+  try {
+    const rows = await window._supaRest('medcof_app_config', 'select=key,config_value&key=eq.mentor_coordenador_enabled&limit=1');
+    const on = rows && rows[0] && rows[0].config_value === true;
+    st.textContent = on ? 'Status: visível para coordenadores (card na aba Simulados)' : 'Status: oculto nos painéis';
+    if (hint && !hint.textContent.includes('Salvando')) hint.textContent = '';
+  } catch (e) {
+    st.textContent = 'Status: —';
+    if (hint) hint.textContent = 'Não foi possível ler medcof_app_config. Aplique scripts/sql/medcof_app_config.sql no Supabase ou crie a coleção no Mongo.';
+  }
+};
+
+/**
+ * Define se o Mentor aparece para coordenadores em todas as IES (só superadmin).
+ */
+window._setMentorCoordenadorRelease = async function(enabled) {
+  if (!document.body.classList.contains('is-superadmin')) {
+    showToast('Apenas superadmin pode alterar a liberação do Mentor.', 'error');
+    return;
+  }
+  const hint = document.getElementById('saMentorReleaseHint');
+  const rel = document.getElementById('saMentorReleaseBtn');
+  const hid = document.getElementById('saMentorHideBtn');
+  try {
+    if (rel) rel.disabled = true;
+    if (hid) hid.disabled = true;
+    if (hint) hint.textContent = 'Salvando…';
+    const token = await window._getAdminToken();
+    const resp = await fetch('/.netlify/functions/admin-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({
+        table: 'medcof_app_config',
+        method: 'PATCH',
+        query: 'key=eq.mentor_coordenador_enabled',
+        body: { config_value: !!enabled },
+        requireSuperadmin: true
+      })
+    });
+    let ok = resp.ok;
+    if (!ok) {
+      const resp2 = await fetch('/.netlify/functions/admin-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          table: 'medcof_app_config',
+          method: 'POST',
+          body: { key: 'mentor_coordenador_enabled', config_value: !!enabled },
+          requireSuperadmin: true,
+          prefer: 'resolution=merge-duplicates'
+        })
+      });
+      ok = resp2.ok;
+      if (!ok) {
+        let msg = await resp2.text();
+        try {
+          const j = JSON.parse(msg);
+          if (j && j.error) msg = j.error;
+        } catch (_) {}
+        showToast(msg || 'Erro ao salvar configuração', 'error');
+        if (hint) hint.textContent = '';
+        return;
+      }
+    }
+    showToast(enabled ? 'Mentor liberado em todos os painéis.' : 'Mentor oculto nos painéis.', 'success');
+    if (hint) hint.textContent = 'Coordenadores precisam recarregar a página para ver a mudança.';
+    await window._refreshMentorPilotReleaseUi();
+  } catch (e) {
+    showToast((e && e.message) || 'Falha ao salvar', 'error');
+    if (hint) hint.textContent = '';
+  } finally {
+    if (rel) rel.disabled = false;
+    if (hid) hid.disabled = false;
+  }
+};
+
+(function initMentorPilotReleaseBtns() {
+  const rel = document.getElementById('saMentorReleaseBtn');
+  const hid = document.getElementById('saMentorHideBtn');
+  if (rel) rel.addEventListener('click', function() { window._setMentorCoordenadorRelease(true); });
+  if (hid) hid.addEventListener('click', function() { window._setMentorCoordenadorRelease(false); });
+})();
+
 window._openSendNotifModal = function() {
   document.getElementById('notifPanel').style.display = 'none';
   const m = document.getElementById('sendNotifModal');
-  if (m) { m.style.display = 'flex'; document.getElementById('notifTitulo').value = ''; document.getElementById('notifMensagem').value = ''; document.getElementById('notifSendFeedback').textContent = ''; }
+  if (m) {
+    m.style.display = 'flex';
+    document.getElementById('notifTitulo').value = '';
+    document.getElementById('notifMensagem').value = '';
+    document.getElementById('notifSendFeedback').textContent = '';
+    const central = document.querySelector('input[name="notifModoCoord"][value="central"]');
+    if (central) central.checked = true;
+  }
 };
 
 window._sendAdminNotif = async function() {
@@ -18154,6 +18937,8 @@ window._sendAdminNotif = async function() {
     if (fb) fb.innerHTML = '<span style="color:var(--text-muted)">Enviando...</span>';
     const token = await window._getAdminToken();
     const userEmail = (window._adminProfile?.email || '');
+    const modoCoordEl = document.querySelector('input[name="notifModoCoord"]:checked');
+    const modo_coord = modoCoordEl && modoCoordEl.value === 'popup' ? 'popup' : 'central';
     const resp = await window._supaWrite('notificacoes_admin', 'POST', {
       tipo: 'manual',
       titulo,
@@ -18161,7 +18946,8 @@ window._sendAdminNotif = async function() {
       prioridade,
       criado_por: userEmail,
       created_at: new Date().toISOString(),
-      destinatarios: 'all'
+      destinatarios: 'all',
+      modo_coord
     });
     if (resp.ok || resp.status === 201) {
       showToast('Notificação enviada!', 'success');

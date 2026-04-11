@@ -23,8 +23,14 @@
 <body data-page="engagement">
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="brand">
-        <div class="brand-mark" data-institution-initials>UNT</div>
+      <div class="brand brand--home-cockpit">
+        <div class="topbar-logo-pair">
+          <div id="institutionLogoSlot" class="topbar-logo-ies">
+            <img class="home-institution-logo" src="logo_unit-estancia.png" alt="Instituição">
+          </div>
+          <span class="topbar-logo-connector" aria-hidden="true">×</span>
+          <img class="topbar-logo-medcof" src="logo-novo-medcof.avif" alt="Logo do Grupo MedCof">
+        </div>
         <div class="brand-copy">
           <div class="brand-title" data-institution-brand>UNIT ESTÂNCIA × MedCof</div>
           <div class="brand-subtitle">Leitura institucional de uso da plataforma</div>
@@ -43,15 +49,15 @@
     </div>
   </header>
 
-  <main class="page-shell">
-    <section class="hero-card hero-strong">
-      <div class="hero-kicker">Página 2</div>
+  <main class="page-shell home-cockpit-main">
+    <section class="home-cockpit-intro">
+      <div class="section-kicker">Engajamento</div>
       <h1>Engajamento dos alunos na plataforma</h1>
-      <p class="hero-sub">Esta página concentra exclusivamente a leitura de uso da plataforma. O objetivo é mostrar ritmo de estudo, constância e intensidade de participação, destacando quem puxa o grupo, quem está estável e onde a coordenação pode agir para fortalecer aderência.</p>
-      <div class="hero-chip-row">
-        <span class="hero-chip">Base oficial de engajamento preservada</span>
-        <span class="hero-chip">Leitura focada em participação e rotina</span>
-        <span class="hero-chip">Sem mistura com os tempos da planilha nova</span>
+      <p class="home-cockpit-lead">Esta página concentra exclusivamente a leitura de uso da plataforma. O objetivo é mostrar ritmo de estudo, constância e intensidade de participação, destacando quem puxa o grupo, quem está estável e onde a coordenação pode agir para fortalecer aderência.</p>
+      <div class="cockpit-intro-chips">
+        <span class="cockpit-chip">Base oficial de engajamento preservada</span>
+        <span class="cockpit-chip">Leitura focada em participação e rotina</span>
+        <span class="cockpit-chip">Sem mistura com os tempos da planilha nova</span>
       </div>
     </section>
 
@@ -64,28 +70,6 @@
         </div>
       </div>
       <div class="kpi-grid" id="engagementKpis"></div>
-    </section>
-
-    <section class="section-shell">
-      <div class="section-head">
-        <div>
-          <div class="section-kicker">Evolução do ciclo</div>
-          <h2>Progressão mensal de uso e resolução de questões</h2>
-          <p>O gráfico abaixo facilita a leitura do comportamento do grupo ao longo do tempo, com comparação entre horas de acesso e questões realizadas.</p>
-        </div>
-      </div>
-
-      <div class="grid-2">
-        <div class="panel-card">
-          <div class="chart-frame" id="engagementMonthlyChart"></div>
-        </div>
-        <div class="panel-card">
-          <div class="section-kicker">Destaques do ciclo</div>
-          <h3>Insights de engajamento</h3>
-          <p class="helper-text">Leitura rápida dos principais pontos de atenção e destaque do comportamento do grupo.</p>
-          <div class="chart-summary" id="engagementInsights" style="margin-top:14px"></div>
-        </div>
-      </div>
     </section>
 
     <section class="section-shell">

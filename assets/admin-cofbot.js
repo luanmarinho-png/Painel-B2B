@@ -97,17 +97,45 @@
 
     var root = document.createElement('div');
     root.id = 'medcof-admin-cofbot-root';
+    root.className = 'medcof-admin-cofbot-root--br';
+    var nudgeTri =
+      '<svg class="medcof-admin-cofbot-nudge-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5 L20 19 H4 Z"/></svg>';
     root.innerHTML =
-      '<button type="button" class="medcof-coord-chat-fab" id="medcofAdminCofbotFab" aria-label="Abrir Cofbot — assistente no painel admin" aria-expanded="false">' +
-      '<img class="medcof-coord-chat-fab-icon" src="/assets/coordenador-chat-fab.png" alt="" width="44" height="52" decoding="async" draggable="false" />' +
+      '<div class="medcof-admin-cofbot-fab-cluster">' +
+      '<button type="button" class="medcof-admin-cofbot-nudge medcof-admin-cofbot-nudge--tl" data-cofbot-corner="tl" aria-label="Cofbot no canto superior esquerdo">' +
+      nudgeTri +
       '</button>' +
+      '<button type="button" class="medcof-admin-cofbot-nudge medcof-admin-cofbot-nudge--tr" data-cofbot-corner="tr" aria-label="Cofbot no canto superior direito">' +
+      nudgeTri +
+      '</button>' +
+      '<button type="button" class="medcof-admin-cofbot-nudge medcof-admin-cofbot-nudge--bl" data-cofbot-corner="bl" aria-label="Cofbot no canto inferior esquerdo">' +
+      nudgeTri +
+      '</button>' +
+      '<button type="button" class="medcof-coord-chat-fab" id="medcofAdminCofbotFab" aria-label="Abrir Cofbot — assistente no painel admin" aria-expanded="false">' +
+      '<img class="medcof-coord-chat-fab-icon" src="/assets/coordenador-chat-fab.png" alt="" width="50" height="58" decoding="async" draggable="false" />' +
+      '</button>' +
+      '</div>' +
       '<div class="medcof-coord-chat-panel" id="medcofAdminCofbotPanel" hidden>' +
-      '<div class="medcof-coord-chat-head">' +
+      '<div class="medcof-coord-chat-head medcof-admin-cofbot-head">' +
+      '<div class="medcof-admin-cofbot-head-main">' +
+      '<div class="medcof-admin-cofbot-avatar" aria-hidden="true"><img src="/assets/coordenador-chat-fab.png" alt="" width="36" height="42" decoding="async" draggable="false" /></div>' +
       '<div>' +
       '<div class="medcof-coord-chat-title">Cofbot</div>' +
       '<div class="medcof-coord-chat-sub">Apoio à gestão MedCof — escolha a IES em foco para cruzar com os dados da base</div>' +
       '</div>' +
+      '</div>' +
+      '<div class="medcof-admin-cofbot-head-actions">' +
+      '<button type="button" class="medcof-admin-cofbot-icon-btn" id="medcofAdminCofbotExpand" aria-label="Expandir painel" title="Expandir">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>' +
+      '</button>' +
+      '<button type="button" class="medcof-admin-cofbot-icon-btn" id="medcofAdminCofbotDock" aria-label="Mudar posição do Cofbot na página" title="Posição na tela">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="2"/><path d="M14 10h6v6a2 2 0 0 1-2 2h-6"/></svg>' +
+      '</button>' +
+      '<button type="button" class="medcof-admin-cofbot-icon-btn" id="medcofAdminCofbotClear" aria-label="Limpar histórico do chat" title="Limpar histórico">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>' +
+      '</button>' +
       '<button type="button" class="medcof-coord-chat-close" id="medcofAdminCofbotClose" aria-label="Fechar">×</button>' +
+      '</div>' +
       '</div>' +
       '<div class="medcof-admin-cofbot-ies-wrap">' +
       '<label for="medcofAdminCofbotIes">IES em foco</label>' +
@@ -124,6 +152,7 @@
       '<input type="text" class="medcof-coord-chat-input" id="medcofAdminCofbotInput" placeholder="Ex.: como orientar a coordenação sobre o upload?" autocomplete="off" maxlength="2000" />' +
       '<button type="submit" class="medcof-coord-chat-send" id="medcofAdminCofbotSend">Enviar</button>' +
       '</form>' +
+      '<div class="medcof-admin-cofbot-resize-grip" aria-hidden="true"></div>' +
       '</div>';
     document.body.appendChild(root);
 
@@ -139,6 +168,62 @@
     var sendBtn = document.getElementById('medcofAdminCofbotSend');
     var iesSel = document.getElementById('medcofAdminCofbotIes');
     var navEl = document.getElementById('medcofAdminCofbotNav');
+
+    var COF_CORNER_KEY = 'medcofAdminCofbotCorner';
+    var CORNERS = ['br', 'bl', 'tr', 'tl'];
+
+    /**
+     * Fixa o widget Cofbot em um canto da viewport e persiste a escolha.
+     * @param {string} pos
+     */
+    function applyCofbotCorner(pos) {
+      if (CORNERS.indexOf(pos) < 0) pos = 'br';
+      root.className = 'medcof-admin-cofbot-root--' + pos;
+      try {
+        localStorage.setItem(COF_CORNER_KEY, pos);
+      } catch (err) {}
+    }
+
+    function loadCofbotCorner() {
+      var pos = 'br';
+      try {
+        pos = localStorage.getItem(COF_CORNER_KEY) || 'br';
+      } catch (e) {}
+      applyCofbotCorner(pos);
+    }
+
+    loadCofbotCorner();
+
+    root.querySelectorAll('[data-cofbot-corner]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        var pos = btn.getAttribute('data-cofbot-corner');
+        applyCofbotCorner(pos || 'br');
+      });
+    });
+
+    var expandBtn = document.getElementById('medcofAdminCofbotExpand');
+    var dockBtn = document.getElementById('medcofAdminCofbotDock');
+    if (expandBtn && panel) {
+      expandBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var fs = panel.classList.toggle('medcof-admin-cofbot-panel--fullscreen');
+        expandBtn.setAttribute('aria-pressed', fs ? 'true' : 'false');
+      });
+    }
+    if (dockBtn) {
+      dockBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var cur = 'br';
+        try {
+          cur = localStorage.getItem(COF_CORNER_KEY) || 'br';
+        } catch (e2) {}
+        var idx = CORNERS.indexOf(cur);
+        var next = CORNERS[(idx < 0 ? 0 : idx + 1) % CORNERS.length];
+        applyCofbotCorner(next);
+      });
+    }
 
     var panelOpen = false;
     /** @type {{ role: string, content: string }[]} */
@@ -254,6 +339,21 @@
       true
     );
 
+    var clearBtn = document.getElementById('medcofAdminCofbotClear');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        thread = [];
+        if (messagesEl) messagesEl.innerHTML = '';
+        if (errorEl) {
+          errorEl.hidden = true;
+          errorEl.textContent = '';
+        }
+        renderSuggestions();
+      });
+    }
+
     renderSuggestions();
 
     if (form) {
@@ -330,7 +430,13 @@
     }
 
     document.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape' && panelOpen) setPanel(false);
+      if (ev.key !== 'Escape' || !panelOpen) return;
+      if (panel && panel.classList.contains('medcof-admin-cofbot-panel--fullscreen')) {
+        panel.classList.remove('medcof-admin-cofbot-panel--fullscreen');
+        if (expandBtn) expandBtn.setAttribute('aria-pressed', 'false');
+        return;
+      }
+      setPanel(false);
     });
   }
 

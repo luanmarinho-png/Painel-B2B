@@ -18,7 +18,8 @@ const ALLOWED_TABLES = new Set([
   'avisos',
   'atividades_contrato',
   'contratos_ies',
-  'notificacoes_admin'
+  'notificacoes_admin',
+  'medcof_app_config'
 ]);
 
 const CORS = {

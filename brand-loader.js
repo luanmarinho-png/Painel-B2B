@@ -1,8 +1,9 @@
 /**
- * brand-loader.js v3 — Aplica logo e cor do Supabase ao painel institucional.
- * Cobre TODOS os elementos temáticos (hero, nav, periods, export, KPIs, tabelas, etc.)
- * Também corrige o flash de outra IES ao navegar entre painéis.
+ * brand-loader.js v3 — Logo da IES via Supabase; cor do painel = identidade MedCof fixa
+ * (theme_hex do admin não altera o visual do painel — só identificação no admin).
  */
+const MEDCOF_PANEL_ACCENT_HEX = '#dc2626';
+
 (async function () {
   const slug = location.pathname.split('/').filter(Boolean)[0];
   if (!slug) return;
@@ -56,9 +57,9 @@
       setTimeout(() => obs.disconnect(), 6000);
     }
 
-    // ── COR DO PAINEL (COBERTURA COMPLETA) ────────────────────────────
-    if (inst.theme_hex) {
-      const hex = inst.theme_hex;
+    // ── COR DO PAINEL: paleta MedCof (não usa inst.theme_hex) ─────────
+    {
+      const hex = MEDCOF_PANEL_ACCENT_HEX;
       const r = parseInt(hex.slice(1,3),16);
       const g = parseInt(hex.slice(3,5),16);
       const b = parseInt(hex.slice(5,7),16);
@@ -68,10 +69,13 @@
       const mid   = `rgb(${Math.round(r*.75)},${Math.round(g*.75)},${Math.round(b*.75)})`;
       const rgba  = (a) => `rgba(${r},${g},${b},${a})`;
 
-      // Luminância relativa do dark (55%) — decide se thead usa texto branco ou escuro
+      // Luminância do fundo real do thead (rgb escurecido 55%) — texto legível (branco no vermelho MedCof)
       const toLinear = c => { const s = c/255; return s<=0.04045 ? s/12.92 : Math.pow((s+0.055)/1.055,2.4); };
-      const lum = 0.55 * (0.2126*toLinear(r) + 0.7152*toLinear(g) + 0.0722*toLinear(b));
-      const theadTextColor = lum > 0.18 ? '#111827' : '#ffffff';
+      const dr = Math.round(r * 0.55);
+      const dg = Math.round(g * 0.55);
+      const db = Math.round(b * 0.55);
+      const theadBgLum = 0.2126 * toLinear(dr) + 0.7152 * toLinear(dg) + 0.0722 * toLinear(db);
+      const theadTextColor = theadBgLum > 0.45 ? '#111827' : '#ffffff';
 
       const css = `
 /* ══════════════════════════════════════════════════════════════
@@ -278,7 +282,7 @@ body {
       const unseen = (avisos || []).filter(a => !localStorage.getItem(`aviso_seen_${a.id}`));
       if (unseen.length > 0) {
         // Aguardar DOM pronto para exibir o popup
-        const showFirst = () => _showAvisoPopup(unseen[0], inst.theme_hex || '#22c55e');
+        const showFirst = () => _showAvisoPopup(unseen[0], MEDCOF_PANEL_ACCENT_HEX);
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showFirst);
         else showFirst();
       }

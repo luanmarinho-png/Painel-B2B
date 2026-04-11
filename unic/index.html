@@ -23,11 +23,17 @@
 <body data-page="home">
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="brand">
-        <div class="brand-mark" data-institution-initials>UNC</div>
+      <div class="brand brand--home-cockpit">
+        <div class="topbar-logo-pair">
+          <div id="institutionLogoSlot" class="topbar-logo-ies">
+            <img class="home-institution-logo" src="logo_unic.png" alt="Instituição">
+          </div>
+          <span class="topbar-logo-connector" aria-hidden="true">×</span>
+          <img class="topbar-logo-medcof" src="logo-novo-medcof.avif" alt="Logo do Grupo MedCof">
+        </div>
         <div class="brand-copy">
           <div class="brand-title" data-institution-brand>UNIC × MedCof</div>
-          <div class="brand-subtitle">Painel institucional de engajamento e simulado</div>
+          <div class="brand-subtitle"><span id="homeLastUpdated">Sem data remota — dados locais ou cache</span></div>
         </div>
       </div>
       <nav class="main-nav" aria-label="Navegação principal">
@@ -43,95 +49,70 @@
     </div>
   </header>
 
-  <main class="page-shell">
-    <section class="hero-card hero-strong home-stage">
-      <div class="hero-kicker">Página inicial</div>
+  <main class="page-shell home-cockpit-main">
+    <section class="home-cockpit-intro">
+      <div class="section-kicker">Dashboard inicial</div>
       <h1 id="homeBrandHeading">Painel institucional UNIC × MedCof</h1>
-      <p class="hero-sub">Uma navegação clara para acompanhar engajamento, leitura por período e desempenho no simulado na caminhada rumo ao conceito 5 no ENAMED.</p>
-
-      <div class="home-brand-center">
-        <div class="home-brand-pill">Caminhada institucional rumo ao conceito 5</div>
-
-        <div class="home-logo-stack">
-          <div class="home-logo-card institution" id="institutionLogoSlot">
-            <img class="home-institution-logo" src="logo_unic.png" alt="Logo da UNIC">
-          </div>
-
-          <div class="home-logo-connector" aria-hidden="true">×</div>
-
-          <div class="home-logo-card medcof">
-            <img src="logo-novo-medcof.avif" alt="Logo do Grupo MedCof" class="medcof-logo-img" style="max-width:160px;max-height:140px;object-fit:contain;display:block;margin:auto">
-          </div>
-        </div>
-      </div>
+      <p class="home-cockpit-lead">Estado da turma, quem precisa de atenção e atalhos para decisão — sem precisar navegar para outras páginas primeiro.</p>
     </section>
 
-    <section class="section-shell home-map-section">
-      <div class="section-head home-map-head">
-        <div>
-          <div class="section-kicker">Mapa do painel</div>
-          <h2>Três páginas. Três focos de leitura.</h2>
-          <p>Escolha a página ideal para reunião, acompanhamento ou tomada de decisão.</p>
+    <div id="homeDashboardRoot">
+      <div class="kpi-grid home-kpi-row" id="homeKpiRow"></div>
+
+      <section class="home-sniper-card" id="homeSniperStrip" aria-label="Modo sniper — busca de aluno">
+        <div class="home-sniper-deco" aria-hidden="true">
+          <svg class="home-sniper-target" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="60" cy="60" r="56" stroke="currentColor" stroke-width="1.5" opacity="0.12"/>
+            <circle cx="60" cy="60" r="40" stroke="currentColor" stroke-width="1.5" opacity="0.18"/>
+            <circle cx="60" cy="60" r="22" stroke="currentColor" stroke-width="2" opacity="0.22"/>
+            <circle cx="60" cy="60" r="5" fill="currentColor" opacity="0.15"/>
+            <path d="M60 8v12M60 100v12M8 60h12M100 60h12" stroke="currentColor" stroke-width="1.2" opacity="0.14" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="home-sniper-card-inner">
+          <h3 class="home-sniper-title">Modo sniper</h3>
+          <p class="home-sniper-lead">Na correria? Busque um aluno da <strong>sua IES</strong> na base MedCof, envie ao <strong>Cofbot</strong> e receba um relatório objetivo: engajamento, questões, tempo de estudo e desempenho em simulados quando a nota estiver na base.</p>
+          <div class="home-sniper-actions">
+            <input type="search" id="homeSniperInput" class="home-sniper-input" placeholder="Digite ou selecione o aluno…" autocomplete="off" list="homeSniperList" maxlength="200" />
+            <datalist id="homeSniperList"></datalist>
+            <button type="button" class="home-sniper-icon-btn home-sniper-icon-btn--send" id="homeSniperSubmit" title="Gerar resumo no Cofbot" aria-label="Enviar pedido ao Cofbot">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>
+            <button type="button" class="home-sniper-icon-btn home-sniper-icon-btn--clear" id="homeSniperClear" title="Limpar busca" aria-label="Limpar busca">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <p class="home-sniper-error" id="homeSniperError" hidden></p>
+        </div>
+      </section>
+
+      <div class="home-cockpit-grid">
+        <div class="home-cockpit-panel home-cockpit-panel--chart">
+          <div class="section-kicker">Evolução do ciclo</div>
+          <h3 class="home-attention-title" style="margin-top:4px;font-size:1rem">Progressão mensal de uso e resolução de questões</h3>
+          <p class="helper-text home-monthly-chart-intro">Barras (eixo esquerdo) = questões resolvidas no mês; linha dourada (eixo direito) = horas de acesso. Legenda acima do gráfico.</p>
+          <div class="chart-frame chart-frame--home" id="homeMonthlyChart"></div>
+        </div>
+        <div class="home-cockpit-panel home-cockpit-panel--attention">
+          <div id="homeAttention"></div>
         </div>
       </div>
 
-      <div class="home-page-grid">
-
-        <!-- Card 1 — Inicial -->
-        <a class="home-page-card home-page-card-neutral" href="index.html">
-          <div class="home-page-card-stripe"></div>
-          <div class="home-page-card-body">
-            <div class="home-page-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                <polyline points="9 22 9 12 15 12 15 22"/>
-              </svg>
-            </div>
-            <div class="home-page-index">Página 1</div>
-            <h3>Inicial</h3>
-            <p>Apresenta o painel, a parceria institucional e o direcionamento estratégico da caminhada rumo ao conceito 5.</p>
-            <div class="home-page-link">Abrir página inicial →</div>
-          </div>
-        </a>
-
-        <!-- Card 2 — Engajamento -->
-        <a class="home-page-card home-page-card-green" href="engajamento.html">
-          <div class="home-page-card-stripe"></div>
-          <div class="home-page-card-body">
-            <div class="home-page-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-              </svg>
-            </div>
-            <div class="home-page-index">Página 2</div>
-            <h3>Engajamento</h3>
-            <p>Mostra o ritmo de uso da plataforma, o engajamento do grupo e quem precisa de reforço na rotina de estudo.</p>
-            <div class="home-page-link">Abrir engajamento →</div>
-          </div>
-        </a>
-
-        <!-- Card 3 — Período detalhado -->
-        <a class="home-page-card home-page-card-blue" href="periodo-detalhado.html">
-          <div class="home-page-card-stripe"></div>
-          <div class="home-page-card-body">
-            <div class="home-page-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                <line x1="16" y1="2" x2="16" y2="6"/>
-                <line x1="8" y1="2" x2="8" y2="6"/>
-                <line x1="3" y1="10" x2="21" y2="10"/>
-              </svg>
-            </div>
-            <div class="home-page-index">Página 3</div>
-            <h3>Período detalhado</h3>
-            <p>Organiza os alunos por recorte temporal para facilitar comparação, leitura operacional e análise por período.</p>
-            <div class="home-page-link">Abrir período detalhado →</div>
-          </div>
-        </a>
-
+      <div class="home-cockpit-panel home-cockpit-panel--simulados">
+        <div class="section-kicker">Simulados</div>
+        <h3 class="home-attention-title" style="margin-top:4px;font-size:1rem">Evolução da média da IES</h3>
+        <div id="homeSimuladoChart"></div>
       </div>
-    </section>
 
+      <div class="home-cockpit-panel home-cockpit-panel--insights">
+        <div id="homeCycleInsights"></div>
+      </div>
+
+      <div class="home-action-bar" id="homeActionBar">
+        <a class="btn btn--primary" href="periodo-detalhado.html#export">Exportar relatório</a>
+        <a class="btn" href="simulado-personalizado.html">Ver simulados</a>
+      </div>
+    </div>
   </main>
 
   <footer class="site-footer">
