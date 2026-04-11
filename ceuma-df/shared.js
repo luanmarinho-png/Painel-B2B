@@ -4460,7 +4460,10 @@ async function _coordRunPopupQueue() {
     const lido = _coordNormalizeLidoPor(n.lido_por);
     if (lido.includes(email)) return false;
     const modo = String(n.modo_coord || "central").toLowerCase();
-    return modo === "popup";
+    if (modo !== "popup") return false;
+    // Não exibir popup se título e mensagem estiverem vazios
+    if (!String(n.titulo || "").trim() && !String(n.mensagem || "").trim()) return false;
+    return true;
   });
   pending.sort((a, b) => {
     const ta = a.created_at ? new Date(String(a.created_at)).getTime() : 0;

@@ -1375,16 +1375,15 @@ window.parseArr = function(v) {
         <span class="dash-sky-toggle-knob" aria-hidden="true"></span>
         <span class="visually-hidden">Alternar tema claro ou escuro</span>
       </button>
-      <span id="topbarUserTrigger" class="dash-topbar-user-wrap" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;position:relative" onclick="window._toggleAdminPopover()">
-        <img id="topbarUserAvatar" alt="" width="32" height="32" style="display:none;width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid var(--border);flex-shrink:0" decoding="async" />
-        <span class="dash-topbar-user" id="topbarUser">—</span>
+      <span id="topbarUserTrigger" class="dash-topbar-user-wrap" style="display:inline-flex;align-items:center;cursor:pointer;position:relative" title="Perfil e configurações" onclick="window._toggleAdminPopover()">
+        <img id="topbarUserAvatar" alt="" width="32" height="32" src="/assets/coordenador-chat-fab.svg" style="width:32px;height:32px;border-radius:8px;object-fit:cover;border:1px solid var(--border);flex-shrink:0" decoding="async" />
       </span>
       <input type="file" id="adminAvatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" />
       <div id="adminPopover" style="display:none;position:absolute;top:48px;right:80px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,0.25);z-index:100;min-width:300px;max-width:400px">
         <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
           <div style="flex-shrink:0">
-            <img id="popoverAvatarImg" alt="" width="56" height="56" style="display:none;width:56px;height:56px;border-radius:50%;object-fit:cover;border:1px solid var(--border)" decoding="async" />
-            <div id="popoverAvatarPlaceholder" style="width:56px;height:56px;border-radius:50%;background:var(--bg-elevated);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:1.35rem;color:var(--text-muted)">👤</div>
+            <img id="popoverAvatarImg" alt="" width="56" height="56" src="/assets/coordenador-chat-fab.svg" style="width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid var(--border)" decoding="async" />
+            <div id="popoverAvatarPlaceholder" style="display:none;width:56px;height:56px;border-radius:10px;background:var(--bg-elevated);border:1px dashed var(--border);align-items:center;justify-content:center;font-size:1.35rem;color:var(--text-muted)">👤</div>
           </div>
           <div style="flex:1;min-width:0">
             <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:4px;word-break:break-word" id="popoverUserName"></div>
@@ -2798,8 +2797,6 @@ window.parseArr = function(v) {
   function showDashboard(email) {
     overlay.classList.add("hidden");
     dashboard.classList.add("visible");
-    if (email) $("topbarUser").textContent = email;
-
     // Carregar dados do admin logado para popover e filtro
     _loadAdminProfile();
     if (typeof window.mountAdminCofbot === "function") window.mountAdminCofbot();
@@ -2810,30 +2807,42 @@ window.parseArr = function(v) {
     });
   }
 
-  function _adminApplyAvatarToDom(url) {
-    const u = url && String(url).trim();
-    const topImg = document.getElementById('topbarUserAvatar');
-    const popImg = document.getElementById('popoverAvatarImg');
-    const popPh = document.getElementById('popoverAvatarPlaceholder');
+  var _ADMIN_DEFAULT_AVATAR = '/assets/coordenador-chat-fab.svg';
+
+  /**
+   * @param {string} [url]
+   * @param {{ bustCache?: boolean }} [opts]
+   */
+  function _adminApplyAvatarToDom(url, opts) {
+    var bust = opts && opts.bustCache;
+    var raw = url && String(url).trim();
+    var displayUrl = raw || _ADMIN_DEFAULT_AVATAR;
+    if (bust && raw && /^https?:\/\//i.test(raw)) {
+      displayUrl = raw + (raw.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+    }
+    var topImg = document.getElementById('topbarUserAvatar');
+    var popImg = document.getElementById('popoverAvatarImg');
+    var popPh = document.getElementById('popoverAvatarPlaceholder');
+    function bindFallback(img) {
+      if (!img) return;
+      img.onerror = function () {
+        if (img.src.indexOf(_ADMIN_DEFAULT_AVATAR) !== -1) {
+          img.onerror = null;
+          return;
+        }
+        img.onerror = null;
+        img.src = _ADMIN_DEFAULT_AVATAR;
+      };
+    }
     if (topImg) {
-      if (u) {
-        topImg.src = u;
-        topImg.style.display = '';
-      } else {
-        topImg.removeAttribute('src');
-        topImg.style.display = 'none';
-      }
+      topImg.src = displayUrl;
+      bindFallback(topImg);
     }
     if (popImg && popPh) {
-      if (u) {
-        popImg.src = u;
-        popImg.style.display = '';
-        popPh.style.display = 'none';
-      } else {
-        popImg.removeAttribute('src');
-        popImg.style.display = 'none';
-        popPh.style.display = '';
-      }
+      popImg.src = displayUrl;
+      popImg.style.display = '';
+      popPh.style.display = 'none';
+      bindFallback(popImg);
     }
   }
 
@@ -2842,17 +2851,17 @@ window.parseArr = function(v) {
       const sb = getSupabaseClient();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) return;
+      const prevAvatar = (window._adminProfile && window._adminProfile.avatar_url) || '';
       const meta = user.user_metadata || {};
+      const incomingAvatar = meta.avatar_url && String(meta.avatar_url).trim();
       window._adminProfile = {
         email: user.email,
         nome: meta.nome || user.email.split('@')[0],
         role: meta.role || 'admin',
         instituicao: meta.instituicao || '',
         instituicoes_responsavel: meta.instituicoes_responsavel || [],
-        avatar_url: meta.avatar_url || ''
+        avatar_url: incomingAvatar || prevAvatar || ''
       };
-      const topbar = document.getElementById('topbarUser');
-      if (topbar) topbar.textContent = window._adminProfile.nome || user.email;
       _adminApplyAvatarToDom(window._adminProfile.avatar_url);
       const saved = localStorage.getItem('admin_ies_filter');
       window._adminIesFilter = saved || 'all';
@@ -2950,8 +2959,19 @@ window.parseArr = function(v) {
       });
       if (!put.ok) throw new Error('Falha ao enviar foto');
       const sb = getSupabaseClient();
-      const { error } = await sb.auth.updateUser({ data: { avatar_url: j.publicUrl } });
+      const { data: upd, error } = await sb.auth.updateUser({ data: { avatar_url: j.publicUrl } });
       if (error) throw error;
+      var metaUrl = upd && upd.user && upd.user.user_metadata && upd.user.user_metadata.avatar_url;
+      if (metaUrl) {
+        window._adminProfile = window._adminProfile || {};
+        window._adminProfile.avatar_url = metaUrl;
+        _adminApplyAvatarToDom(metaUrl, { bustCache: true });
+      } else {
+        window._adminProfile = window._adminProfile || {};
+        window._adminProfile.avatar_url = j.publicUrl;
+        _adminApplyAvatarToDom(j.publicUrl, { bustCache: true });
+      }
+      await sb.auth.refreshSession();
       await _loadAdminProfile();
       if (typeof showToast === 'function') showToast('Foto atualizada', 'success');
     } catch (e) {
@@ -8976,7 +8996,10 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       const el = $('simUploadLockedInstName');
       if (el) el.textContent = (inst && inst.institutionName) ? inst.institutionName : String(prefSlug).toUpperCase();
       const tSim = $('simUploadLockedSimTitle');
-      if (tSim) tSim.textContent = 'Carregando…';
+      if (tSim) {
+        const cached = (window._allSimsBanco || []).find((s) => String(s.id) === String(prefSimId));
+        tSim.textContent = cached && cached.titulo ? cached.titulo : 'Carregando…';
+      }
       const typeSel = $('simUploadType');
       if (typeSel) typeSel.value = 'bq';
       window._simUploadPendingLockSimId = prefSimId;
@@ -11285,6 +11308,46 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     finally{ if($("btnSimPers")) $("btnSimPers").disabled=false; }
   });
 
+  /**
+   * Quando a lista de fechados vem vazia ou o ID não entra no filtro, busca o simulado por ID
+   * para não deixar "Carregando…" no resumo do modal bloqueado.
+   * @param {string} slug
+   * @param {string} pendingId
+   */
+  async function _fillLockedBqSimTitleIfNeeded(slug, pendingId) {
+    const tSim = $('simUploadLockedSimTitle');
+    if (!tSim || !pendingId) return;
+    let rows;
+    try {
+      rows = await window._supaRestAdmin(
+        'simulados_banco',
+        `select=id,titulo,status,instituicoes_destino&id=eq.${encodeURIComponent(pendingId)}`
+      );
+    } catch (e) {
+      try {
+        rows = await window._supaRest(
+          'simulados_banco',
+          `select=id,titulo,status,instituicoes_destino&id=eq.${encodeURIComponent(pendingId)}`
+        );
+      } catch (e2) {
+        tSim.textContent = 'Não foi possível carregar o simulado';
+        return;
+      }
+    }
+    const sim = Array.isArray(rows) && rows[0];
+    if (!sim || !sim.titulo) {
+      tSim.textContent = 'Simulado não encontrado';
+      return;
+    }
+    let suffix = '';
+    if (sim.status !== 'fechado') {
+      suffix = ` — status: ${sim.status} (exige fechado para upload)`;
+    } else if (typeof window._iesDestinoMatchesSlug === 'function' && !window._iesDestinoMatchesSlug(slug, sim.instituicoes_destino)) {
+      suffix = ' — verifique o vínculo desta IES no cadastro do simulado';
+    }
+    tSim.textContent = sim.titulo + suffix;
+  }
+
   // ── Banco de Questões: carregar simulados fechados ─────────────
   window._loadBQSimulados = async function(slug) {
     const sel = $("simBQSelect");
@@ -11322,6 +11385,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       sel.innerHTML = '<option value="">Selecione o simulado...</option>';
       if (!filtered.length) {
         sel.innerHTML = '<option value="">Nenhum simulado fechado disponível para esta IES</option>';
+        const pending = window._simUploadPendingLockSimId;
+        if (pending) await _fillLockedBqSimTitleIfNeeded(slug, pending);
         return;
       }
       filtered.forEach(s => {
@@ -11331,6 +11396,9 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         opt.textContent = `${s.titulo} (${comp.length} questões)`;
         sel.appendChild(opt);
       });
+      window._allSimsBanco = (window._allSimsBanco || []).filter(
+        (s) => !filtered.some((f) => String(f.id) === String(s.id))
+      ).concat(filtered);
       // Auto-select simulado when opened from locked flow (grid button)
       if (window._simUploadPendingLockSimId) {
         const pendingId = window._simUploadPendingLockSimId;
@@ -11338,14 +11406,21 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         const matched = filtered.find(s => String(s.id) === String(pendingId));
         const tSim = $('simUploadLockedSimTitle');
         if (tSim && matched) tSim.textContent = matched.titulo;
+        else if (tSim && pendingId) await _fillLockedBqSimTitleIfNeeded(slug, pendingId);
         else if (tSim) tSim.textContent = sel.selectedOptions[0]?.textContent || '—';
         // Trigger change handlers so buttons/hints update
         sel.dispatchEvent(new Event('change'));
       }
     } catch(e) {
       sel.innerHTML = '<option value="">Erro ao carregar simulados</option>';
-      window._simUploadPendingLockSimId = null;
+      const pending = window._simUploadPendingLockSimId;
       console.error('_loadBQSimulados erro:', e);
+      if (pending && slug) await _fillLockedBqSimTitleIfNeeded(slug, pending);
+      else {
+        const tErr = $('simUploadLockedSimTitle');
+        if (tErr && pending) tErr.textContent = 'Erro ao carregar simulados';
+      }
+      window._simUploadPendingLockSimId = null;
     }
   }
 
