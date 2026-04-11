@@ -1322,6 +1322,8 @@ window.parseArr = function(v) {
   html[data-theme="light"] #newInstModal,
   html[data-theme="light"] #envioModal,
   html[data-theme="light"] #alunoImportModal,
+  html[data-theme="light"] #adminConfirmModal,
+  html[data-theme="light"] #gestaoSimRemoverModal,
   html[data-theme="light"] #boletimModal,
   html[data-theme="light"] #enviarBoletimAlunoModal,
   html[data-theme="light"] #boletimCoordModal,
@@ -1904,7 +1906,6 @@ window.parseArr = function(v) {
               <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:16px;line-height:1.45">O resultado foi cadastrado. O link do gabarito no painel do coordenador vem do cadastro do simulado (Banco de Questões → Editar). Boletins ficam no Storage.</div>
               <div style="display:flex;flex-direction:column;gap:10px;max-width:400px;margin:0 auto">
                 <button type="button" class="btn-primary" id="simUploadPostBtnBoletins" style="width:100%;padding:12px 16px">📄 Emitir boletins</button>
-                <button type="button" class="btn-secondary" id="simUploadPostBtnEmail" style="width:100%;padding:12px 16px;border:1.5px solid var(--border)">📧 Enviar e-mail</button>
                 <button type="button" class="btn-secondary" id="simUploadPostBtnRel" style="width:100%;padding:12px 16px;border:1.5px solid var(--border)">📊 Gerar os relatórios</button>
                 <button type="button" class="btn-secondary" id="simUploadPostBtnNovo" style="margin-top:8px;padding:10px 16px;font-size:0.82rem">← Novo upload</button>
               </div>
@@ -4225,20 +4226,16 @@ window._renderGestaoGrid = function() {
               return '<button onclick="event.stopPropagation();window._simOpenUpload(\'' + slug + '\',\'' + s.id + '\',this)" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#f59e0b,#eab308);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Upload resultado — pendente">⬆</button>';
             }
           })()}
-          <button onclick="window._simOpenPdfModal('${slug}','${s.id}')" style="padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.72rem;cursor:pointer" title="Gerar PDF relatório">📄</button>
           ${(() => {
             const simRef = 'bq_' + slug + '_' + s.id.slice(0,8);
             const hasResult = _uploadedRefs.has(simRef);
             const simTituloEsc = (s.titulo || '').replace(/'/g, "\\'");
-            if (hasResult) {
-              return '<button onclick="window._openBoletimModal(\'' + slug + '\',\'' + s.id + '\')" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Gerar Boletins">📄 Boletins</button>'
-                   + '<button onclick="window._openBoletimEmailCoordModal(\'' + slug + '\',\'' + s.id + '\')" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Avisar coordenador por e-mail (boletins disponíveis)">📧</button>'
-                   + '<button onclick="window._clearSimResult(\'' + slug + '\',\'' + s.id + '\',\'' + simTituloEsc + '\')" style="padding:4px 10px;border-radius:7px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.07);color:#ef4444;font-size:0.72rem;cursor:pointer" title="Apagar resultado — permite novo upload">🗑️</button>';
-            } else {
-              return '<button disabled style="padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.72rem;cursor:not-allowed;opacity:0.5" title="Boletins indisponível — faça upload do resultado primeiro">📄 Boletins</button>';
-            }
+            const bolBtn = hasResult
+              ? '<button onclick="window._openBoletimModal(\'' + slug + '\',\'' + s.id + '\')" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Boletins: ZIP, Storage, e-mail e relatório PDF">📄 Boletins</button>'
+              : '<button disabled style="padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.72rem;cursor:not-allowed;opacity:0.5" title="Faça upload do resultado primeiro">📄 Boletins</button>';
+            const remBtn = '<button onclick="window._openGestaoSimRemoverModal(\'' + slug + '\',\'' + s.id + '\',\'' + simTituloEsc + '\',' + (hasResult ? 'true' : 'false') + ')" style="padding:4px 10px;border-radius:7px;border:1px solid rgba(239,68,68,0.35);background:rgba(239,68,68,0.08);color:#ef4444;font-size:0.72rem;font-weight:700;cursor:pointer" title="Resetar resultado, desvincular ou limpar Storage">Remover</button>';
+            return bolBtn + remBtn;
           })()}
-          <button onclick="window._desvincularSimIES('${s.id}','${slug}')" style="padding:4px 10px;border-radius:7px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.07);color:#ef4444;font-size:0.72rem;cursor:pointer" title="Desvincular simulado desta IES">🔗✕</button>
         </div>
       </div>`;
     }).join('');
@@ -4404,24 +4401,35 @@ async function _deleteAlunosMasterSimuladoOrfaos(slug, cpfs) {
   return deleted;
 }
 
-// ── Desvincular simulado de uma IES específica ─────────────────────
-window._desvincularSimIES = async function(simId, slug) {
-  if (!confirm(
-    'Desvincular este simulado desta IES?\n\n' +
-    'Isso apagará o resultado de upload vinculado a esta IES. ' +
-    'Alunos criados automaticamente só por este simulado (origem simulado) serão removidos do cadastro se não tiverem resultado em outro simulado nesta IES. ' +
-    'Quem também veio de engajamento/import (origem IES) não é apagado.\n\n' +
-    'O simulado em si não será excluído.'
-  )) return;
+/**
+ * Remove ZIPs de boletins no Storage (pasta slug/simRef no bucket configurado).
+ * @returns {Promise<{ deleted?: number, paths?: string[] }>}
+ */
+window._wipeBoletinsStorageForSim = async function(slug, simId) {
+  const simRef = `bq_${slug}_${simId.slice(0, 8)}`;
+  return await window._adminProxyAction({
+    action: 'boletins_storage_delete_objects',
+    slug,
+    simRef
+  });
+};
+
+/**
+ * Desvincular simulado da IES — lógica interna (sem modal).
+ */
+window._desvincularSimIESExecute = async function(simId, slug) {
   let arr;
   try {
     arr = await window._supaRest('simulados_banco', `select=id,titulo,instituicoes_destino&id=eq.${encodeURIComponent(simId)}`);
   } catch (e) {
-    alert('Erro ao buscar simulado.');
+    showToast('Erro ao buscar simulado.', 'error');
     return;
   }
   const sim = arr && arr[0];
-  if (!sim) { alert('Simulado não encontrado.'); return; }
+  if (!sim) {
+    showToast('Simulado não encontrado.', 'error');
+    return;
+  }
 
   const simRef = `bq_${slug}_${simId.slice(0,8)}`;
   let orphanCpfs = [];
@@ -4438,16 +4446,17 @@ window._desvincularSimIES = async function(simId, slug) {
   else destino = [];
   const newDestino = destino.filter(s => s !== slug);
 
-  // 1. Remover slug de instituicoes_destino
   const patchResp = await window._supaWrite(
     `simulados_banco?id=eq.${encodeURIComponent(simId)}`,
     'PATCH',
     { instituicoes_destino: newDestino },
     { prefer: 'return=minimal' }
   );
-  if (!patchResp.ok) { alert('Erro ao desvincular: ' + await patchResp.text()); return; }
+  if (!patchResp.ok) {
+    showToast('Erro ao desvincular: ' + (await patchResp.text()), 'error');
+    return;
+  }
 
-  // 2. Apagar simulado_respostas desta IES para este simulado (simRef = bq_{slug}_{simId[:8]})
   try {
     await window._supaWrite(
       `simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}`,
@@ -4457,7 +4466,6 @@ window._desvincularSimIES = async function(simId, slug) {
     );
   } catch(e) { console.warn('Erro ao limpar simulado_respostas:', e); }
 
-  // 3. Apagar simulados_envios desta IES para este simulado
   try {
     await window._supaWrite(
       `simulados_envios?simulado_id=eq.${encodeURIComponent(simId)}&ies_slug=eq.${encodeURIComponent(slug)}`,
@@ -4467,7 +4475,6 @@ window._desvincularSimIES = async function(simId, slug) {
     );
   } catch(e) { console.warn('Erro ao limpar simulados_envios:', e); }
 
-  // 3b. Remover do alunos_master apenas origem "simulado" órfãos (sem outro resultado nesta IES)
   let removedOrfaos = 0;
   try {
     removedOrfaos = await _deleteAlunosMasterSimuladoOrfaos(slug, orphanCpfs);
@@ -4481,7 +4488,6 @@ window._desvincularSimIES = async function(simId, slug) {
     try { await window._loadAlunosMaster(); } catch (_) { /* ignore */ }
   }
 
-  // 4. Atualiza cache local imediatamente (para render instantâneo)
   if (Array.isArray(window._allSimsBanco)) {
     const s = window._allSimsBanco.find(x => x.id === simId);
     if (s) s.instituicoes_destino = newDestino;
@@ -4497,7 +4503,6 @@ window._desvincularSimIES = async function(simId, slug) {
     'success'
   );
 
-  // 5. Re-buscar simulados_banco (mesmo backend que o painel) para garantir consistência
   try {
     let rows = await window._supaRest(
       'simulados_banco',
@@ -4516,19 +4521,11 @@ window._desvincularSimIES = async function(simId, slug) {
   } catch(e) { console.warn('Re-fetch simulados_banco falhou:', e); }
 };
 
-// ── Apagar apenas o resultado (simulado_respostas) sem desvincular o simulado da IES ──
-window._clearSimResult = async function(slug, simId, simTitulo) {
+/**
+ * Apagar resultado — lógica interna (sem modal).
+ */
+window._clearSimResultExecute = async function(slug, simId, simTitulo) {
   const simRef = `bq_${slug}_${simId.slice(0,8)}`;
-  const confirmMsg =
-    `⚠️ Apagar resultado do simulado?\n\n` +
-    `Simulado: "${simTitulo}"\n` +
-    `IES: ${slug}\n\n` +
-    `Isso apagará todos os dados de respostas e boletins já processados para esta IES.\n` +
-    `Cadastros automáticos feitos só por este simulado (origem simulado) serão removidos se não houver outro resultado na mesma IES.\n` +
-    `O vínculo do simulado com a IES será mantido e você poderá fazer um novo upload.\n\n` +
-    `Tem certeza?`;
-  if (!confirm(confirmMsg)) return;
-
   let orphanCpfs = [];
   try {
     const rowsAll = await _fetchSimuladoRespostasAllForIesSlug(slug);
@@ -4538,16 +4535,17 @@ window._clearSimResult = async function(slug, simId, simTitulo) {
   }
 
   try {
-    // 1. Apagar simulado_respostas desta IES para este simulado
     const delResp = await window._supaWrite(
       `simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}`,
       'DELETE',
       null,
       { prefer: 'return=minimal' }
     );
-    if (!delResp.ok) { alert('Erro ao apagar resultado: ' + await delResp.text()); return; }
+    if (!delResp.ok) {
+      showToast('Erro ao apagar resultado: ' + (await delResp.text()), 'error');
+      return;
+    }
 
-    // 2. Resetar resultado_cadastrado em simulados_envios
     await window._supaWrite(
       `simulados_envios?simulado_id=eq.${encodeURIComponent(simId)}&ies_slug=eq.${encodeURIComponent(slug)}`,
       'PATCH',
@@ -4568,7 +4566,6 @@ window._clearSimResult = async function(slug, simId, simTitulo) {
       try { await window._loadAlunosMaster(); } catch (_) { /* ignore */ }
     }
 
-    // 3. Atualiza cache local
     if (Array.isArray(window._boletimSimRefs)) {
       window._boletimSimRefs = window._boletimSimRefs.filter(r => r.simulado_ref !== simRef);
     }
@@ -4581,7 +4578,102 @@ window._clearSimResult = async function(slug, simId, simTitulo) {
       'success'
     );
   } catch(e) {
-    alert('Erro ao apagar resultado: ' + e.message);
+    showToast('Erro ao apagar resultado: ' + e.message, 'error');
+  }
+};
+
+// ── Desvincular simulado de uma IES específica (confirmação simples; grade usa modal guiado) ──
+window._desvincularSimIES = async function(simId, slug) {
+  const ok = await window._openAdminConfirmModal({
+    title: 'Desvincular simulado desta IES?',
+    message:
+      'Isso apagará o resultado de upload vinculado a esta IES. ' +
+      'Alunos criados automaticamente só por este simulado (origem simulado) serão removidos do cadastro se não tiverem resultado em outro simulado nesta IES. ' +
+      'Quem também veio de engajamento/import (origem IES) não é apagado.\n\n' +
+      'O simulado em si não será excluído.',
+    danger: true,
+    confirmText: 'Desvincular',
+    cancelText: 'Cancelar'
+  });
+  if (!ok) return;
+  await window._desvincularSimIESExecute(simId, slug);
+};
+
+// ── Apagar apenas o resultado (atalho com confirmação simples) ──
+window._clearSimResult = async function(slug, simId, simTitulo) {
+  const confirmMsg =
+    `Simulado: "${simTitulo}"\n` +
+    `IES: ${slug}\n\n` +
+    `Isso apagará todos os dados de respostas e boletins já processados para esta IES.\n` +
+    `Cadastros automáticos feitos só por este simulado (origem simulado) serão removidos se não houver outro resultado na mesma IES.\n` +
+    `O vínculo do simulado com a IES será mantido e você poderá fazer um novo upload.\n\n` +
+    `Tem certeza?`;
+  const proceed = await window._openAdminConfirmModal({
+    title: 'Apagar resultado deste simulado?',
+    message: confirmMsg,
+    danger: true,
+    confirmText: 'Apagar resultado',
+    cancelText: 'Cancelar'
+  });
+  if (!proceed) return;
+  await window._clearSimResultExecute(slug, simId, simTitulo);
+};
+
+window._gestaoSimRemoverCtx = null;
+
+/**
+ * Modal guiado: resetar resultado, desvincular, opcional Storage.
+ */
+window._openGestaoSimRemoverModal = function(slug, simId, simTitulo, hasResult) {
+  window._gestaoSimRemoverCtx = { slug, simId, simTitulo: simTitulo || '', hasResult: !!hasResult };
+  const inst = (window._instData || []).find(i => i.slug === slug);
+  const nomeIes = inst ? (inst.nome || slug) : slug;
+  const sum = document.getElementById('gestaoSimRemoverSummary');
+  if (sum) {
+    sum.textContent = `${nomeIes} · ${(simTitulo || 'Simulado').replace(/\s+/g, ' ').trim()} · ${slug}`;
+  }
+  const rReset = document.getElementById('gestaoSimRemoverModeReset');
+  const rUnlink = document.getElementById('gestaoSimRemoverModeUnlink');
+  if (hasResult) {
+    if (rReset) { rReset.disabled = false; rReset.checked = true; }
+    if (rUnlink) rUnlink.checked = false;
+  } else {
+    if (rReset) { rReset.disabled = true; rReset.checked = false; }
+    if (rUnlink) { rUnlink.checked = true; }
+  }
+  const st = document.getElementById('gestaoSimRemoverStorage');
+  if (st) st.checked = false;
+  const m = document.getElementById('gestaoSimRemoverModal');
+  if (m) {
+    m.style.display = 'flex';
+    m.onclick = function(ev) { if (ev.target === m) m.style.display = 'none'; };
+  }
+};
+
+window._submitGestaoSimRemoverModal = async function() {
+  const c = window._gestaoSimRemoverCtx;
+  if (!c || !c.slug || !c.simId) return;
+  const mode = document.querySelector('input[name="gestaoSimRemoverMode"]:checked')?.value;
+  const wipeStorage = document.getElementById('gestaoSimRemoverStorage')?.checked === true;
+  if (mode === 'reset' && !c.hasResult) {
+    showToast('Não há resultado cadastrado para resetar. Escolha desvincular ou faça upload do resultado.', 'warn');
+    return;
+  }
+  document.getElementById('gestaoSimRemoverModal').style.display = 'none';
+  if (wipeStorage) {
+    try {
+      const r = await window._wipeBoletinsStorageForSim(c.slug, c.simId);
+      const n = r && typeof r.deleted === 'number' ? r.deleted : 0;
+      if (n > 0) showToast(`${n} arquivo(s) removido(s) do Storage.`, 'success');
+      else showToast('Storage: nenhum arquivo nessa pasta (ou já vazio).', 'info');
+    } catch (e) {
+      showToast('Aviso Storage: ' + (e && e.message ? e.message : String(e)) + ' — seguindo com o banco.', 'warn');
+    }
+  }
+  if (mode === 'unlink') {
+    await window._desvincularSimIESExecute(c.simId, c.slug);
+  } else {
+    await window._clearSimResultExecute(c.slug, c.simId, c.simTitulo);
   }
 };
 
@@ -9194,7 +9286,6 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
 
   (function _wireSimUploadPostStep() {
     const btnBol = document.getElementById('simUploadPostBtnBoletins');
-    const btnMail = document.getElementById('simUploadPostBtnEmail');
     const btnRel = document.getElementById('simUploadPostBtnRel');
     const btnNovo = document.getElementById('simUploadPostBtnNovo');
     const go = async (fn) => {
@@ -9209,11 +9300,6 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     if (btnBol) {
       btnBol.addEventListener('click', () => go((slug, simId) => {
         if (typeof window._openBoletimModal === 'function') window._openBoletimModal(slug, simId);
-      }));
-    }
-    if (btnMail) {
-      btnMail.addEventListener('click', () => go((slug, simId) => {
-        if (typeof window._openBoletimEmailCoordModal === 'function') window._openBoletimEmailCoordModal(slug, simId);
       }));
     }
     if (btnRel) {
@@ -15480,6 +15566,45 @@ function showToast(msg, type = 'success') {
   setTimeout(() => { t.classList.add('toast-out'); setTimeout(() => t.remove(), 300); }, 4000);
 }
 
+/**
+ * Confirmação in-page (substitui window.confirm).
+ * @param {{ title?: string, message: string, confirmText?: string, cancelText?: string, danger?: boolean }} opts
+ * @returns {Promise<boolean>}
+ */
+window._openAdminConfirmModal = function(opts) {
+  return new Promise((resolve) => {
+    const m = document.getElementById('adminConfirmModal');
+    const titleEl = document.getElementById('adminConfirmTitle');
+    const bodyEl = document.getElementById('adminConfirmBody');
+    const okBtn = document.getElementById('adminConfirmOk');
+    const cancelBtn = document.getElementById('adminConfirmCancel');
+    if (!m || !titleEl || !bodyEl || !okBtn || !cancelBtn) {
+      resolve(false);
+      return;
+    }
+    const o = opts || {};
+    titleEl.textContent = o.title || 'Confirmar';
+    bodyEl.textContent = o.message || '';
+    const danger = !!o.danger;
+    okBtn.textContent = o.confirmText || 'Confirmar';
+    cancelBtn.textContent = o.cancelText || 'Cancelar';
+    okBtn.style.background = danger
+      ? 'linear-gradient(135deg,#dc2626,#ef4444)'
+      : 'linear-gradient(135deg,#1B6D85,#22c55e)';
+    const cleanup = (v) => {
+      m.style.display = 'none';
+      m.onclick = null;
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      resolve(v);
+    };
+    m.style.display = 'flex';
+    m.onclick = (e) => { if (e.target === m) cleanup(false); };
+    okBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+  });
+};
+
 // ── Modal de configuração de IES ─────────────────────────────
 let _instSettingsSlug = null;
 let _instSettingsLogoFile = null;
@@ -16315,6 +16440,47 @@ window._saveEnvio = async function() {
   </div>
 </div>
 
+<!-- ═══════════ MODAL: CONFIRMAÇÃO (substitui confirm nativo) ═══════════ -->
+<div id="adminConfirmModal" style="display:none;position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;padding:16px;box-sizing:border-box">
+  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:16px;padding:24px;width:min(92%,440px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.45)">
+    <div id="adminConfirmTitle" style="font-size:1.05rem;font-weight:700;margin-bottom:12px;color:var(--text)">Confirmar</div>
+    <div id="adminConfirmBody" style="font-size:0.85rem;line-height:1.55;color:var(--text-soft);white-space:pre-line;margin-bottom:20px"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+      <button type="button" id="adminConfirmCancel" style="padding:10px 16px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
+      <button type="button" id="adminConfirmOk" style="padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ MODAL: REMOVER / DESVINCULAR (gestão simulados) ═══════════ -->
+<div id="gestaoSimRemoverModal" style="display:none;position:fixed;inset:0;z-index:10052;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;padding:16px;box-sizing:border-box">
+  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:16px;padding:24px;width:min(92%,480px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.45)">
+    <div style="font-size:1.05rem;font-weight:700;margin-bottom:8px;color:var(--text)">Remover dados ou desvincular</div>
+    <div id="gestaoSimRemoverSummary" style="font-size:0.82rem;color:var(--text-muted);line-height:1.45;margin-bottom:16px"></div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.84rem;color:var(--text);line-height:1.4">
+        <input type="radio" name="gestaoSimRemoverMode" id="gestaoSimRemoverModeReset" value="reset" style="margin-top:3px;accent-color:#6366f1;flex-shrink:0">
+        <span><strong>Resetar resultado</strong> — apaga respostas/boletins processados nesta IES e permite novo upload. Mantém o simulado vinculado à IES.</span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.84rem;color:var(--text);line-height:1.4">
+        <input type="radio" name="gestaoSimRemoverMode" id="gestaoSimRemoverModeUnlink" value="unlink" style="margin-top:3px;accent-color:#6366f1;flex-shrink:0">
+        <span><strong>Desvincular desta IES</strong> — remove o simulado da gestão desta instituição (o simulado continua no banco de questões).</span>
+      </label>
+    </div>
+    <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.8rem;color:var(--text);line-height:1.45;margin-bottom:12px;padding:10px 12px;border-radius:10px;border:1px dashed var(--border);background:var(--bg-elevated)">
+      <input type="checkbox" id="gestaoSimRemoverStorage" style="margin-top:2px;accent-color:#dc2626;flex-shrink:0">
+      <span>Também apagar arquivos ZIP de boletins no <strong>Supabase Storage</strong> (pasta desta IES/simulado).</span>
+    </label>
+    <div style="font-size:0.76rem;line-height:1.5;color:var(--text-muted);margin-bottom:16px;padding:10px 12px;border-radius:8px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2)">
+      <strong style="color:var(--text)">Alunos no cadastro:</strong> só podem ser removidos registros com origem <code style="font-size:0.72rem">simulado</code> e que fiquem órfãos (sem outro resultado na mesma IES). Alunos de cadastro institucional/importação (B2B) <strong>não</strong> são apagados por esta ação.
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+      <button type="button" onclick="document.getElementById('gestaoSimRemoverModal').style.display='none'" style="padding:10px 16px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
+      <button type="button" id="gestaoSimRemoverConfirm" onclick="window._submitGestaoSimRemoverModal()" style="padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Confirmar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ MODAL: GERAR BOLETINS ═══════════ -->
 <div id="boletimModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);align-items:center;justify-content:center">
   <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:32px;width:min(92%,560px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
@@ -16358,12 +16524,12 @@ window._saveEnvio = async function() {
     <div style="margin-bottom:10px">
       <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.82rem;color:var(--text);line-height:1.45">
         <input type="checkbox" id="boletimEmailCoordAfterPublish" checked onchange="window._updateBoletimLoteCoordDisabledState()" style="margin-top:3px;width:16px;height:16px;accent-color:#6366f1;flex-shrink:0">
-        <span><strong>E-mail automático à coordenação</strong> — após publicar no storage, envia Excel + links dos pacotes para os destinatários marcados abaixo (coordenadores cadastrados da IES + opcionais).</span>
+        <span><strong>E-mail automático à coordenação</strong> — após publicar no storage, envia Excel + links dos pacotes para os destinatários marcados abaixo (coordenadores e admins responsáveis pela IES + opcionais).</span>
       </label>
     </div>
     <div id="boletimLoteCoordSection" style="display:none;margin-bottom:14px;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg-elevated)">
       <div style="font-size:0.72rem;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">Destinatários do e-mail</div>
-      <div id="boletimLoteCoordLoading" style="font-size:0.78rem;color:var(--text-muted);display:none">Carregando coordenadores…</div>
+      <div id="boletimLoteCoordLoading" style="font-size:0.78rem;color:var(--text-muted);display:none">Carregando destinatários…</div>
       <div id="boletimLoteCoordEmpty" style="font-size:0.78rem;color:var(--text-muted);display:none"></div>
       <div id="boletimLoteCoordCheckboxes" style="display:none;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto"></div>
       <div class="field" style="margin-top:10px;margin-bottom:0">
@@ -16375,6 +16541,13 @@ window._saveEnvio = async function() {
       <div style="font-size:0.8rem;font-weight:600;color:var(--text);margin-bottom:6px" id="boletimProgressText">Gerando...</div>
       <div style="width:100%;height:6px;border-radius:3px;background:var(--border);overflow:hidden">
         <div id="boletimProgressBar" style="width:0%;height:100%;background:linear-gradient(90deg,#1B6D85,#22c55e);transition:width 0.3s"></div>
+      </div>
+    </div>
+    <div id="boletimSecondaryActions" style="display:none;margin-bottom:12px;padding:12px 14px;border-radius:10px;border:1px dashed var(--border);background:var(--bg-elevated)">
+      <div style="font-size:0.72rem;font-weight:600;color:var(--text-muted);margin-bottom:8px">Atalhos (sem gerar ZIP)</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button type="button" onclick="window._boletimOpenEmailOnlyFromModal()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid rgba(79,70,229,0.45);background:rgba(79,70,229,0.08);color:var(--text);font-size:0.82rem;font-weight:700;cursor:pointer">📧 E-mail à coordenação (Excel + links)</button>
+        <button type="button" onclick="window._boletimOpenPdfFromModal()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-card);color:var(--text);font-size:0.82rem;font-weight:700;cursor:pointer">📊 Relatório PDF</button>
       </div>
     </div>
     <div style="display:flex;gap:12px;margin-top:16px">
@@ -16417,7 +16590,7 @@ window._saveEnvio = async function() {
     <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Será anexada a <strong>planilha Excel</strong>. O e-mail incluirá o link para os boletins quando houver um endereço cadastrado no resultado; caso contrário o coordenador poderá usar o link do <strong>painel administrativo</strong> para gerar e baixar os PDFs.</p>
     <div id="boletimCoordLinkAviso" style="margin:0 0 14px;font-size:0.78rem;line-height:1.5;color:var(--text-muted)">Verificando link dos boletins…</div>
     <div class="field" style="margin-bottom:12px">
-      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Coordenadores</label>
+      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Coordenadores e admins responsáveis</label>
       <div id="boletimCoordCheckboxes" style="display:none;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:4px"></div>
       <select id="boletimCoordEmailSelect" style="display:none"></select>
     </div>
@@ -16555,7 +16728,7 @@ window._patchRankingLinkBoletins = async function(slug, simRef, publicUrlOrUrls,
 };
 
 /**
- * Coordenadores ativos da IES (usuarios_autorizados) — slug ou nome da instituição.
+ * Coordenadores e admins responsáveis pela IES (usuarios_autorizados) — slug ou nome da instituição.
  * @param {string} slug
  * @returns {Promise<{email:string,nome:string}[]>}
  */
@@ -16573,9 +16746,7 @@ window._fetchCoordenadoresForIes = async function(slug) {
     return [];
   }
   if (!Array.isArray(rows)) return [];
-  return rows.filter(u => {
-    if (u.ativo === false) return false;
-    if ((u.role || 'coordenador') !== 'coordenador') return false;
+  const matchesIes = (u) => {
     const instU = String(u.instituicao || '').toLowerCase().trim();
     if (instU === slugLow) return true;
     if (nomeIes && instU === nomeIes) return true;
@@ -16583,9 +16754,21 @@ window._fetchCoordenadoresForIes = async function(slug) {
     if (typeof arr === 'string') {
       try { arr = JSON.parse(arr || '[]'); } catch (_) { arr = []; }
     }
-    if (Array.isArray(arr) && arr.some(x => String(x).toLowerCase() === slugLow)) return true;
-    return false;
-  }).map(u => ({ email: u.email, nome: u.nome || '' }));
+    return Array.isArray(arr) && arr.some((x) => String(x).toLowerCase() === slugLow);
+  };
+  const out = [];
+  const seen = new Set();
+  for (const u of rows) {
+    if (u.ativo === false) continue;
+    const role = u.role || 'coordenador';
+    if (role !== 'coordenador' && role !== 'admin') continue;
+    if (!matchesIes(u)) continue;
+    const em = String(u.email || '').trim().toLowerCase();
+    if (!em.includes('@') || seen.has(em)) continue;
+    seen.add(em);
+    out.push({ email: u.email, nome: u.nome || '' });
+  }
+  return out;
 };
 
 /**
@@ -16602,7 +16785,7 @@ window._updateBoletimLoteCoordDisabledState = function() {
 };
 
 /**
- * Carrega coordenadores da IES selecionada e preenche checkboxes (todos marcados por padrão).
+ * Carrega coordenadores e admins responsáveis pela IES selecionada e preenche checkboxes (todos marcados por padrão).
  */
 window._refreshBoletimLoteCoordRecipients = async function() {
   const slug = document.getElementById('boletimIES')?.value || '';
@@ -16625,7 +16808,7 @@ window._refreshBoletimLoteCoordRecipients = async function() {
     const coords = await window._fetchCoordenadoresForIes(slug);
     loadEl.style.display = 'none';
     if (!coords.length) {
-      emptyEl.textContent = 'Nenhum coordenador cadastrado para esta IES. Informe e-mails adicionais abaixo ou cadastre usuários em Coordenadores.';
+      emptyEl.textContent = 'Nenhum coordenador ou admin responsável cadastrado para esta IES. Informe e-mails adicionais abaixo ou cadastre usuários em Coordenadores.';
       emptyEl.style.display = 'block';
       window._updateBoletimLoteCoordDisabledState();
       return;
@@ -16644,7 +16827,7 @@ window._refreshBoletimLoteCoordRecipients = async function() {
   } catch (e) {
     console.warn(e);
     loadEl.style.display = 'none';
-    emptyEl.textContent = 'Não foi possível carregar coordenadores.';
+    emptyEl.textContent = 'Não foi possível carregar destinatários.';
     emptyEl.style.display = 'block';
   }
   window._updateBoletimLoteCoordDisabledState();
@@ -16734,7 +16917,7 @@ window._openBoletimEmailCoordModal = async function(slug, simId) {
     cbContainer.style.display = 'none';
     cbContainer.innerHTML = '';
     manual.value = '';
-    manual.placeholder = 'Nenhum coordenador cadastrado — digite o e-mail';
+    manual.placeholder = 'Nenhum coordenador ou admin responsável cadastrado — digite o e-mail';
   }
   window._boletimCoordPending = { slug, simId, titulo, nomeIes, simRef };
   document.getElementById('boletimCoordModalTitle').textContent = 'Avisar coordenação — ' + titulo;
@@ -16914,7 +17097,7 @@ window._submitBoletimCoordEmail = async function() {
     .filter((e) => e.includes('@'));
   const allEmails = [...new Set([...emailsFromCb, ...emailsFromManual])];
   if (!allEmails.length) {
-    showToast('Selecione ao menos um coordenador ou digite um e-mail.', 'warn');
+    showToast('Selecione ao menos um coordenador ou admin responsável, ou digite um e-mail.', 'warn');
     return;
   }
 
@@ -17047,6 +17230,46 @@ window._updateBoletimBtn = function() {
   const btn = document.getElementById('boletimGenBtn');
   btn.disabled = !ok;
   btn.style.opacity = ok ? '1' : '0.5';
+  const sec = document.getElementById('boletimSecondaryActions');
+  if (sec) sec.style.display = ok ? 'block' : 'none';
+};
+
+/**
+ * Fecha o modal de boletins e abre o fluxo só de e-mail à coordenação (Excel + links), sem gerar ZIP.
+ */
+window._boletimOpenEmailOnlyFromModal = function() {
+  const slug = document.getElementById('boletimIES')?.value;
+  const simRef = document.getElementById('boletimSim')?.value;
+  if (!slug || !simRef) return;
+  const simId = typeof window._resolveSimIdFromBoletimRef === 'function'
+    ? window._resolveSimIdFromBoletimRef(slug, simRef)
+    : '';
+  if (!simId) {
+    showToast('Não foi possível identificar o simulado.', 'warn');
+    return;
+  }
+  document.getElementById('boletimModal').style.display = 'none';
+  if (typeof window._openBoletimEmailCoordModal === 'function') {
+    window._openBoletimEmailCoordModal(slug, simId);
+  }
+};
+
+/**
+ * Fecha o modal de boletins e abre o gerador de PDF de relatório para o mesmo IES/simulado.
+ */
+window._boletimOpenPdfFromModal = function() {
+  const slug = document.getElementById('boletimIES')?.value;
+  const simRef = document.getElementById('boletimSim')?.value;
+  if (!slug || !simRef) return;
+  const simId = typeof window._resolveSimIdFromBoletimRef === 'function'
+    ? window._resolveSimIdFromBoletimRef(slug, simRef)
+    : '';
+  if (!simId) {
+    showToast('Não foi possível identificar o simulado.', 'warn');
+    return;
+  }
+  document.getElementById('boletimModal').style.display = 'none';
+  if (typeof window._simOpenPdfModal === 'function') window._simOpenPdfModal(slug, simId);
 };
 
 // ── Cálculos estatísticos ──────────────────────────────────────────
@@ -17962,7 +18185,7 @@ window._generateBoletinsLote = async function() {
   if (publishStorage && autoEmailCoord) {
     const picked = typeof window._collectBoletimLoteCoordEmails === 'function' ? window._collectBoletimLoteCoordEmails() : [];
     if (!picked.length) {
-      showToast('Selecione ao menos um coordenador ou informe um e-mail adicional para o aviso automático.', 'warn');
+      showToast('Selecione ao menos um coordenador ou admin responsável, ou informe um e-mail adicional para o aviso automático.', 'warn');
       return;
     }
   }
@@ -18070,7 +18293,7 @@ window._generateBoletinsLote = async function() {
             nomeDestinatario: 'Coordenação'
           });
           if (sent.sentCount === sent.total) {
-            coordMailSuffix = ` E-mail com Excel enviado a ${sent.sentCount} coordenador(es).`;
+            coordMailSuffix = ` E-mail com Excel enviado a ${sent.sentCount} destinatário(s).`;
           } else if (sent.sentCount > 0) {
             coordMailSuffix = ` E-mail à coordenação parcial (${sent.sentCount}/${sent.total}).`;
           } else {

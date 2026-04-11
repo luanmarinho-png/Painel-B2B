@@ -10,6 +10,7 @@ const { isPrivilegedAdmin, isSuperadmin } = require('../../domain/userRoles');
 const { corsAdminProxy } = require('../../presentation/http/corsPresets');
 const { appendAdminAuditLog } = require('./appendAdminAuditLog');
 const { executeBoletinsStorageSignedUpload } = require('./boletinsStorageSignedUpload');
+const { executeBoletinsStorageDeleteObjects } = require('./boletinsStorageDeleteObjects');
 const { executeAdminAvatarSignedUpload } = require('./adminAvatarSignedUpload');
 
 const ALLOWED_TABLES = new Set([
@@ -161,6 +162,10 @@ async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
 
   if (payload.action === 'boletins_storage_signed_upload') {
     return executeBoletinsStorageSignedUpload({ rawPayload: payload });
+  }
+
+  if (payload.action === 'boletins_storage_delete_objects') {
+    return executeBoletinsStorageDeleteObjects({ rawPayload: payload });
   }
 
   if (payload.action === 'admin_avatar_signed_upload') {
