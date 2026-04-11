@@ -228,6 +228,64 @@
     var panelOpen = false;
     /** @type {{ role: string, content: string }[]} */
     var thread = [];
+    /** Persistência do histórico entre páginas do painel (mesma aba). */
+    var SESSION_KEY = 'medcofAdminCofbotSession';
+    var lastInsight = '';
+    /** @type {string[]} */
+    var lastFollowUps = [];
+
+    /**
+     * Grava thread + sugestões no sessionStorage (não sobrevive ao fechar a aba).
+     */
+    function persistAdminCofbotSession() {
+      try {
+        sessionStorage.setItem(
+          SESSION_KEY,
+          JSON.stringify({
+            v: 1,
+            thread: thread,
+            insight: lastInsight,
+            followUps: lastFollowUps,
+            ies: iesSel && iesSel.value ? String(iesSel.value) : ''
+          })
+        );
+      } catch (err) {}
+    }
+
+    /**
+     * Restaura mensagens e IES após navegação; retorna true se havia histórico.
+     * @returns {boolean}
+     */
+    function restoreAdminCofbotSession() {
+      try {
+        var raw = sessionStorage.getItem(SESSION_KEY);
+        if (!raw) return false;
+        var data = JSON.parse(raw);
+        if (!data || data.v !== 1 || !Array.isArray(data.thread) || data.thread.length === 0) {
+          return false;
+        }
+        thread = data.thread;
+        lastInsight = typeof data.insight === 'string' ? data.insight : '';
+        lastFollowUps = Array.isArray(data.followUps) ? data.followUps : [];
+        if (iesSel && data.ies) {
+          refreshIesOptions(iesSel);
+          iesSel.value = data.ies;
+        }
+        thread.forEach(function (m) {
+          if (m && (m.role === 'user' || m.role === 'assistant') && m.content != null) {
+            appendMessage(m.role, m.content);
+          }
+        });
+        if (lastInsight || (lastFollowUps && lastFollowUps.length)) {
+          applyFollowUps(lastInsight, lastFollowUps);
+        } else {
+          renderSuggestions();
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
 
     if (navEl) {
       ADMIN_TAB_NAV.forEach(function (item) {
@@ -286,13 +344,17 @@
     }
 
     function renderSuggestions() {
+      lastInsight = '';
+      lastFollowUps = [];
       setInsight('');
       bindChips(getAdminSuggestions());
     }
 
     function applyFollowUps(insight, followUps) {
-      setInsight(insight || '');
       var list = Array.isArray(followUps) ? followUps.filter(function (s) { return String(s || '').trim(); }) : [];
+      lastInsight = String(insight || '').trim();
+      lastFollowUps = list.slice();
+      setInsight(insight || '');
       bindChips(list.length ? list : getAdminSuggestions());
     }
 
@@ -345,6 +407,11 @@
         e.stopPropagation();
         e.preventDefault();
         thread = [];
+        lastInsight = '';
+        lastFollowUps = [];
+        try {
+          sessionStorage.removeItem(SESSION_KEY);
+        } catch (e1) {}
         if (messagesEl) messagesEl.innerHTML = '';
         if (errorEl) {
           errorEl.hidden = true;
@@ -354,7 +421,15 @@
       });
     }
 
-    renderSuggestions();
+    if (iesSel) {
+      iesSel.addEventListener('change', function () {
+        persistAdminCofbotSession();
+      });
+    }
+
+    if (!restoreAdminCofbotSession()) {
+      renderSuggestions();
+    }
 
     if (form) {
       form.addEventListener('submit', async function (e) {
@@ -372,6 +447,7 @@
         appendMessage('user', text);
         input.value = '';
         thread.push({ role: 'user', content: text });
+        persistAdminCofbotSession();
         sendBtn.disabled = true;
         var loading = document.createElement('div');
         loading.className = 'medcof-coord-chat-msg medcof-coord-chat-msg--assistant medcof-coord-chat-loading';
@@ -419,10 +495,12 @@
           appendMessage('assistant', reply);
           thread.push({ role: 'assistant', content: reply });
           applyFollowUps(body.insight, body.follow_up_questions);
+          persistAdminCofbotSession();
         } catch (err) {
           loading.remove();
           errorEl.textContent = err.message || 'Não foi possível enviar agora. Tente de novo.';
           errorEl.hidden = false;
+          persistAdminCofbotSession();
         } finally {
           sendBtn.disabled = false;
         }

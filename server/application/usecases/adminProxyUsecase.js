@@ -30,6 +30,37 @@ const ALLOWED_TABLES = new Set([
   'medcof_app_config'
 ]);
 
+/** Colunas comerciais / política de cancelamento — só superadmin pode gravar via admin-proxy. */
+const CONTRATOS_IES_SUPERADMIN_ONLY = [
+  'valor_mensalidade',
+  'forma_pagamento',
+  'dia_vencimento',
+  'observacoes_comercial',
+  'condicao_alunos_previos'
+];
+
+/**
+ * Remove campos restritos do body de escrita em `contratos_ies` quando o papel não é superadmin.
+ * Upsert sem essas chaves preserva os valores já existentes no banco.
+ *
+ * @param {unknown} body
+ * @param {string | undefined} role
+ * @returns {unknown}
+ */
+function stripContratosIesSensitiveWrites(body, role) {
+  if (isSuperadmin(role) || body == null) return body;
+  const stripRow = (row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+    const out = { ...row };
+    for (const k of CONTRATOS_IES_SUPERADMIN_ONLY) {
+      delete out[k];
+    }
+    return out;
+  };
+  if (Array.isArray(body)) return body.map(stripRow);
+  return stripRow(body);
+}
+
 /**
  * @param {unknown} val
  * @returns {string}
@@ -155,6 +186,15 @@ async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
 
   const httpMethod = (method || 'GET').toUpperCase();
 
+  let requestBody = body;
+  if (
+    tableName === 'contratos_ies' &&
+    requestBody != null &&
+    ['POST', 'PATCH', 'PUT'].includes(httpMethod)
+  ) {
+    requestBody = stripContratosIesSensitiveWrites(requestBody, role);
+  }
+
   const meta = requestMeta || {};
   const clientIp = String(meta.forwardedFor || '')
     .split(',')[0]
@@ -175,7 +215,7 @@ async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
         resourceTable: tableName,
         httpMethod,
         query: query || '',
-        body,
+        body: requestBody,
         statusCode,
         responseOk,
         errorSummary,
@@ -202,7 +242,7 @@ async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
         table,
         query: query || '',
         method: httpMethod,
-        body,
+        body: requestBody,
         prefer,
         range,
         maskSensitive
@@ -247,8 +287,8 @@ async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
   }
 
   const fetchOpts = { method: httpMethod, headers };
-  if (body && httpMethod !== 'GET') {
-    fetchOpts.body = JSON.stringify(body);
+  if (requestBody && httpMethod !== 'GET') {
+    fetchOpts.body = JSON.stringify(requestBody);
   }
 
   try {

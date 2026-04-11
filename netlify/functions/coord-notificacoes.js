@@ -142,7 +142,7 @@ exports.handler = async (event) => {
   const userToken = body.supabase_access_token || '';
   const iesSlug = String(body.ies_slug || '').trim();
   const action = String(body.action || '').trim();
-  const notifId = body.notifId != null ? String(body.notifId) : '';
+  const notifId = body.notifId != null ? String(body.notifId).trim() : '';
 
   const access = await validateCoordinatorAccess(userToken, iesSlug);
   if (!access.ok) {

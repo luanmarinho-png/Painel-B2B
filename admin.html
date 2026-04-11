@@ -16,14 +16,28 @@
 // A service_role key NÃO está no frontend. Todas as operações admin passam pelo admin-proxy.
 window._SUPA_REST_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1';
 
+// Helper: JWT ainda no storage mas já inválido no servidor (getSession não valida exp)
+function _adminJwtNeedsRefresh(token, skewSec) {
+  if (!token || typeof token !== 'string') return true;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    const exp = payload.exp;
+    if (!exp || typeof exp !== 'number') return false;
+    return Date.now() / 1000 >= exp - (skewSec || 90);
+  } catch (_) {
+    return true;
+  }
+}
+
 // Helper: obter JWT do usuário logado
 window._getAdminToken = async function() {
   try {
     const sb = typeof getSupabaseClient === 'function' ? getSupabaseClient() : null;
     if (!sb) return '';
     let { data: { session } } = await sb.auth.getSession();
-    // Se token expirado ou ausente, tentar refresh
-    if (!session?.access_token) {
+    const tok = session?.access_token;
+    // Ausente, ou ainda presente porém expirado — precisa refresh (senão admin-proxy retorna 401)
+    if (!tok || _adminJwtNeedsRefresh(tok, 90)) {
       const { data: refreshData, error } = await sb.auth.refreshSession();
       if (error || !refreshData?.session) {
         // Sessão completamente expirada — redirect para login
@@ -1376,14 +1390,14 @@ window.parseArr = function(v) {
         <span class="visually-hidden">Alternar tema claro ou escuro</span>
       </button>
       <span id="topbarUserTrigger" class="dash-topbar-user-wrap" style="display:inline-flex;align-items:center;cursor:pointer;position:relative" title="Perfil e configurações" onclick="window._toggleAdminPopover()">
-        <img id="topbarUserAvatar" alt="" width="32" height="32" src="/assets/coordenador-chat-fab.svg" style="width:32px;height:32px;border-radius:8px;object-fit:cover;border:1px solid var(--border);flex-shrink:0" decoding="async" />
+        <img id="topbarUserAvatar" alt="" width="44" height="44" src="/assets/coordenador-chat-fab.png" style="width:44px;height:44px;border-radius:10px;object-fit:cover;border:1px solid var(--border);flex-shrink:0;background:var(--bg-elevated)" decoding="async" referrerpolicy="no-referrer" />
       </span>
       <input type="file" id="adminAvatarInput" accept="image/jpeg,image/png,image/webp,image/gif" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" />
       <div id="adminPopover" style="display:none;position:absolute;top:48px;right:80px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,0.25);z-index:100;min-width:300px;max-width:400px">
         <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
           <div style="flex-shrink:0">
-            <img id="popoverAvatarImg" alt="" width="56" height="56" src="/assets/coordenador-chat-fab.svg" style="width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid var(--border)" decoding="async" />
-            <div id="popoverAvatarPlaceholder" style="display:none;width:56px;height:56px;border-radius:10px;background:var(--bg-elevated);border:1px dashed var(--border);align-items:center;justify-content:center;font-size:1.35rem;color:var(--text-muted)">👤</div>
+            <img id="popoverAvatarImg" alt="" width="64" height="64" src="/assets/coordenador-chat-fab.png" style="width:64px;height:64px;border-radius:12px;object-fit:cover;border:1px solid var(--border);background:var(--bg-elevated)" decoding="async" referrerpolicy="no-referrer" />
+            <div id="popoverAvatarPlaceholder" style="display:none;width:64px;height:64px;border-radius:12px;background:var(--bg-elevated);border:1px dashed var(--border);align-items:center;justify-content:center;font-size:1.35rem;color:var(--text-muted)">👤</div>
           </div>
           <div style="flex:1;min-width:0">
             <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:4px;word-break:break-word" id="popoverUserName"></div>
@@ -1475,7 +1489,7 @@ window.parseArr = function(v) {
         <div class="dash-stat"><div class="dash-stat-number" id="statHoras">—</div><div class="dash-stat-label">Horas de estudo</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statMedia">—</div><div class="dash-stat-label">Instituições cadastradas</div></div>
         <div class="dash-stat"><div class="dash-stat-number" id="statSimAplicados">—</div><div class="dash-stat-label">Simulados aplicados</div></div>
-        <div class="dash-stat"><div class="dash-stat-number" id="statReunioes">—</div><div class="dash-stat-label">Reuniões pós-venda</div></div>
+        <div class="dash-stat"><div class="dash-stat-number" id="statAtividadesPosVenda">—</div><div class="dash-stat-label">Atividades pós-venda</div></div>
       </div>
       <div class="dash-section-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <span id="instSectionTitle">Instituições parceiras</span>
@@ -2799,6 +2813,11 @@ window.parseArr = function(v) {
     dashboard.classList.add("visible");
     // Carregar dados do admin logado para popover e filtro
     _loadAdminProfile();
+    // Recarrega contagens de pós-venda/atividades com JWT (anon pode subcontar por RLS)
+    try {
+      localStorage.removeItem('_admc_ativ_v3');
+    } catch (_) {}
+    if (typeof loadAndRenderInstitutions === 'function') loadAndRenderInstitutions();
     if (typeof window.mountAdminCofbot === "function") window.mountAdminCofbot();
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -2807,17 +2826,27 @@ window.parseArr = function(v) {
     });
   }
 
-  var _ADMIN_DEFAULT_AVATAR = '/assets/coordenador-chat-fab.svg';
+  var _ADMIN_DEFAULT_AVATAR = '/assets/coordenador-chat-fab.png';
 
   /**
+   * Avatar no Storage usa caminho fixo (…/avatar.jpg). Ao trocar o arquivo, a URL do metadata é a mesma —
+   * sem cache-bust o browser continua mostrando a imagem antiga em cache.
    * @param {string} [url]
-   * @param {{ bustCache?: boolean }} [opts]
+   * @param {{ bustCache?: boolean }} [opts] — `false` desativa bust; omisso em URL https ativa bust
    */
   function _adminApplyAvatarToDom(url, opts) {
-    var bust = opts && opts.bustCache;
     var raw = url && String(url).trim();
+    var isRemote = !!(raw && /^https?:\/\//i.test(raw));
+    var bust = false;
+    if (opts && opts.bustCache === false) {
+      bust = false;
+    } else if (opts && opts.bustCache === true) {
+      bust = true;
+    } else {
+      bust = isRemote;
+    }
     var displayUrl = raw || _ADMIN_DEFAULT_AVATAR;
-    if (bust && raw && /^https?:\/\//i.test(raw)) {
+    if (bust && raw && isRemote) {
       displayUrl = raw + (raw.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
     }
     var topImg = document.getElementById('topbarUserAvatar');
@@ -2835,10 +2864,12 @@ window.parseArr = function(v) {
       };
     }
     if (topImg) {
+      topImg.referrerPolicy = 'no-referrer';
       topImg.src = displayUrl;
       bindFallback(topImg);
     }
     if (popImg && popPh) {
+      popImg.referrerPolicy = 'no-referrer';
       popImg.src = displayUrl;
       popImg.style.display = '';
       popPh.style.display = 'none';
@@ -2895,7 +2926,21 @@ window.parseArr = function(v) {
     if (pop) pop.style.display = 'none';
   };
 
-  function _adminResizeImageToJpegBlob(file, maxDim) {
+  /** Limite do arquivo original (antes de decodificar). */
+  var _ADMIN_AVATAR_MAX_INPUT_BYTES = 12 * 1024 * 1024;
+  /** Lado máximo em px após redimensionar (mantém proporção). */
+  var _ADMIN_AVATAR_MAX_DIM = 512;
+  /** Tamanho alvo do JPEG final (Storage / rede). */
+  var _ADMIN_AVATAR_MAX_JPEG_BYTES = 480 * 1024;
+
+  /**
+   * Redimensiona para JPEG com limite de dimensão e comprime até caber em ~maxOutBytes.
+   * @param {File} file
+   * @param {number} maxDim
+   * @param {number} maxOutBytes
+   * @returns {Promise<Blob>}
+   */
+  function _adminResizeImageToJpegBlob(file, maxDim, maxOutBytes) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const url = URL.createObjectURL(file);
@@ -2903,7 +2948,11 @@ window.parseArr = function(v) {
         URL.revokeObjectURL(url);
         let w = img.naturalWidth;
         let h = img.naturalHeight;
-        const m = maxDim || 320;
+        if (!w || !h) {
+          reject(new Error('Não foi possível ler as dimensões da imagem'));
+          return;
+        }
+        const m = maxDim || 512;
         if (w > m || h > m) {
           if (w >= h) {
             h = Math.round((h * m) / w);
@@ -2922,21 +2971,78 @@ window.parseArr = function(v) {
           return;
         }
         ctx.drawImage(img, 0, 0, w, h);
-        canvas.toBlob(
-          (blob) => {
-            if (blob) resolve(blob);
-            else reject(new Error('Falha ao gerar imagem'));
-          },
-          'image/jpeg',
-          0.88
-        );
+        var qualities = [0.88, 0.78, 0.68, 0.58, 0.48, 0.38];
+        var attempt = function (qi) {
+          canvas.toBlob(
+            function (blob) {
+              if (!blob) {
+                reject(new Error('Falha ao gerar imagem'));
+                return;
+              }
+              var cap = maxOutBytes || _ADMIN_AVATAR_MAX_JPEG_BYTES;
+              if (blob.size <= cap || qi >= qualities.length - 1) {
+                resolve(blob);
+                return;
+              }
+              attempt(qi + 1);
+            },
+            'image/jpeg',
+            qualities[qi]
+          );
+        };
+        attempt(0);
       };
-      img.onerror = () => {
+      img.onerror = function () {
         URL.revokeObjectURL(url);
-        reject(new Error('Imagem inválida'));
+        reject(new Error('Imagem inválida ou formato não suportado'));
       };
       img.src = url;
     });
+  }
+
+  /**
+   * Upload assinado: envia bytes brutos com Content-Type (Blob fazia multipart sem type na parte do arquivo).
+   * @param {*} sb — cliente Supabase
+   * @param {Record<string, unknown>} j — resposta admin_avatar_signed_upload
+   * @param {Blob} blob
+   */
+  async function _adminUploadAvatarBlobSigned(sb, j, blob) {
+    var ct = (j.contentType && String(j.contentType)) || 'image/jpeg';
+    var buf = await blob.arrayBuffer();
+    var token = j.token && String(j.token);
+    if (!token && j.signedUrl) {
+      try {
+        token = new URL(String(j.signedUrl)).searchParams.get('token') || '';
+      } catch (_) {
+        token = '';
+      }
+    }
+    if (!j.bucket || !j.objectPath || !token) {
+      throw new Error('Resposta inválida do servidor de upload');
+    }
+    var path = String(j.objectPath);
+    var bucket = String(j.bucket);
+    var { error: uploadErr } = await sb.storage.from(bucket).uploadToSignedUrl(path, token, buf, {
+      contentType: ct,
+      cacheControl: '3600'
+    });
+    if (!uploadErr) return;
+    if (j.signedUrl) {
+      var put = await fetch(String(j.signedUrl), {
+        method: 'PUT',
+        body: buf,
+        headers: {
+          'Content-Type': ct,
+          'cache-control': 'max-age=3600'
+        }
+      });
+      if (put.ok) return;
+      var errTxt = await put.text().catch(function () {
+        return '';
+      });
+      throw new Error(errTxt || put.statusText || 'Falha ao enviar foto');
+    }
+    throw new Error(uploadErr.message || 'Falha ao enviar foto');
   }
 
   async function _adminOnAvatarFileChange(ev) {
@@ -2946,20 +3052,30 @@ window.parseArr = function(v) {
       if (input) input.value = '';
       return;
     }
+    var mime = (f.type || '').toLowerCase();
+    if (mime.indexOf('heic') >= 0 || mime.indexOf('heif') >= 0) {
+      if (typeof showToast === 'function') showToast('HEIC não é suportado. Exporte como JPG ou PNG.', 'error');
+      if (input) input.value = '';
+      return;
+    }
+    if (f.size > _ADMIN_AVATAR_MAX_INPUT_BYTES) {
+      if (typeof showToast === 'function') {
+        showToast('Arquivo muito grande (máx. 12 MB). Escolha uma imagem menor.', 'error');
+      }
+      if (input) input.value = '';
+      return;
+    }
     try {
-      const blob = await _adminResizeImageToJpegBlob(f, 320);
+      const blob = await _adminResizeImageToJpegBlob(f, _ADMIN_AVATAR_MAX_DIM, _ADMIN_AVATAR_MAX_JPEG_BYTES);
       const j = await window._adminProxyAction({ action: 'admin_avatar_signed_upload', ext: 'jpg' });
-      const put = await fetch(j.signedUrl, {
-        method: 'PUT',
-        body: blob,
-        headers: {
-          'Content-Type': j.contentType || 'image/jpeg',
-          'x-upsert': 'true'
-        }
-      });
-      if (!put.ok) throw new Error('Falha ao enviar foto');
+      if (!j.publicUrl) throw new Error('Resposta inválida do servidor (URL pública ausente)');
       const sb = getSupabaseClient();
-      const { data: upd, error } = await sb.auth.updateUser({ data: { avatar_url: j.publicUrl } });
+      await _adminUploadAvatarBlobSigned(sb, j, blob);
+      const { data: u0 } = await sb.auth.getUser();
+      const baseMeta = (u0 && u0.user && u0.user.user_metadata) || {};
+      const { data: upd, error } = await sb.auth.updateUser({
+        data: Object.assign({}, baseMeta, { avatar_url: j.publicUrl })
+      });
       if (error) throw error;
       var metaUrl = upd && upd.user && upd.user.user_metadata && upd.user.user_metadata.avatar_url;
       if (metaUrl) {
@@ -3501,31 +3617,40 @@ function populateInstSelects(data) {
 }
 
 /**
- * Agrega contagens de atividades_contrato por IES e reuniões (tipo reuniao).
+ * Agrega contagens de atividades_contrato por IES (todas as atividades de pós-venda).
  * Pagina com offset — uma única requisição com limit cortava o total acima do limite.
  */
 async function _buildAtividadesCountMapsFromRest() {
   const pageSize = 5000;
   const m = {};
-  const r = {};
   let offset = 0;
+
+  /**
+   * Leitura com JWT admin (service role no proxy) para contagem fiel; anon pode estar limitado por RLS.
+   */
+  async function fetchAtividadesPage(off) {
+    const q = `select=ies_slug&limit=${pageSize}&offset=${off}`;
+    try {
+      const t = await window._getAdminToken();
+      if (t) return await window._supaRestAdmin('atividades_contrato', q);
+    } catch (_) {
+      /* sem sessão ou falha — anon */
+    }
+    return window._supaRest('atividades_contrato', q);
+  }
+
   for (;;) {
-    const rows = await window._supaRest(
-      'atividades_contrato',
-      `select=ies_slug,tipo&limit=${pageSize}&offset=${offset}`
-    ).catch(() => []);
+    const rows = await fetchAtividadesPage(offset).catch(() => []);
     if (!rows || rows.length === 0) break;
     for (const row of rows) {
       if (!row.ies_slug) continue;
       m[row.ies_slug] = (m[row.ies_slug] || 0) + 1;
-      if (String(row.tipo || '').toLowerCase() === 'reuniao') {
-        r[row.ies_slug] = (r[row.ies_slug] || 0) + 1;
-      }
     }
     if (rows.length < pageSize) break;
     offset += pageSize;
   }
-  return { countMap: m, reuniaoMap: r, totalReuni: Object.values(r).reduce((a, b) => a + b, 0) };
+  const totalAtividades = Object.values(m).reduce((a, b) => a + b, 0);
+  return { countMap: m, totalAtividades };
 }
 
 async function loadAndRenderInstitutions() {
@@ -3539,7 +3664,7 @@ async function loadAndRenderInstitutions() {
     const cachedInst = _cacheGet('inst');
     const cachedSims = _cacheGet('sims');
     const cachedEnvs = _cacheGet('envs');
-    const cachedAtiv = _cacheGet('ativ_v2');
+    const cachedAtiv = _cacheGet('ativ_v3');
 
     const [instData, simsData, envsData, ativMap] = await Promise.all([
       // 1. Instituições
@@ -3551,7 +3676,7 @@ async function loadAndRenderInstitutions() {
       // 3. Envios
       cachedEnvs || window._supaRest('simulados_envios', 'select=id,simulado_id,ies_slug,data_simulado,data_envio_coord,pdf_enviado,gabarito_enviado,grafica_enviada,simulado_aplicado,resultado_cadastrado,resultado_apresentado,relatorio_coord_enviado,boletins_individuais_enviados,concluido,concluido_em,notas').catch(() => []),
 
-      // 4. Atividades — count por IES + reuniões (paginado)
+      // 4. Atividades pós-venda — count por IES (paginado)
       cachedAtiv || _buildAtividadesCountMapsFromRest(),
     ]);
 
@@ -3562,15 +3687,19 @@ async function loadAndRenderInstitutions() {
     if (!cachedInst) _cacheSet('inst', data);
     if (!cachedSims && simsData?.length) _cacheSet('sims', simsData); // só cacheia se veio dados
     if (!cachedEnvs) _cacheSet('envs', envsData);
-    if (!cachedAtiv) _cacheSet('ativ_v2', ativMap); // salva o mapa já computado (v2: agregação paginada)
+    if (!cachedAtiv) _cacheSet('ativ_v3', ativMap); // v3: leitura via admin-proxy quando logado (evita RLS anon)
 
     window._instData          = data;
     window._allSimsBanco      = simsData || [];
     window._allEnvios         = envsData || [];
     const _ativResult         = ativMap || {};
     window._atividadeCountMap = _ativResult.countMap || _ativResult;
-    window._reuniaoCountMap   = _ativResult.reuniaoMap || {};
-    window._totalReunioes     = _ativResult.totalReuni || 0;
+    window._totalAtividadesPosVenda =
+      _ativResult.totalAtividades != null
+        ? _ativResult.totalAtividades
+        : Object.values(window._atividadeCountMap || {}).reduce(function (a, b) {
+            return a + b;
+          }, 0);
 
     // Ordenar: ativas primeiro, WIP depois; dentro de cada grupo, por nome
     data.sort((a, b) => {
@@ -4496,8 +4625,8 @@ window.addEventListener('load', () => { setTimeout(() => { if(typeof window._ren
     const simAplic = (window._allEnvios || []).filter(e => e.simulado_aplicado === true).length;
     if($("statSimAplicados")) $("statSimAplicados").textContent = fmt(simAplic);
 
-    // Reuniões pós-venda
-    if($("statReunioes")) $("statReunioes").textContent = fmt(window._totalReunioes || 0);
+    // Atividades de pós-venda (todas)
+    if ($("statAtividadesPosVenda")) $("statAtividadesPosVenda").textContent = fmt(window._totalAtividadesPosVenda || 0);
 
     // Processar TODOS os slugs com dados (incluindo WIP com upload recente)
     Object.keys(datasets).forEach(key => {
@@ -8612,6 +8741,7 @@ async function saveUserEdit() {
     const idx = allUsers.findIndex(u => u.email === editingUserId);
     const coordAccessEl = document.getElementById('modalCoordAccess');
     const isApprovedCoord = role === 'coordenador' && coordAccessEl && coordAccessEl.value === 'approved';
+    const prevInst = idx !== -1 ? String(allUsers[idx].instituicao || '') : '';
     if (idx !== -1) {
       allUsers[idx].role = role;
       allUsers[idx].instituicao = inst;
@@ -8619,7 +8749,8 @@ async function saveUserEdit() {
       if (role === 'coordenador' && coordAccessEl) allUsers[idx].access_approved = coordAccessEl.value === 'approved';
     }
     filterUsers();
-    if (isApprovedCoord && typeof window._markPreCadastroNotifsReadForEmail === 'function') {
+    const leftPreCadastro = prevInst === '_pre_cadastro' && inst && inst !== '_pre_cadastro';
+    if ((leftPreCadastro || isApprovedCoord) && typeof window._markPreCadastroNotifsReadForEmail === 'function') {
       await window._markPreCadastroNotifsReadForEmail(editingUserId);
     }
     if (typeof window._refreshPendingApprovalUI === 'function') await window._refreshPendingApprovalUI();
@@ -12804,8 +12935,8 @@ function renderSimListAdmin() {
     }
     btns.push(`<button class="bq-btn bq-btn-sm" onclick="window.bqOpenEditSimModal('${s.id}')" title="Editar simulado" style="color:var(--text-soft)">✏️</button>`);
     btns.push(`<button class="bq-btn bq-btn-sm" onclick="window.bqDeleteSim('${s.id}')" style="color:var(--text-muted);opacity:.7" title="Excluir">🗑</button>`);
-    let isCol = false;
-    try { isCol = localStorage.getItem('bqSimCol_' + s.id) === '1'; } catch(e) {}
+    let isCol = true;
+    try { if (localStorage.getItem('bqSimCol_' + s.id) === '0') isCol = false; } catch(e) {}
     return `<div class="bq-sim-row" style="flex-direction:column;align-items:stretch">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;cursor:pointer" onclick="window.bqToggleSimRow('${s.id}')">
         <div class="bq-sim-row-info">
@@ -18486,10 +18617,15 @@ window._loadPvAtividades = async function(slug) {
   const listEl = document.getElementById('pvAtivList');
   listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.82rem">Carregando...</div>';
   try {
-    const items = await window._supaRest(
-      'atividades_contrato',
-      `ies_slug=eq.${encodeURIComponent(slug)}&order=data.desc,created_at.desc`
-    ).catch(() => []);
+    const q = `ies_slug=eq.${encodeURIComponent(slug)}&order=data.desc,created_at.desc`;
+    let items;
+    try {
+      const t = await window._getAdminToken();
+      items = t ? await window._supaRestAdmin('atividades_contrato', q) : await window._supaRest('atividades_contrato', q);
+    } catch (_) {
+      items = await window._supaRest('atividades_contrato', q);
+    }
+    if (!Array.isArray(items)) items = [];
     if (!items.length) {
       listEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.82rem">Nenhuma atividade registrada ainda.</div>';
       return;
@@ -18563,13 +18699,9 @@ window._savePvAtiv = async function() {
       window._atividadeCountMap[slug] = (window._atividadeCountMap[slug] || 0) + 1;
       if (typeof _populateAtivCount === 'function') _populateAtivCount();
     }
-    if (tipo === 'reuniao' && window._reuniaoCountMap) {
-      const slug = window._pvCurrentSlug;
-      window._reuniaoCountMap[slug] = (window._reuniaoCountMap[slug] || 0) + 1;
-      window._totalReunioes = (window._totalReunioes || 0) + 1;
-      const statRe = document.getElementById('statReunioes');
-      if (statRe) statRe.textContent = (window._totalReunioes || 0).toLocaleString('pt-BR');
-    }
+    window._totalAtividadesPosVenda = (window._totalAtividadesPosVenda || 0) + 1;
+    var statPv = document.getElementById('statAtividadesPosVenda');
+    if (statPv) statPv.textContent = (window._totalAtividadesPosVenda || 0).toLocaleString('pt-BR');
   } catch(e) {
     errEl.textContent = e.message;
   } finally {
@@ -18589,6 +18721,9 @@ window._deletePvAtiv = async function(id) {
       if (window._atividadeCountMap[slug] > 0) window._atividadeCountMap[slug]--;
       if (typeof _populateAtivCount === 'function') _populateAtivCount();
     }
+    if (window._totalAtividadesPosVenda > 0) window._totalAtividadesPosVenda--;
+    var statPvDel = document.getElementById('statAtividadesPosVenda');
+    if (statPvDel) statPvDel.textContent = (window._totalAtividadesPosVenda || 0).toLocaleString('pt-BR');
     showToast('Atividade removida.', 'info');
   } catch(e) {
     showToast('Erro: ' + e.message, 'error');
@@ -19090,6 +19225,19 @@ function _normalizeLidoPor(raw) {
   return [];
 }
 
+function _emailFromPreCadastroMensagem(msg) {
+  const m = String(msg || '').match(/E-mail:\s*([^\s|]+)/i);
+  return m ? m[1].trim().toLowerCase() : '';
+}
+
+function _isPreCadastroResolvedInUserList(emailNorm) {
+  if (!emailNorm || typeof allUsers === 'undefined' || !Array.isArray(allUsers)) return false;
+  const u = allUsers.find((x) => String(x.email || '').toLowerCase() === emailNorm);
+  if (!u) return false;
+  const inst = String(u.instituicao || '');
+  return inst.length > 0 && inst !== '_pre_cadastro';
+}
+
 window._loadNotifications = async function() {
   const list = document.getElementById('notifList');
   if (!list) return;
@@ -19113,22 +19261,37 @@ window._loadNotifications = async function() {
     const prioColors = { urgent: 'rgba(220,38,38,0.08)', warn: 'rgba(245,158,11,0.08)', info: 'transparent' };
     const notifsHtml = notifs.map(n => {
       const lidoPor = _normalizeLidoPor(n.lido_por);
+      const emailPre = n.tipo === 'pre_cadastro' ? _emailFromPreCadastroMensagem(n.mensagem) : '';
+      const resolvedPre = n.tipo === 'pre_cadastro' && emailPre && _isPreCadastroResolvedInUserList(emailPre);
       const isRead = lidoPor.includes(userEmail);
-      if (!isRead) unread++;
-      const icon = prioIcons[n.prioridade] || 'ℹ️';
-      const bg = !isRead ? prioColors[n.prioridade] || 'rgba(59,130,246,0.06)' : 'transparent';
+      const unreadRow = !isRead && !(n.tipo === 'pre_cadastro' && resolvedPre);
+      if (unreadRow) unread++;
+      const showApproved = n.tipo === 'pre_cadastro' && resolvedPre;
+      const tituloShow = showApproved ? 'Cadastro aprovado' : n.titulo;
+      const icon = showApproved ? '✅' : (prioIcons[n.prioridade] || 'ℹ️');
+      let bg = 'transparent';
+      if (unreadRow) bg = prioColors[n.prioridade] || 'rgba(59,130,246,0.06)';
+      else if (showApproved) bg = 'rgba(16,185,129,0.06)';
       const date = n.created_at ? new Date(n.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
       const autoTag = n.tipo === 'simulado_lembrete'
         ? '<span style="display:inline-block;background:rgba(59,130,246,0.12);color:#3b82f6;font-size:0.6rem;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px">AUTO</span>'
         : (n.tipo === 'pre_cadastro'
-          ? '<span style="display:inline-block;background:rgba(245,158,11,0.15);color:#d97706;font-size:0.6rem;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px">CADASTRO</span>'
+          ? (showApproved
+            ? '<span style="display:inline-block;background:rgba(16,185,129,0.18);color:#059669;font-size:0.6rem;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px">APROVADO</span>'
+            : '<span style="display:inline-block;background:rgba(245,158,11,0.15);color:#d97706;font-size:0.6rem;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px">CADASTRO</span>')
           : '');
+      const leftColor = showApproved
+        ? '#10b981'
+        : (unreadRow ? (n.prioridade === 'urgent' ? '#dc2626' : n.prioridade === 'warn' ? '#f59e0b' : '#3b82f6') : 'transparent');
       const clickFn = n.tipo === 'pre_cadastro' ? `window._onPreCadastroNotifClick('${n.id}')` : `window._markNotifRead('${n.id}')`;
-      return `<div data-notif-id="${n.id}" style="padding:12px 14px;border-radius:10px;margin-bottom:4px;background:${bg};cursor:pointer;transition:background 0.2s;border-left:3px solid ${!isRead ? (n.prioridade === 'urgent' ? '#dc2626' : n.prioridade === 'warn' ? '#f59e0b' : '#3b82f6') : 'transparent'}" onclick="${clickFn}">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span style="font-size:0.85rem">${icon}</span>
-          <span style="font-size:0.82rem;font-weight:${isRead ? '500' : '700'};color:var(--text);flex:1">${_escHtml(n.titulo)}${autoTag}</span>
-          <span style="font-size:0.65rem;color:var(--text-muted);white-space:nowrap">${date}</span>
+      return `<div data-notif-id="${n.id}" style="padding:12px 14px;border-radius:10px;margin-bottom:4px;background:${bg};cursor:pointer;transition:background 0.2s;border-left:3px solid ${leftColor}" onclick="${clickFn}">
+        <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">
+          <span style="font-size:0.85rem;flex-shrink:0">${icon}</span>
+          <span style="font-size:0.82rem;font-weight:${unreadRow ? '700' : '500'};color:var(--text);flex:1;min-width:0">${_escHtml(tituloShow)}${autoTag}</span>
+          <span style="display:flex;align-items:center;gap:2px;flex-shrink:0">
+            <span style="font-size:0.65rem;color:var(--text-muted);white-space:nowrap">${date}</span>
+            <button type="button" title="Remover aviso" onclick="event.stopPropagation(); window._deleteAdminNotif(${JSON.stringify(String(n.id))})" style="padding:4px 8px;border:none;background:transparent;color:var(--text-muted);font-size:0.9rem;line-height:1;cursor:pointer;border-radius:8px">✕</button>
+          </span>
         </div>
         <div style="font-size:0.78rem;color:var(--text-soft);line-height:1.5;margin-left:22px">${_escHtml(n.mensagem).substring(0, 120)}${n.mensagem.length > 120 ? '...' : ''}</div>
         ${n.criado_por ? `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;margin-left:22px">por ${_escHtml(n.criado_por)}</div>` : ''}
@@ -19154,10 +19317,25 @@ function _updateNotifBadge(count) {
   }
 }
 
+window._deleteAdminNotif = async function(id) {
+  if (!id) return;
+  try {
+    const resp = await window._supaWrite('notificacoes_admin?id=eq.' + encodeURIComponent(id), 'DELETE', null);
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      if (typeof showToast === 'function') showToast('Não foi possível remover o aviso.' + (t ? ' ' + t.slice(0, 80) : ''), 'error');
+      return;
+    }
+    if (typeof showToast === 'function') showToast('Aviso removido', 'success');
+    window._loadNotifications();
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Não foi possível remover o aviso.', 'error');
+  }
+};
+
 window._onPreCadastroNotifClick = async function(id) {
   const notif = window._notifCache.find((n) => String(n.id) === String(id));
-  const m = String(notif?.mensagem || '').match(/E-mail:\s*([^\s|]+)/);
-  const email = m ? m[1].trim() : '';
+  const email = _emailFromPreCadastroMensagem(notif?.mensagem || '');
   window._goToUsersTabFromPreCadastroNotif(email);
   await window._markNotifRead(id);
 };

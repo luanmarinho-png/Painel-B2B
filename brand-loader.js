@@ -17,12 +17,14 @@ const MEDCOF_PANEL_ACCENT_HEX = '#dc2626';
   }
 
   try {
+    // Só filtra por slug: muitos documentos no Mongo vêm sem `ativo` ou com sync antigo;
+    // exigir ativo=eq.true fazia a query retornar vazio e o painel ficava só no logo local.
     const resp = await fetch('/.netlify/functions/anon-data-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         table: 'instituicoes',
-        query: `select=logo_url,theme_hex&slug=eq.${encodeURIComponent(slug)}&ativo=eq.true`
+        query: `select=logo_url,theme_hex&slug=eq.${encodeURIComponent(slug)}`
       })
     });
     if (!resp.ok) return;
@@ -266,105 +268,7 @@ body {
       document.head.appendChild(style);
     }
 
-    // ── AVISOS ÀS COORDENAÇÕES ────────────────────────────────────
-    try {
-      const now = new Date().toISOString();
-      const avisoResp = await fetch('/.netlify/functions/anon-data-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          table: 'avisos',
-          query: `select=id,titulo,mensagem,expira_em,ies_slug&ativo=eq.true&expira_em=gt.${encodeURIComponent(now)}&or=(ies_slug.eq.${encodeURIComponent(slug)},ies_slug.eq.all)&order=created_at.desc&limit=5`
-        })
-      });
-      const avisos = avisoResp.ok ? await avisoResp.json() : [];
-      // Filtrar apenas os não vistos ainda (localStorage por ID)
-      const unseen = (avisos || []).filter(a => !localStorage.getItem(`aviso_seen_${a.id}`));
-      if (unseen.length > 0) {
-        // Aguardar DOM pronto para exibir o popup
-        const showFirst = () => _showAvisoPopup(unseen[0], MEDCOF_PANEL_ACCENT_HEX);
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showFirst);
-        else showFirst();
-      }
-    } catch(_) { /* avisos silencioso */ }
+    // ── AVISOS ÀS COORDENAÇÕES: popup desativado (evita modal vazio / intrusivo) ──
 
   } catch (e) { /* silencioso */ }
 })();
-
-// ── Popup de aviso para coordenações ─────────────────────────────
-function _showAvisoPopup(aviso, themeHex) {
-  const hex = themeHex || '#22c55e';
-  // Variantes de cor
-  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-  const dark = `rgb(${Math.round(r*.6)},${Math.round(g*.6)},${Math.round(b*.6)})`;
-
-  // Injetar CSS de animação (uma vez)
-  if (!document.getElementById('aviso-popup-style')) {
-    const s = document.createElement('style');
-    s.id = 'aviso-popup-style';
-    s.textContent = `
-      @keyframes _avisoBgIn  { from { opacity:0 } to { opacity:1 } }
-      @keyframes _avisoBoxIn { from { transform:scale(0.88) translateY(24px);opacity:0 } to { transform:scale(1) translateY(0);opacity:1 } }
-      @keyframes _avisoBar   { from { width:100% } to { width:0% } }
-      #aviso-popup-overlay { animation: _avisoBgIn 0.28s ease both; }
-      #aviso-popup-box     { animation: _avisoBoxIn 0.36s cubic-bezier(0.34,1.56,0.64,1) both; }
-    `;
-    document.head.appendChild(s);
-  }
-
-  // Overlay
-  const overlay = document.createElement('div');
-  overlay.id = 'aviso-popup-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
-
-  // Caixa do popup
-  const box = document.createElement('div');
-  box.id = 'aviso-popup-box';
-  box.style.cssText = `background:#1a1d2e;border-radius:20px;width:min(100%,480px);overflow:hidden;box-shadow:0 40px 100px rgba(0,0,0,0.7),0 0 0 1px rgba(255,255,255,0.06)`;
-
-  // Barra de progresso (expira em 12s se não dispensado)
-  const AUTO_DISMISS_MS = 12000;
-
-  // Topo colorido
-  box.innerHTML = `
-    <div style="background:linear-gradient(135deg,${dark} 0%,${hex} 100%);padding:22px 24px 18px;position:relative">
-      <div style="font-size:1.6rem;margin-bottom:6px">📢</div>
-      <div style="font-size:1.12rem;font-weight:800;color:#fff;line-height:1.3;padding-right:36px">${aviso.titulo || 'Aviso da Coordenação'}</div>
-      <button id="aviso-dismiss-btn"
-        style="position:absolute;top:14px;right:14px;background:rgba(255,255,255,0.22);border:none;border-radius:50%;width:32px;height:32px;color:#fff;font-size:1.25rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;transition:background 0.15s"
-        onmouseover="this.style.background='rgba(255,255,255,0.38)'" onmouseout="this.style.background='rgba(255,255,255,0.22)'">&times;</button>
-    </div>
-    <div style="padding:20px 24px 16px;font-size:0.94rem;color:#cbd5e1;line-height:1.7;white-space:pre-wrap;max-height:260px;overflow-y:auto">${_escapeHtml(aviso.mensagem || '')}</div>
-    <div style="padding:0 24px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px">
-      <div style="font-size:0.72rem;color:#64748b">Fechará automaticamente em alguns segundos</div>
-      <button id="aviso-ok-btn" style="padding:10px 28px;border-radius:10px;border:none;background:linear-gradient(135deg,${dark},${hex});color:#fff;font-weight:700;font-size:0.9rem;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.3);transition:opacity 0.15s" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">Entendi ✓</button>
-    </div>
-    <div style="height:3px;background:rgba(255,255,255,0.08);overflow:hidden">
-      <div id="aviso-progress-bar" style="height:100%;background:linear-gradient(90deg,${dark},${hex});width:100%;animation:_avisoBar ${AUTO_DISMISS_MS}ms linear forwards"></div>
-    </div>
-  `;
-
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-
-  const dismiss = () => {
-    localStorage.setItem(`aviso_seen_${aviso.id}`, '1');
-    overlay.style.transition = 'opacity 0.22s';
-    overlay.style.opacity = '0';
-    setTimeout(() => overlay.remove(), 230);
-  };
-
-  document.getElementById('aviso-dismiss-btn').addEventListener('click', dismiss);
-  document.getElementById('aviso-ok-btn').addEventListener('click', dismiss);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(); });
-
-  // Auto-dismiss
-  const timer = setTimeout(dismiss, AUTO_DISMISS_MS);
-  overlay.addEventListener('click', () => clearTimeout(timer), { once: true });
-  document.getElementById('aviso-dismiss-btn').addEventListener('click', () => clearTimeout(timer), { once: true });
-  document.getElementById('aviso-ok-btn').addEventListener('click', () => clearTimeout(timer), { once: true });
-}
-
-function _escapeHtml(str) {
-  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}

@@ -9,6 +9,67 @@ const { corsAdminProxy } = require('../../presentation/http/corsPresets');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** Texto reutilizado em respostas de erro (deploy / Storage). */
+const HINT_BUCKET_PUBLIC =
+  'No Supabase (mesmo projeto do SUPABASE_URL): Storage → abra o bucket (SUPABASE_ADMIN_AVATARS_BUCKET ou admin-avatars) → o bucket deve estar público para a foto aparecer no painel.';
+
+/**
+ * Garante que a URL pública gerada é do mesmo host do projeto (evita SUPABASE_URL errado no deploy).
+ *
+ * @param {string} publicUrl
+ * @param {string} projectUrl
+ * @returns {{ ok: true } | { ok: false, message: string, hint: string }}
+ */
+function validatePublicUrlHost(publicUrl, projectUrl) {
+  try {
+    const pu = new URL(publicUrl);
+    const pr = new URL(projectUrl);
+    if (pu.hostname !== pr.hostname) {
+      return {
+        ok: false,
+        message: 'URL pública do avatar não corresponde ao projeto configurado.',
+        hint:
+          `Host da URL pública (${pu.hostname}) difere do SUPABASE_URL (${pr.hostname}). ` +
+          'Confira SUPABASE_URL e SUPABASE_ADMIN_AVATARS_BUCKET no Netlify no mesmo projeto do Dashboard.'
+      };
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return { ok: true };
+}
+
+/**
+ * Garante bucket público para URLs de avatar. Se estiver privado, tenta `updateBucket` com a service role.
+ *
+ * @param {import('@supabase/supabase-js').SupabaseClient} supabase
+ * @param {string} bucket
+ * @returns {Promise<{ ok: true } | { ok: false, message: string, hint: string }>}
+ */
+async function ensureAvatarBucketIsPublic(supabase, bucket) {
+  const { data, error } = await supabase.storage.getBucket(bucket);
+  if (error || !data) {
+    return { ok: true };
+  }
+  if (data.public !== false) {
+    return { ok: true };
+  }
+
+  const { error: upErr } = await supabase.storage.updateBucket(bucket, { public: true });
+  if (!upErr) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    message: `O bucket Storage "${bucket}" não é público e a API não pôde alterar (service role).`,
+    hint:
+      HINT_BUCKET_PUBLIC +
+      ' Detalhe: ' +
+      String(upErr.message || '')
+  };
+}
+
 /**
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {string} bucket
@@ -24,7 +85,8 @@ async function ensureAvatarBucket(supabase, bucket) {
   }
 
   const { error: createErr } = await supabase.storage.createBucket(bucket, {
-    public: true
+    public: true,
+    fileSizeLimit: 6 * 1024 * 1024
   });
   if (!createErr) {
     return { ok: true };
@@ -92,7 +154,19 @@ async function executeAdminAvatarSignedUpload({ userId, rawPayload }) {
       headers: CORS,
       body: JSON.stringify({
         error: ensured.message,
-        hint: 'Confira Storage no Supabase ou defina SUPABASE_ADMIN_AVATARS_BUCKET.'
+        hint: 'Confira Storage no Supabase ou defina SUPABASE_ADMIN_AVATARS_BUCKET. ' + HINT_BUCKET_PUBLIC
+      })
+    };
+  }
+
+  const publicOk = await ensureAvatarBucketIsPublic(supabase, bucket);
+  if (!publicOk.ok) {
+    return {
+      statusCode: 503,
+      headers: CORS,
+      body: JSON.stringify({
+        error: publicOk.message,
+        hint: publicOk.hint
       })
     };
   }
@@ -104,11 +178,25 @@ async function executeAdminAvatarSignedUpload({ userId, rawPayload }) {
     return {
       statusCode: 500,
       headers: CORS,
-      body: JSON.stringify({ error: msg || 'Falha ao criar URL de upload' })
+      body: JSON.stringify({
+        error: msg || 'Falha ao criar URL de upload',
+        hint: HINT_BUCKET_PUBLIC
+      })
     };
   }
 
   const { data: pub } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+  const hostCheck = validatePublicUrlHost(pub.publicUrl, env.url);
+  if (!hostCheck.ok) {
+    return {
+      statusCode: 500,
+      headers: CORS,
+      body: JSON.stringify({
+        error: hostCheck.message,
+        hint: hostCheck.hint
+      })
+    };
+  }
   const contentType =
     ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
 

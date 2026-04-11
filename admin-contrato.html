@@ -9,12 +9,24 @@
 <script src="/supabase-config.js"></script>
 <script>
 window._SUPA_REST_URL = 'https://cvwwucxjrpsfoxarsipr.supabase.co/rest/v1';
+function _adminJwtNeedsRefresh(token, skewSec) {
+  if (!token || typeof token !== 'string') return true;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    const exp = payload.exp;
+    if (!exp || typeof exp !== 'number') return false;
+    return Date.now() / 1000 >= exp - (skewSec || 90);
+  } catch (_) {
+    return true;
+  }
+}
 window._getAdminToken = async function() {
   try {
     const sb = typeof getSupabaseClient === 'function' ? getSupabaseClient() : null;
     if (!sb) return '';
     let { data: { session } } = await sb.auth.getSession();
-    if (!session?.access_token) {
+    const tok = session?.access_token;
+    if (!tok || _adminJwtNeedsRefresh(tok, 90)) {
       const { data: refreshData, error } = await sb.auth.refreshSession();
       if (error || !refreshData?.session) return '';
       session = refreshData.session;
@@ -155,6 +167,24 @@ window._supaWrite = async function(table, method, body, extra) {
   }
   .btn-primary:hover { opacity: 0.92; }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary {
+    padding: 12px 22px; border-radius: 10px;
+    border: 1.5px solid var(--border); background: var(--bg-elevated);
+    color: var(--text); font-size: 0.88rem; font-weight: 700;
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+  }
+  .btn-secondary:hover { border-color: var(--text-muted); background: var(--bg-card); }
+  .contract-toolbar {
+    display: flex; justify-content: flex-end; align-items: center;
+    gap: 12px; margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .f-readonly {
+    min-height: 42px; padding: 10px 12px; border-radius: 10px;
+    border: 1.5px solid var(--border-subtle); background: rgba(0,0,0,0.15);
+    color: var(--text); font-size: 0.88rem; line-height: 1.45;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .f-readonly.f-readonly-empty { color: var(--text-muted); font-style: italic; }
 
   .form-section {
     background: var(--bg-card); border: 1px solid var(--border);
@@ -318,6 +348,75 @@ window._supaWrite = async function(table, method, body, extra) {
   const root = document.getElementById('contractRoot');
   const saveBar = document.getElementById('saveBar');
 
+  let contractData = null;
+  let instRowRef = null;
+  let isSuperadmin = false;
+  let editing = false;
+
+  /**
+   * @returns {Promise<void>}
+   */
+  async function resolveRole() {
+    try {
+      const sb = typeof getSupabaseClient === 'function' ? getSupabaseClient() : null;
+      if (!sb) return;
+      const { data: { session } } = await sb.auth.getSession();
+      const role = session && session.user ? session.user.user_metadata && session.user.user_metadata.role : '';
+      isSuperadmin = role === 'superadmin';
+    } catch (_) {}
+  }
+
+  function formatDatePt(v) {
+    if (v == null || v === '') return '';
+    const s = valStr(v);
+    if (s.length >= 10) {
+      const p = s.slice(0, 10).split('-');
+      if (p.length === 3 && p[0].length === 4) return p[2] + '/' + p[1] + '/' + p[0];
+    }
+    return s;
+  }
+
+  function roText(v) {
+    const t = valStr(v).trim();
+    return t === '' ? '<div class="f-readonly f-readonly-empty">—</div>' : '<div class="f-readonly">' + esc(t) + '</div>';
+  }
+
+  function renderToolbar() {
+    if (editing) {
+      return '<div class="contract-toolbar">' +
+        '<button type="button" class="btn-secondary" id="btnCancelEdit">Cancelar edição</button></div>';
+    }
+    return '<div class="contract-toolbar">' +
+      '<button type="button" class="btn-secondary" id="btnEnterEdit">Editar dados do contrato</button></div>';
+  }
+
+  function bindToolbar() {
+    const enter = document.getElementById('btnEnterEdit');
+    const cancel = document.getElementById('btnCancelEdit');
+    if (enter) enter.onclick = enterEditMode;
+    if (cancel) cancel.onclick = exitEditMode;
+  }
+
+  function enterEditMode() {
+    editing = true;
+    const wrap = document.getElementById('contractFormWrap');
+    const slot = document.getElementById('toolbarSlot');
+    if (wrap) wrap.innerHTML = renderForm(contractData, { isSuperadmin: isSuperadmin, readonly: false });
+    if (slot) slot.innerHTML = renderToolbar();
+    saveBar.style.display = 'flex';
+    bindToolbar();
+  }
+
+  function exitEditMode() {
+    editing = false;
+    const wrap = document.getElementById('contractFormWrap');
+    const slot = document.getElementById('toolbarSlot');
+    if (wrap) wrap.innerHTML = renderForm(contractData, { isSuperadmin: isSuperadmin, readonly: true });
+    if (slot) slot.innerHTML = renderToolbar();
+    saveBar.style.display = 'none';
+    bindToolbar();
+  }
+
   if (!ies) {
     root.innerHTML = '<div class="error-box">Informe a instituição na URL (ex.: admin-contrato.html?ies=cesmac). Acesse pelo painel admin.</div>';
     return;
@@ -416,7 +515,14 @@ window._supaWrite = async function(table, method, body, extra) {
     return o;
   }
 
-  function renderForm(d) {
+  /**
+   * @param {object} d
+   * @param {{ isSuperadmin: boolean, readonly: boolean }} opts
+   */
+  function renderForm(d, opts) {
+    const isSuper = opts && opts.isSuperadmin;
+    const ro = opts && opts.readonly;
+
     function field(label, inputHtml, hint) {
       return '<div><span class="f-label">' + label + '</span>' + inputHtml +
         (hint ? '<div class="f-hint">' + esc(hint) + '</div>' : '') + '</div>';
@@ -452,7 +558,100 @@ window._supaWrite = async function(table, method, body, extra) {
       return '<option value="' + esc(o) + '"' + sel + '>' + (o || '— Forma —') + '</option>';
     }).join('');
 
-    return (
+    const statusLabel = (function () {
+      const c = (d.status_contrato != null ? String(d.status_contrato) : '').trim();
+      return c || '—';
+    })();
+    const planoLabel = (function () {
+      const c = (d.plano != null ? String(d.plano) : '').trim();
+      return c || '—';
+    })();
+    const pagLabel = (function () {
+      const c = (d.forma_pagamento != null ? String(d.forma_pagamento) : '').trim();
+      return c || '—';
+    })();
+    const simLabel = function (on) { return on ? 'Sim' : 'Não'; };
+
+    if (ro) {
+      let html =
+        '<div id="contratoReadonlyRoot">' +
+        '<div class="form-section">' +
+        '<div class="form-section-title">📋 Informações gerais</div>' +
+        '<div class="form-grid">' +
+        field('Status do contrato', roText(statusLabel), 'Situação formal do vínculo com a IES') +
+        field('Nº / referência do contrato', roText(d.numero_contrato)) +
+        field('Localidade (cidade / UF)', roText(d.localidade)) +
+        field('Início da vigência', roText(formatDatePt(ds(d.data_inicio)) || '—')) +
+        field('Término da vigência', roText(formatDatePt(ds(d.data_fim)) || '—')) +
+        '</div></div>';
+
+      if (isSuper) {
+        html +=
+          '<div class="form-section">' +
+          '<div class="form-section-title">💰 Comercial e financeiro</div>' +
+          '<div class="form-grid">' +
+          field('Valor mensal / pacote', roText(d.valor_mensalidade), 'Valores combinados com a IES') +
+          field('Forma de pagamento', roText(pagLabel)) +
+          field('Dia de vencimento', roText(d.dia_vencimento)) +
+          '</div>' +
+          '<div class="form-grid" style="margin-top:14px"><div class="form-grid-full">' +
+          '<span class="f-label">Observações comerciais / faturamento</span>' + roText(d.observacoes_comercial) + '</div></div>' +
+          '</div>';
+      }
+
+      html +=
+        '<div class="form-section">' +
+        '<div class="form-section-title">📦 Pacote contratado</div>' +
+        '<div class="form-grid">' +
+        field('Plano / pacote', roText(planoLabel)) +
+        field('Módulos inclusos', roText(d.modulos)) +
+        field('Licenças / vagas contratadas', roText(d.licencas_contratadas)) +
+        '</div>' +
+        '<div class="f-check" style="opacity:0.9"><span class="f-label" style="display:inline">Material físico incluso</span> ' +
+        '<span style="color:var(--text-soft);font-size:0.88rem">' + simLabel(!!d.material_fisico) + '</span></div>' +
+        '</div>' +
+
+        '<div class="form-section">' +
+        '<div class="form-section-title">🎯 Simulados contratados</div>' +
+        '<div class="form-grid">' +
+        field('Qtd. simulados Tendências (contratada)', roText(String(valInt(d.sim_tendencias_qtd)))) +
+        field('Qtd. simulados Personalizados (contratada)', roText(String(valInt(d.sim_personalizados_qtd)))) +
+        '</div>' +
+        '<div class="f-check" style="opacity:0.9"><span class="f-label" style="display:inline">Personalizados com prova impressa</span> ' +
+        '<span style="color:var(--text-soft);font-size:0.88rem">' + simLabel(!!d.sim_personalizados_impressos) + '</span></div>' +
+        '<div class="form-grid" style="margin-top:16px">' +
+        field('Tendências já realizados (acompanhamento)', roText(d.tendencias_realizadas)) +
+        field('Personalizados já realizados', roText(d.personalizados_realizados)) +
+        '</div></div>';
+
+      if (isSuper) {
+        html +=
+          '<div class="form-section">' +
+          '<div class="form-section-title">🛡️ Política para alunos MedCof prévios</div>' +
+          '<div class="form-grid-full">' +
+          '<span class="f-label">Política de cancelamento / condição acordada em contrato</span>' + roText(d.condicao_alunos_previos) +
+          '</div></div>';
+      }
+
+      html +=
+        '<div class="form-section">' +
+        '<div class="form-section-title">👤 Responsável institucional (IES)</div>' +
+        '<div class="form-grid">' +
+        field('Nome', roText(d.resp_nome)) +
+        field('E-mail', roText(d.resp_email)) +
+        field('Telefone / WhatsApp', roText(d.resp_telefone)) +
+        field('Cargo / função', roText(d.resp_cargo)) +
+        '</div></div>' +
+
+        '<div class="form-section">' +
+        '<div class="form-section-title">📝 Observações gerais</div>' +
+        '<div class="form-grid-full">' + roText(d.observacoes_gerais) + '</div>' +
+        '</div>' +
+        '</div>';
+      return html;
+    }
+
+    let formHtml =
       '<form id="contratoForm" autocomplete="off">' +
       '<div class="form-section">' +
       '<div class="form-section-title">📋 Informações gerais</div>' +
@@ -462,20 +661,24 @@ window._supaWrite = async function(table, method, body, extra) {
       field('Localidade (cidade / UF)', '<input class="f-input" name="localidade" value="' + esc(valStr(d.localidade)) + '" placeholder="Ex.: Fortaleza — CE">') +
       field('Início da vigência', '<input class="f-input" type="date" name="data_inicio" value="' + esc(ds(d.data_inicio)) + '">') +
       field('Término da vigência', '<input class="f-input" type="date" name="data_fim" value="' + esc(ds(d.data_fim)) + '">') +
-      '</div></div>' +
+      '</div></div>';
 
-      '<div class="form-section">' +
-      '<div class="form-section-title">💰 Comercial e financeiro</div>' +
-      '<div class="form-grid">' +
-      field('Valor mensal / pacote', '<input class="f-input" name="valor_mensalidade" value="' + esc(valStr(d.valor_mensalidade)) + '" placeholder="Ex.: R$ 12.000,00">', 'Valores combinados com a IES') +
-      field('Forma de pagamento', '<select class="f-select" name="forma_pagamento">' + pagSel + '</select>') +
-      field('Dia de vencimento', '<input class="f-input" name="dia_vencimento" value="' + esc(valStr(d.dia_vencimento)) + '" placeholder="Ex.: dia 10">') +
-      '</div>' +
-      '<div class="form-grid" style="margin-top:14px"><div class="form-grid-full">' +
-      '<span class="f-label">Observações comerciais / faturamento</span>' +
-      '<textarea class="f-textarea" name="observacoes_comercial" placeholder="Notas de negociação, aditivos, multas…">' + esc(valStr(d.observacoes_comercial)) + '</textarea></div></div>' +
-      '</div>' +
+    if (isSuper) {
+      formHtml +=
+        '<div class="form-section">' +
+        '<div class="form-section-title">💰 Comercial e financeiro</div>' +
+        '<div class="form-grid">' +
+        field('Valor mensal / pacote', '<input class="f-input" name="valor_mensalidade" value="' + esc(valStr(d.valor_mensalidade)) + '" placeholder="Ex.: R$ 12.000,00">', 'Valores combinados com a IES') +
+        field('Forma de pagamento', '<select class="f-select" name="forma_pagamento">' + pagSel + '</select>') +
+        field('Dia de vencimento', '<input class="f-input" name="dia_vencimento" value="' + esc(valStr(d.dia_vencimento)) + '" placeholder="Ex.: dia 10">') +
+        '</div>' +
+        '<div class="form-grid" style="margin-top:14px"><div class="form-grid-full">' +
+        '<span class="f-label">Observações comerciais / faturamento</span>' +
+        '<textarea class="f-textarea" name="observacoes_comercial" placeholder="Notas de negociação, aditivos, multas…">' + esc(valStr(d.observacoes_comercial)) + '</textarea></div></div>' +
+        '</div>';
+    }
 
+    formHtml +=
       '<div class="form-section">' +
       '<div class="form-section-title">📦 Pacote contratado</div>' +
       '<div class="form-grid">' +
@@ -496,15 +699,19 @@ window._supaWrite = async function(table, method, body, extra) {
       '<div class="form-grid" style="margin-top:16px">' +
       field('Tendências já realizados (acompanhamento)', '<input class="f-input" name="tendencias_realizadas" value="' + esc(valStr(d.tendencias_realizadas)) + '" placeholder="Opcional — texto ou número">') +
       field('Personalizados já realizados', '<input class="f-input" name="personalizados_realizados" value="' + esc(valStr(d.personalizados_realizados)) + '" placeholder="Opcional">') +
-      '</div></div>' +
+      '</div></div>';
 
-      '<div class="form-section">' +
-      '<div class="form-section-title">🛡️ Política para alunos MedCof prévios</div>' +
-      '<div class="form-grid-full">' +
-      '<span class="f-label">Condição acordada em contrato</span>' +
-      '<textarea class="f-textarea" name="condicao_alunos_previos" placeholder="Reembolso, proporcionalidade, etc.">' + esc(valStr(d.condicao_alunos_previos)) + '</textarea></div>' +
-      '</div>' +
+    if (isSuper) {
+      formHtml +=
+        '<div class="form-section">' +
+        '<div class="form-section-title">🛡️ Política para alunos MedCof prévios</div>' +
+        '<div class="form-grid-full">' +
+        '<span class="f-label">Política de cancelamento / condição acordada em contrato</span>' +
+        '<textarea class="f-textarea" name="condicao_alunos_previos" placeholder="Reembolso, proporcionalidade, etc.">' + esc(valStr(d.condicao_alunos_previos)) + '</textarea></div>' +
+        '</div>';
+    }
 
+    formHtml +=
       '<div class="form-section">' +
       '<div class="form-section-title">👤 Responsável institucional (IES)</div>' +
       '<div class="form-grid">' +
@@ -519,8 +726,9 @@ window._supaWrite = async function(table, method, body, extra) {
       '<div class="form-grid-full">' +
       '<textarea class="f-textarea" name="observacoes_gerais" placeholder="Qualquer outro detalhe relevante do contrato.">' + esc(valStr(d.observacoes_gerais)) + '</textarea></div>' +
       '</div>' +
-      '</form>'
-    );
+      '</form>';
+
+    return formHtml;
   }
 
   async function loadUsersSection() {
@@ -665,18 +873,15 @@ window._supaWrite = async function(table, method, body, extra) {
 
   function collectPayload() {
     const f = document.getElementById('contratoForm');
+    if (!f) return null;
     const fd = new FormData(f);
-    return {
+    const base = {
       ies_slug: ies,
       status_contrato: (fd.get('status_contrato') || '').trim(),
       numero_contrato: (fd.get('numero_contrato') || '').trim(),
       localidade: (fd.get('localidade') || '').trim(),
       data_inicio: (fd.get('data_inicio') || '').trim() || null,
       data_fim: (fd.get('data_fim') || '').trim() || null,
-      valor_mensalidade: (fd.get('valor_mensalidade') || '').trim(),
-      forma_pagamento: (fd.get('forma_pagamento') || '').trim(),
-      dia_vencimento: (fd.get('dia_vencimento') || '').trim(),
-      observacoes_comercial: (fd.get('observacoes_comercial') || '').trim(),
       plano: (fd.get('plano') || '').trim(),
       modulos: (fd.get('modulos') || '').trim(),
       licencas_contratadas: (fd.get('licencas_contratadas') || '').trim(),
@@ -686,7 +891,6 @@ window._supaWrite = async function(table, method, body, extra) {
       sim_personalizados_impressos: document.getElementById('f_simPersImp').checked,
       tendencias_realizadas: (fd.get('tendencias_realizadas') || '').trim(),
       personalizados_realizados: (fd.get('personalizados_realizados') || '').trim(),
-      condicao_alunos_previos: (fd.get('condicao_alunos_previos') || '').trim(),
       resp_nome: (fd.get('resp_nome') || '').trim(),
       resp_email: (fd.get('resp_email') || '').trim(),
       resp_telefone: (fd.get('resp_telefone') || '').trim(),
@@ -694,6 +898,20 @@ window._supaWrite = async function(table, method, body, extra) {
       observacoes_gerais: (fd.get('observacoes_gerais') || '').trim(),
       updated_at: new Date().toISOString()
     };
+    if (isSuperadmin) {
+      base.valor_mensalidade = (fd.get('valor_mensalidade') || '').trim();
+      base.forma_pagamento = (fd.get('forma_pagamento') || '').trim();
+      base.dia_vencimento = (fd.get('dia_vencimento') || '').trim();
+      base.observacoes_comercial = (fd.get('observacoes_comercial') || '').trim();
+      base.condicao_alunos_previos = (fd.get('condicao_alunos_previos') || '').trim();
+    } else if (contractData) {
+      base.valor_mensalidade = valStr(contractData.valor_mensalidade);
+      base.forma_pagamento = valStr(contractData.forma_pagamento);
+      base.dia_vencimento = valStr(contractData.dia_vencimento);
+      base.observacoes_comercial = valStr(contractData.observacoes_comercial);
+      base.condicao_alunos_previos = valStr(contractData.condicao_alunos_previos);
+    }
+    return base;
   }
 
   async function saveContrato() {
@@ -703,6 +921,7 @@ window._supaWrite = async function(table, method, body, extra) {
     msg.textContent = 'Salvando…';
     try {
       const payload = collectPayload();
+      if (!payload) throw new Error('Formulário indisponível.');
       const resp = await window._supaWrite(
         'contratos_ies?on_conflict=ies_slug',
         'POST',
@@ -712,10 +931,27 @@ window._supaWrite = async function(table, method, body, extra) {
       if (!resp.ok) throw new Error(await resp.text());
       const rootEl = document.getElementById('contractRoot');
       if (rootEl) rootEl.setAttribute('data-has-saved', '1');
+      let dbRow = null;
+      try {
+        const rows = await window._supaRestAdmin(
+          'contratos_ies',
+          'select=*&ies_slug=eq.' + encodeURIComponent(ies) + '&limit=1'
+        );
+        if (rows && rows[0]) dbRow = rows[0];
+      } catch (_) {}
+      const legacy = LEGACY_DEFAULTS[ies] || null;
+      contractData = mergeDefaults(dbRow, legacy, instRowRef);
+      editing = false;
+      const wrap = document.getElementById('contractFormWrap');
+      const slot = document.getElementById('toolbarSlot');
+      if (wrap) wrap.innerHTML = renderForm(contractData, { isSuperadmin: isSuperadmin, readonly: true });
+      if (slot) slot.innerHTML = renderToolbar();
+      saveBar.style.display = 'none';
+      bindToolbar();
       msg.textContent = '✓ Alterações gravadas com sucesso.';
       setTimeout(function () {
         msg.textContent = rootEl && rootEl.getAttribute('data-has-saved') === '1'
-          ? 'Contrato cadastrado — edite os campos e salve para atualizar.'
+          ? 'Visualização dos dados — use Editar para alterar e salvar.'
           : 'Preencha os campos e salve para registrar o contrato.';
       }, 4500);
     } catch (e) {
@@ -727,7 +963,9 @@ window._supaWrite = async function(table, method, body, extra) {
   }
 
   (async function init() {
+    await resolveRole();
     const instRow = await loadInstNome();
+    instRowRef = instRow;
 
     let dbRow = null;
     try {
@@ -743,20 +981,23 @@ window._supaWrite = async function(table, method, body, extra) {
 
     const legacy = LEGACY_DEFAULTS[ies] || null;
     const merged = mergeDefaults(dbRow, legacy, instRow);
+    contractData = merged;
+    editing = false;
     const hasContratoSalvo = !!dbRow;
 
     root.setAttribute('data-has-saved', hasContratoSalvo ? '1' : '0');
     const bannerHtml = hasContratoSalvo
-      ? '<div class="edit-banner">✓ <strong>Contrato já cadastrado no sistema.</strong> Altere qualquer campo abaixo e use <strong>Salvar dados do contrato</strong> (barra inferior) para atualizar — quantas vezes precisar.</div>'
-      : '<div class="edit-banner edit-banner-new"><strong>Primeiro cadastro:</strong> preencha os dados e salve. Depois, esta mesma página carregará o que foi gravado para você editar sempre que necessário.</div>';
+      ? '<div class="edit-banner">✓ <strong>Contrato já cadastrado no sistema.</strong> Os dados abaixo são somente leitura — clique em <strong>Editar dados do contrato</strong> para alterar e use <strong>Salvar dados do contrato</strong> na barra inferior.</div>'
+      : '<div class="edit-banner edit-banner-new"><strong>Primeiro cadastro:</strong> clique em <strong>Editar dados do contrato</strong>, preencha e salve. Depois, a página exibirá os dados gravados nesta visualização fixa.</div>';
 
     document.getElementById('saveBarMsg').textContent = hasContratoSalvo
-      ? 'Contrato cadastrado — edite os campos e salve para atualizar.'
-      : 'Preencha os campos e salve para registrar o contrato.';
+      ? 'Visualização dos dados — use Editar para alterar e salvar.'
+      : 'Clique em Editar para preencher e salvar o primeiro cadastro.';
 
     root.innerHTML =
       bannerHtml +
-      renderForm(merged) +
+      '<div id="toolbarSlot">' + renderToolbar() + '</div>' +
+      '<div id="contractFormWrap">' + renderForm(contractData, { isSuperadmin: isSuperadmin, readonly: true }) + '</div>' +
       '<div class="form-section">' +
       '<div class="form-section-title">' +
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Usuários da instituição (cadastro)</div>' +
@@ -768,8 +1009,9 @@ window._supaWrite = async function(table, method, body, extra) {
       '<div id="ativList"><div class="history-empty">Carregando…</div></div>' +
       '</div>';
 
-    saveBar.style.display = 'flex';
+    saveBar.style.display = 'none';
     document.getElementById('btnSalvarContrato').onclick = saveContrato;
+    bindToolbar();
 
     loadUsersSection();
     loadAtividades();

@@ -3,7 +3,7 @@
  * Cobre os padrões usados pelo admin.html (eq, or, like, is.null, limit, offset, order, on_conflict).
  */
 
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectId } = require('mongodb');
 const { getMongoEnv } = require('./mongoEnv');
 
 /** @type {MongoClient | null} */
@@ -158,7 +158,28 @@ function parseRhs(rhs, fieldForCoerce) {
  * @param {{ op: string, value?: unknown }} p
  * @returns {Record<string, unknown>}
  */
+/**
+ * Filtro por `id` no estilo PostgREST: documentos Mongo podem ter só `_id` (sem campo `id`).
+ * @param {{ op: string, value?: unknown }} p
+ * @returns {Record<string, unknown>}
+ */
+function condToMongoIdEq(p) {
+  const v = p.value;
+  const asStr = v == null ? '' : String(v);
+  /** @type {Record<string, unknown>[]} */
+  const parts = [{ id: v }];
+  if (/^[a-fA-F0-9]{24}$/.test(asStr)) {
+    try {
+      parts.push({ _id: new ObjectId(asStr) });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return parts.length === 1 ? parts[0] : { $or: parts };
+}
+
 function condToMongo(field, p) {
+  if (field === 'id' && p.op === 'eq') return condToMongoIdEq(p);
   if (p.op === 'eq') return { [field]: p.value };
   if (p.op === 'ne') return { [field]: { $ne: null } };
   if (p.op === 'neq') return { [field]: { $ne: p.value } };
@@ -306,6 +327,14 @@ function parseSelectQuery(qs) {
 function stripInternal(doc) {
   if (!doc || typeof doc !== 'object') return {};
   const o = { ...doc };
+  const hadId = o.id != null && String(o.id).trim() !== '';
+  if (!hadId && o._id != null) {
+    if (typeof o._id === 'object' && o._id !== null && typeof o._id.toHexString === 'function') {
+      o.id = o._id.toHexString();
+    } else {
+      o.id = String(o._id);
+    }
+  }
   delete o._id;
   delete o._migrated_at;
   delete o._source;
@@ -471,13 +500,22 @@ async function runPostgrestMongo({
       };
     }
     const doc = await coll.findOneAndUpdate(filter, { $set: patch }, { returnDocument: 'after' });
+    if (!doc) {
+      return {
+        statusCode: 404,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          error: 'Nenhum documento corresponde ao filtro — confira slug/id ou coleção.'
+        })
+      };
+    }
     if (minimal) {
       return { statusCode: 204, headers: { 'Content-Type': 'application/json' }, body: '' };
     }
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(doc ? [stripInternal(doc)] : [])
+      body: JSON.stringify([stripInternal(doc)])
     };
   }
 

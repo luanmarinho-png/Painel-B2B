@@ -4256,6 +4256,31 @@ const COORD_NOTIF_FN = "/.netlify/functions/coord-notificacoes";
 let _coordNotifCache = [];
 
 /**
+ * @param {unknown} v
+ * @returns {string}
+ */
+function _coordNotifScalarStr(v) {
+  if (v == null) return "";
+  const t = typeof v;
+  if (t === "string") return v.trim();
+  if (t === "number" || t === "boolean") return String(v);
+  return String(v).trim();
+}
+
+/**
+ * Identificador estável do aviso (Postgres `id` ou Mongo derivado de `_id`).
+ * @param {unknown} n
+ * @returns {string}
+ */
+function _coordResolveNotifId(n) {
+  if (!n || typeof n !== "object") return "";
+  const o = /** @type {Record<string, unknown>} */ (n);
+  const fromId = _coordNotifScalarStr(o.id);
+  if (fromId) return fromId;
+  return _coordNotifScalarStr(o._id);
+}
+
+/**
  * @param {unknown} raw
  * @returns {string[]}
  */
@@ -4287,6 +4312,22 @@ function _coordEscHtml(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+/**
+ * Título e mensagem do aviso (Postgres snake_case ou variações no Mongo).
+ * @param {Record<string, unknown>} n
+ * @returns {{ titulo: string, mensagem: string }}
+ */
+function _coordNotifTituloMensagem(n) {
+  if (!n || typeof n !== "object") return { titulo: "", mensagem: "" };
+  const o = /** @type {Record<string, unknown>} */ (n);
+  const rawT = o.titulo ?? o.Titulo ?? o.title ?? o.Title;
+  const rawM = o.mensagem ?? o.Mensagem ?? o.message ?? o.Message;
+  return {
+    titulo: _coordNotifScalarStr(rawT),
+    mensagem: _coordNotifScalarStr(rawM)
+  };
 }
 
 /**
@@ -4363,7 +4404,7 @@ async function _coordRefreshNotifUi() {
     return;
   }
 
-  _coordNotifCache = rows;
+  _coordNotifCache = rows.filter((n) => _coordResolveNotifId(n));
   const prioIcons = { urgent: "🔴", warn: "⚠️", info: "ℹ️" };
   const prioColors = {
     urgent: "rgba(220,38,38,0.08)",
@@ -4372,8 +4413,9 @@ async function _coordRefreshNotifUi() {
   };
 
   let unread = 0;
-  const html = rows
+  const html = _coordNotifCache
     .map((n) => {
+      const tm = _coordNotifTituloMensagem(/** @type {Record<string, unknown>} */ (n));
       const lidoPor = _coordNormalizeLidoPor(n.lido_por);
       const isRead = lidoPor.includes(email);
       if (!isRead) unread++;
@@ -4387,7 +4429,8 @@ async function _coordRefreshNotifUi() {
             minute: "2-digit"
           })
         : "";
-      const id = _coordEscHtml(String(n.id));
+      const rowId = _coordResolveNotifId(n);
+      const id = _coordEscHtml(rowId);
       return `<button type="button" class="coord-notif-row" data-coord-notif-id="${id}" style="display:block;width:100%;text-align:left;padding:12px 14px;border-radius:10px;margin-bottom:4px;background:${bg};cursor:pointer;border:none;font:inherit;border-left:3px solid ${
         !isRead
           ? n.prioridade === "urgent"
@@ -4400,13 +4443,13 @@ async function _coordRefreshNotifUi() {
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
           <span style="font-size:0.85rem">${icon}</span>
           <span style="font-size:0.82rem;font-weight:${isRead ? "500" : "700"};color:var(--text);flex:1">${_coordEscHtml(
-            String(n.titulo || "")
+            tm.titulo || "(Sem título)"
           )}</span>
           <span style="font-size:0.65rem;color:var(--text-soft);white-space:nowrap">${date}</span>
         </div>
         <div style="font-size:0.78rem;color:var(--text-soft);line-height:1.5;margin-left:22px">${_coordEscHtml(
-          String(n.mensagem || "")
-        ).substring(0, 200)}${String(n.mensagem || "").length > 200 ? "…" : ""}</div>
+          tm.mensagem
+        ).substring(0, 200)}${tm.mensagem.length > 200 ? "…" : ""}</div>
         ${
           n.criado_por
             ? `<div style="font-size:0.65rem;color:var(--text-soft);margin-top:4px;margin-left:22px">por ${_coordEscHtml(
@@ -4434,7 +4477,7 @@ async function _coordRefreshNotifUi() {
   listEl.querySelectorAll("[data-coord-notif-id]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.getAttribute("data-coord-notif-id");
-      if (!id) return;
+      if (!id || id === "—") return;
       try {
         await _coordNotifRequest("markRead", id);
         await _coordRefreshNotifUi();
@@ -4446,59 +4489,7 @@ async function _coordRefreshNotifUi() {
 }
 
 /**
- * Mostra pop-ups de avisos com modo_coord=popup (um de cada vez).
- */
-async function _coordRunPopupQueue() {
-  const email = await _coordNotifUserEmail();
-  if (!email) return;
-  const overlay = document.getElementById("coordNotifPopupOverlay");
-  const titleEl = document.getElementById("coordNotifPopupTitle");
-  const bodyEl = document.getElementById("coordNotifPopupBody");
-  if (!overlay || !titleEl || !bodyEl) return;
-
-  const pending = _coordNotifCache.filter((n) => {
-    const lido = _coordNormalizeLidoPor(n.lido_por);
-    if (lido.includes(email)) return false;
-    const modo = String(n.modo_coord || "central").toLowerCase();
-    if (modo !== "popup") return false;
-    // Não exibir popup se título e mensagem estiverem vazios
-    if (!String(n.titulo || "").trim() && !String(n.mensagem || "").trim()) return false;
-    return true;
-  });
-  pending.sort((a, b) => {
-    const ta = a.created_at ? new Date(String(a.created_at)).getTime() : 0;
-    const tb = b.created_at ? new Date(String(b.created_at)).getTime() : 0;
-    return ta - tb;
-  });
-
-  const showNext = async () => {
-    const n = pending.shift();
-    if (!n) {
-      overlay.hidden = true;
-      return;
-    }
-    titleEl.textContent = String(n.titulo || "Aviso");
-    bodyEl.textContent = String(n.mensagem || "");
-    overlay.hidden = false;
-    const okBtn = document.getElementById("coordNotifPopupOk");
-    const onOk = async () => {
-      okBtn && okBtn.removeEventListener("click", onOk);
-      try {
-        await _coordNotifRequest("markRead", String(n.id));
-        await _coordRefreshNotifUi();
-      } catch {
-        /* ignore */
-      }
-      showNext();
-    };
-    if (okBtn) okBtn.addEventListener("click", onOk, { once: true });
-  };
-
-  if (pending.length) await showNext();
-}
-
-/**
- * Injeta sino, painel e fila de pop-ups no painel do coordenador.
+ * Injeta sino e painel de avisos no painel do coordenador (sem modal em tela cheia).
  */
 async function mountCoordNotificacoesUi() {
   if (document.getElementById("coordNotifBtn")) return;
@@ -4534,19 +4525,6 @@ async function mountCoordNotificacoesUi() {
     </div>
     <div id="coordNotifList" class="coord-notif-list"></div>`;
   document.body.appendChild(panel);
-
-  const popup = document.createElement("div");
-  popup.id = "coordNotifPopupOverlay";
-  popup.className = "coord-notif-popup-overlay";
-  popup.hidden = true;
-  popup.innerHTML = `
-    <div class="coord-notif-popup-card" role="dialog" aria-modal="true" aria-labelledby="coordNotifPopupTitle">
-      <div class="coord-notif-popup-kicker">Aviso da equipe MedCof</div>
-      <h2 id="coordNotifPopupTitle" class="coord-notif-popup-h2"></h2>
-      <p id="coordNotifPopupBody" class="coord-notif-popup-body"></p>
-      <button type="button" class="coord-notif-popup-ok" id="coordNotifPopupOk">Entendi</button>
-    </div>`;
-  document.body.appendChild(popup);
 
   const btn = document.getElementById("coordNotifBtn");
   const clearAll = document.getElementById("coordNotifClearAll");
@@ -4587,12 +4565,11 @@ async function mountCoordNotificacoesUi() {
   });
 
   await _coordRefreshNotifUi();
-  await _coordRunPopupQueue();
 
   setInterval(() => {
     if (sessionStorage.getItem(ACCESS_STATE_KEY) !== "granted") return;
     if (!panel.hidden) return;
-    void _coordRefreshNotifUi().then(() => _coordRunPopupQueue());
+    void _coordRefreshNotifUi();
   }, 120000);
 }
 
