@@ -2364,18 +2364,60 @@ async function _renderSimuladoDetail(root, slug, ref) {
     }
   }
 
-  // ── LINK BOLETINS (section no final) ──
-  const _linkBoletins = ranking ? ranking.link_boletins : null;
+  // ── LINK BOLETINS (section no final) — um ou vários pacotes ──
+  const _boletinsUrls = (() => {
+    if (!ranking) return [];
+    const multi = ranking.link_boletins_pacotes;
+    if (Array.isArray(multi) && multi.length) {
+      return multi.map(u => String(u).trim()).filter(Boolean);
+    }
+    const s = ranking.link_boletins;
+    if (typeof s === 'string' && s.trim()) return [s.trim()];
+    return [];
+  })();
 
-  const boletinsHTML = _linkBoletins ? `
+  const _boletinsRotulos = (() => {
+    if (!ranking) return [];
+    const multi = ranking.link_boletins_pacotes;
+    if (Array.isArray(multi) && multi.length > 1) {
+      const rr = ranking.link_boletins_pacotes_rotulos;
+      return multi.map((_, i) =>
+        Array.isArray(rr) && rr[i] != null && String(rr[i]).trim()
+          ? String(rr[i]).trim()
+          : ''
+      );
+    }
+    const ru = ranking.link_boletins_rotulo;
+    if (_boletinsUrls.length === 1 && typeof ru === 'string' && ru.trim()) return [ru.trim()];
+    return _boletinsUrls.map(() => '');
+  })();
+
+  const _boletinsBtnsBlock = _boletinsUrls.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end">${_boletinsUrls
+        .map(
+          (u, idx) => {
+            const rot = _boletinsRotulos[idx];
+            const btnLabel =
+              rot ||
+              (_boletinsUrls.length > 1 ? `Pacote ${idx + 1}` : 'Acessar boletins');
+            const titleAttr = rot
+              ? `${rot} — pacote ${idx + 1} de ${_boletinsUrls.length}`
+              : `Pacote ${idx + 1} de ${_boletinsUrls.length}`;
+            return `<a href="${u}" target="_blank" rel="noopener" title="${titleAttr.replace(/"/g, '&quot;')}" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;background:#16a34a;border:none;border-radius:10px;color:#fff;font-size:0.82rem;font-weight:700;text-decoration:none;cursor:pointer;transition:all 0.2s;white-space:nowrap;max-width:100%" onmouseover="this.style.background='#15803d'" onmouseout="this.style.background='#16a34a'"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${btnLabel}</a>`;
+          }
+        )
+        .join('')}</div>`
+    : '';
+
+  const boletinsHTML = _boletinsUrls.length ? `
     <section class="section-shell" style="margin-top:24px;margin-bottom:40px">
-      <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:16px;padding:24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-        <div style="width:48px;height:48px;border-radius:12px;background:rgba(22,163,74,0.1);display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0">📥</div>
+      <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:16px;padding:24px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
+        <div style="width:48px;height:48px;border-radius:12px;background:rgba(22,163,94,0.1);display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0">📥</div>
         <div style="flex:1;min-width:200px">
           <div style="font-size:0.95rem;font-weight:800;color:var(--text);margin-bottom:4px">Boletins disponíveis para download</div>
-          <div style="font-size:0.78rem;color:var(--text-muted);line-height:1.5">Os boletins individuais de todos os alunos estão disponíveis para download via Google Drive.</div>
+          <div style="font-size:0.78rem;color:var(--text-muted);line-height:1.5">${_boletinsUrls.length > 1 ? `Há <strong>${_boletinsUrls.length} arquivos</strong> (turma grande). Baixe cada pacote abaixo.` : 'Os boletins individuais estão disponíveis para download no link abaixo (pasta, arquivo ou pacote publicado pela central).'}</div>
         </div>
-        <a href="${_linkBoletins}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:10px 20px;background:#16a34a;border:none;border-radius:10px;color:#fff;font-size:0.82rem;font-weight:700;text-decoration:none;cursor:pointer;transition:all 0.2s;white-space:nowrap" onmouseover="this.style.background='#15803d'" onmouseout="this.style.background='#16a34a'"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Acessar boletins</a>
+        ${_boletinsBtnsBlock}
       </div>
     </section>` : `
     <section class="section-shell" style="margin-top:24px;margin-bottom:40px">
@@ -2414,9 +2456,44 @@ async function _renderSimuladoDetail(root, slug, ref) {
   const _heroBtnStyle = `display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);border-radius:10px;color:#fff;font-size:0.78rem;font-weight:700;text-decoration:none;transition:all 0.2s;cursor:pointer`;
   const gabaritoBtn = linkGabarito ? `<a href="${linkGabarito}" target="_blank" rel="noopener" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Ver gabarito</a>` : '';
 
-  // Boletins link (stored in __RANKING__.respostas.link_boletins)
-  const _linkBol = ranking ? ranking.link_boletins : null;
-  const boletinsBtn = _linkBol ? `<a href="${_linkBol}" target="_blank" rel="noopener" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Baixar boletins</a>` : '';
+  // Boletins (link_boletins + opcional link_boletins_pacotes[])
+  const _urlsBol = (() => {
+    if (!ranking) return [];
+    const m = ranking.link_boletins_pacotes;
+    if (Array.isArray(m) && m.length) return m.map(u => String(u).trim()).filter(Boolean);
+    const s = ranking.link_boletins;
+    if (typeof s === 'string' && s.trim()) return [s.trim()];
+    return [];
+  })();
+  const _rotulosBol = (() => {
+    if (!ranking) return [];
+    const m = ranking.link_boletins_pacotes;
+    if (Array.isArray(m) && m.length > 1) {
+      const rr = ranking.link_boletins_pacotes_rotulos;
+      return m.map((_, i) =>
+        Array.isArray(rr) && rr[i] != null && String(rr[i]).trim()
+          ? String(rr[i]).trim()
+          : ''
+      );
+    }
+    const ru = ranking.link_boletins_rotulo;
+    if (_urlsBol.length === 1 && typeof ru === 'string' && ru.trim()) return [ru.trim()];
+    return _urlsBol.map(() => '');
+  })();
+  const boletinsBtn =
+    _urlsBol.length === 1
+      ? `<a href="${_urlsBol[0]}" target="_blank" rel="noopener" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${_rotulosBol[0] ? _rotulosBol[0] : 'Baixar boletins'}</a>`
+      : _urlsBol.length > 1
+        ? _urlsBol
+            .map(
+              (u, i) => {
+                const short = _rotulosBol[i] || `P${i + 1}`;
+                const tip = _rotulosBol[i] ? `${_rotulosBol[i]} (${i + 1}/${_urlsBol.length})` : `Pacote ${i + 1}/${_urlsBol.length}`;
+                return `<a href="${u}" target="_blank" rel="noopener" title="${tip.replace(/"/g, '&quot;')}" style="${_heroBtnStyle}" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${short}</a>`;
+              }
+            )
+            .join('')
+        : '';
 
   // Contexto de exportação PDF/Excel
   window.__MEDCOF_SIM_EXPORT__ = {

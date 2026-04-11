@@ -2,6 +2,7 @@
   "name": "medcof-b2b",
   "private": true,
   "dependencies": {
+    "@supabase/supabase-js": "^2.103.0",
     "mongodb": "^6.12.0"
   },
   "devDependencies": {

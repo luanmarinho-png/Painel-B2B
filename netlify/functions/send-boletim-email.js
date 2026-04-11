@@ -103,12 +103,13 @@ const COORD_BOLETINS_EXCEL_LINK_TEMPLATE = `<!DOCTYPE html>
           <p style="margin:0 0 12px;font-weight:700;color:#455245;">Conteúdo deste e-mail</p>
           <ul style="margin:0 0 18px;padding-left:20px;line-height:1.55;">
             <li><strong>Planilha Excel (.xlsx)</strong> — análise estatística: resumo, ranking, questões, matriz de respostas e pivôs.</li>
-            <li><strong>Boletins individuais</strong> — disponíveis no link abaixo (mesmo endereço cadastrado no campo <em>Link dos boletins</em> no upload do resultado).</li>
+            <li><strong>Boletins individuais</strong> — link(s) abaixo (vários pacotes quando a turma é grande e o sistema divide os ZIPs automaticamente).</li>
           </ul>
           {{TEXTO_EXTRA}}
           <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:24px 0;"><tr><td align="center">
-            <a href="{{LINK_BOLETINS}}" style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#ffffff !important;text-decoration:none;font-weight:700;font-size:14px;border-radius:10px;">Acessar boletins individuais</a>
+            <a href="{{LINK_BOLETINS}}" style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,#1B6D85,#22c55e);color:#ffffff !important;text-decoration:none;font-weight:700;font-size:14px;border-radius:10px;">{{LABEL_BOTAO_BOLETINS}}</a>
           </td></tr></table>
+          {{LINKS_BOLETINS_PACOTES_HTML}}
           <p style="margin:0 0 16px;font-size:13px;color:#6c7b6c;text-align:center">Ou abra o <a href="{{LINK_PAINEL}}" style="color:#1B6D85;font-weight:600">painel administrativo</a> para enviar boletins por aluno.</p>
           <p style="margin:0;font-size:13px;color:#6c7b6c;">Envio automático — Grupo MedCof.</p>
         </td></tr>
@@ -133,6 +134,47 @@ function fillTemplate(template, vars) {
     out = out.split(`{{${k}}}`).join(val);
   });
   return out;
+}
+
+/**
+ * @param {string} s
+ * @returns {string}
+ */
+function escapeHtmlLite(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Lista HTML de pacotes adicionais (2+) quando há vários ZIPs no storage.
+ * @param {string[]} urls
+ * @param {string[]|undefined} rotulos Faixa alfabética / identificação por pacote (mesmo índice que urls).
+ * @returns {string}
+ */
+function buildLinksBoletinsPacotesHtml(urls, rotulos) {
+  const arr = Array.isArray(urls)
+    ? urls.map((u) => String(u || '').trim()).filter(Boolean)
+    : [];
+  if (arr.length <= 1) return '';
+  const rotArr = Array.isArray(rotulos) ? rotulos : [];
+  const rest = arr.slice(1);
+  const items = rest
+    .map((u, i) => {
+      const pkgNum = i + 2;
+      const idx = pkgNum - 1;
+      const r = rotArr[idx] != null && String(rotArr[idx]).trim();
+      const label = r ? escapeHtmlLite(String(rotArr[idx]).trim()) : `Pacote ${pkgNum}`;
+      let href = u;
+      try {
+        href = encodeURI(u);
+      } catch (_) {}
+      return `<li style="margin:6px 0"><span style="color:#455245;font-weight:600">${label}</span> — <a href="${href}" style="color:#1B6D85;font-weight:600;text-decoration:none">abrir ZIP</a></li>`;
+    })
+    .join('');
+  return `<p style="margin:16px 0 10px;font-size:14px;font-weight:700;color:#455245;text-align:center">Demais pacotes (mesmo simulado)</p><ul style="margin:0 0 18px;padding-left:20px;line-height:1.55;text-align:left">${items}</ul>`;
 }
 
 /**
@@ -260,7 +302,23 @@ exports.handler = async (event) => {
     }
 
     const linkPainel = (body.link_boletim || '#').trim() || '#';
-    const linkBoletinsInd = (body.link_boletins_individuais || '').trim() || linkPainel;
+    let pacotesUrls = Array.isArray(body.link_boletins_pacotes)
+      ? body.link_boletins_pacotes.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    if (!pacotesUrls.length) {
+      const single = (body.link_boletins_individuais || '').trim();
+      if (single) pacotesUrls = [single];
+    }
+    const linkBoletinsInd = pacotesUrls[0] || (body.link_boletins_individuais || '').trim() || linkPainel;
+    const rotulosPacotes = Array.isArray(body.link_boletins_pacotes_rotulos)
+      ? body.link_boletins_pacotes_rotulos.map((x) => String(x || '').trim())
+      : [];
+    const linksBoletinsPacotesHtml = buildLinksBoletinsPacotesHtml(pacotesUrls, rotulosPacotes);
+    let labelBotaoBoletins = 'Acessar boletins individuais';
+    if (pacotesUrls.length > 1) {
+      const r0 = rotulosPacotes[0];
+      labelBotaoBoletins = r0 ? r0 + ' — download (ZIP)' : 'Baixar pacote 1 (ZIP)';
+    }
     const textoExtra = (body.texto_extra_html || '').trim();
     const notificacaoCoord = body.notificacao_coordenador === true;
     const coordExcelELink = body.coord_excel_e_link === true;
@@ -280,6 +338,8 @@ exports.handler = async (event) => {
             TITULO_SIMULADO: tituloSimulado,
             NOME_IES: nomeIes,
             LINK_BOLETINS: linkBoletinsInd,
+            LABEL_BOTAO_BOLETINS: labelBotaoBoletins,
+            LINKS_BOLETINS_PACOTES_HTML: linksBoletinsPacotesHtml,
             LINK_PAINEL: linkPainel,
             TEXTO_EXTRA: textoExtra
           })

@@ -190,6 +190,7 @@ def deploy(admin_path=None):
     uploads = {}
     extra_files = [
         "index.html",
+        "aguardando-aprovacao.html",
         "admin-contrato.html",
         "favicon.svg",
         "brand-loader.js",

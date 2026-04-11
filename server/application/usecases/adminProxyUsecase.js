@@ -9,6 +9,7 @@ const { fetchAuthUser } = require('../../infrastructure/supabase/fetchAuthUser')
 const { isPrivilegedAdmin, isSuperadmin } = require('../../domain/userRoles');
 const { corsAdminProxy } = require('../../presentation/http/corsPresets');
 const { appendAdminAuditLog } = require('./appendAdminAuditLog');
+const { executeBoletinsStorageSignedUpload } = require('./boletinsStorageSignedUpload');
 
 const ALLOWED_TABLES = new Set([
   'alunos_master',
@@ -123,6 +124,10 @@ async function executeAdminProxy({ authHeader, rawBody, requestMeta }) {
       headers: CORS,
       body: JSON.stringify({ error: 'Apenas superadmin pode executar esta operação' })
     };
+  }
+
+  if (payload.action === 'boletins_storage_signed_upload') {
+    return executeBoletinsStorageSignedUpload({ rawPayload: payload });
   }
 
   if (!table) {

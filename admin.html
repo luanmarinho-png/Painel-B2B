@@ -125,6 +125,31 @@ window._supaWrite = async function(table, method, body, extra) {
 };
 
 /**
+ * Ação especial no admin-proxy (ex.: URL assinada de Storage). Exige JWT admin.
+ * @param {Record<string, unknown>} payload
+ * @returns {Promise<Record<string, unknown>>}
+ */
+window._adminProxyAction = async function(payload) {
+  const token = await window._getAdminToken();
+  if (!token) throw new Error('Sessão expirada — faça login novamente');
+  const resp = await fetch('/.netlify/functions/admin-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+  let j = {};
+  try {
+    j = await resp.json();
+  } catch (_) {}
+  if (!resp.ok) {
+    const msg = (j && j.error) ? j.error : (await resp.text().catch(() => '') || `HTTP ${resp.status}`);
+    const hint = j && j.hint ? ' ' + j.hint : '';
+    throw new Error(msg + hint);
+  }
+  return j;
+};
+
+/**
  * GET admin com Prefer count=exact + Range 0-0 — lê total em Content-Range (/N).
  * @param {string} table ex: "alunos_master"
  * @param {string} query ex: "select=cpf&or=(cadastro_origem.eq.ies,cadastro_origem.is.null)"
@@ -1258,10 +1283,11 @@ window.parseArr = function(v) {
         </div>
       </div>
 
+      <div id="uploadEngajMovable">
       <!-- ═══ ETAPA 1: Configuração ═══ -->
       <div id="uploadStep1" style="display:none">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-          <button type="button" onclick="window._goToStep(0)" style="padding:4px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-soft);font-size:0.78rem;cursor:pointer">← Voltar</button>
+          <button type="button" onclick="window._uploadStep1Back()" style="padding:4px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-soft);font-size:0.78rem;cursor:pointer">← Voltar</button>
           <span id="step1Title" style="font-size:0.9rem;font-weight:700;color:var(--text)"></span>
         </div>
         <!-- Instrução para nova turma -->
@@ -1327,7 +1353,7 @@ window.parseArr = function(v) {
           <table class="preview-table" id="previewTable"><thead id="previewThead"></thead><tbody id="previewTbody"></tbody></table>
         </div>
         <div class="btn-row" style="margin-top:20px">
-          <button class="btn-primary" onclick="window._goToStep(0)" style="background:var(--green)">
+          <button class="btn-primary" onclick="window._previewFazerNovoUpload()" style="background:var(--green)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
             Fazer novo upload
           </button>
@@ -1345,6 +1371,7 @@ window.parseArr = function(v) {
         <div class="success-banner-title">Dados publicados!</div>
         <div class="success-banner-text" id="successText"></div>
       </div>
+      </div><!-- /uploadEngajMovable -->
     </div>
 
     <!-- ═══════════ TAB 3: CADASTRAR IES ═══════════ -->
@@ -1607,7 +1634,7 @@ window.parseArr = function(v) {
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border-subtle);flex-shrink:0">
             <div>
               <div style="font-size:0.95rem;font-weight:700;color:var(--text)">Upload de Resultado</div>
-              <div style="font-size:0.73rem;color:var(--text-muted);margin-top:4px">Selecione a IES e o tipo de simulado para subir a planilha</div>
+              <div id="simUploadModalHeaderSub" style="font-size:0.73rem;color:var(--text-muted);margin-top:4px">Selecione a IES e o tipo de simulado para subir a planilha</div>
             </div>
             <button type="button" onclick="window._closeSimUploadModal()" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:1.35rem;line-height:1;padding:4px" title="Fechar" aria-label="Fechar">✕</button>
           </div>
@@ -1638,20 +1665,34 @@ window.parseArr = function(v) {
               </div>
             </div>
             <div id="simUploadModalMain" style="padding-top:14px">
-          <div class="field-grid" style="margin-bottom:16px;align-items:end">
+          <div id="simUploadLockedSummary" style="display:none;margin-bottom:16px;padding:14px 16px;border-radius:12px;border:1px solid var(--border-subtle);background:var(--bg-elevated);grid-template-columns:1fr 1fr;gap:12px 16px;align-items:start">
+            <div style="min-width:0">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted);margin-bottom:6px;letter-spacing:0.04em">Instituição</div>
+              <div id="simUploadLockedInstName" style="font-size:0.95rem;font-weight:700;color:var(--text);word-break:break-word">—</div>
+            </div>
+            <div style="min-width:0">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted);margin-bottom:6px;letter-spacing:0.04em">Tipo de upload</div>
+              <div style="font-size:0.92rem;font-weight:600;color:var(--text)">Resultado de Simulado (Banco de Questões)</div>
+            </div>
+            <div style="grid-column:1/-1;padding-top:10px;border-top:1px solid var(--border-subtle);min-width:0">
+              <div style="font-size:0.68rem;text-transform:uppercase;font-weight:700;color:var(--text-muted);margin-bottom:6px;letter-spacing:0.04em">Simulado fechado</div>
+              <div id="simUploadLockedSimTitle" style="font-size:0.95rem;font-weight:700;color:var(--text);word-break:break-word">—</div>
+            </div>
+          </div>
+          <div id="simUploadPickRow" class="field-grid" style="margin-bottom:8px;align-items:start">
             <div class="field" style="max-width:none;margin-bottom:0">
               <label for="simInst">Instituição <span class="req">*</span></label>
-              <select id="simInst" onchange="if(document.getElementById('simUploadType')?.value==='bq'&amp;&amp;window._loadBQSimulados)window._loadBQSimulados(this.value)"><option value="">Selecione...</option></select>
+              <select id="simInst" style="min-height:40px;box-sizing:border-box;width:100%" onchange="if(document.getElementById('simUploadType')?.value==='bq'&amp;&amp;window._loadBQSimulados)window._loadBQSimulados(this.value)"><option value="">Selecione...</option></select>
             </div>
             <div class="field" style="max-width:none;margin-bottom:0">
               <label for="simUploadType">Tipo de upload <span class="req">*</span></label>
-              <select id="simUploadType">
+              <select id="simUploadType" style="min-height:40px;box-sizing:border-box;width:100%">
                 <option value="">Selecione o tipo...</option>
                 <option value="bq">Resultado de Simulado (Banco de Questões)</option>
               </select>
-              <div class="hint">Remark® ou planilha com CPF + questões; simulado fechado no Banco</div>
             </div>
           </div>
+          <div id="simUploadTipoHintRow" class="hint" style="margin-bottom:16px">Remark® ou planilha com CPF + questões; simulado fechado no Banco</div>
 
         <!-- Fluxo BQ (exibido ao escolher o tipo no dropdown) -->
         <div id="simBqFlowWrap" style="display:none">
@@ -1671,17 +1712,20 @@ window.parseArr = function(v) {
 
             <!-- Etapa 1 -->
             <div id="bqStepPanel1">
+            <div id="bqStep1PickBlock">
             <div class="subsection" style="margin-top:0">
               <div class="subsection-title">Simulado</div>
             </div>
             <div class="field" style="margin-bottom:16px;max-width:420px">
               <label for="simBQSelect">Simulado fechado <span class="req">*</span></label>
-              <select id="simBQSelect">
+              <select id="simBQSelect" style="min-height:40px;box-sizing:border-box;width:100%;max-width:100%">
                 <option value="">Selecione a IES primeiro...</option>
               </select>
               <div class="hint">Apenas simulados com status "Fechado" são exibidos</div>
               <div id="simBQTipoHint" style="display:none;margin-top:6px;padding:8px 12px;border-radius:8px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);font-size:0.78rem;color:var(--text-soft)"></div>
             </div>
+            </div>
+            <div id="bqStep1LockedNote" style="display:none;margin-bottom:14px;font-size:0.8rem;color:var(--text-muted);line-height:1.45">O simulado foi definido pelo painel. Avance para enviar a planilha de resultado.</div>
             <div class="btn-row" style="margin-top:8px;margin-bottom:4px">
               <button type="button" class="btn-primary" id="bqBtnNext1" disabled style="width:100%;max-width:280px">Continuar para planilha →</button>
             </div>
@@ -1769,17 +1813,6 @@ window.parseArr = function(v) {
             </div>
             </div><!-- /bqRankPanel -->
 
-            <!-- Guia rápido -->
-            <div class="sim-guide-box">
-              <div class="sim-guide-title">📋 Guia rápido — Banco de Questões</div>
-              <div class="sim-guide-steps">
-                <div class="sim-guide-step"><span class="sim-guide-num">1</span><span>Cadastre, componha e <strong>feche</strong> o simulado na aba "Banco de Questões"</span></div>
-                <div class="sim-guide-step"><span class="sim-guide-num">2</span><span>Aplique o simulado usando o sistema Remark® (leitura óptica de gabaritos)</span></div>
-                <div class="sim-guide-step"><span class="sim-guide-num">3</span><span>Exporte o resultado: <strong>Remark® — Relatório das Respostas por Aluno</strong> ou planilha equivalente (CPF na coluna A + colunas de questão; opcional Nome, Email, Período)</span></div>
-                <div class="sim-guide-step"><span class="sim-guide-num">4</span><span>Selecione a IES + simulado acima e faça o upload da planilha</span></div>
-                <div class="sim-guide-step"><span class="sim-guide-num">5</span><span>Clique em "Processar"; na tela seguinte, cadastre os links (opcional) e use Emitir boletins ou os relatórios</span></div>
-              </div>
-            </div>
             <div class="btn-row" style="margin-top:16px;flex-wrap:wrap;gap:10px">
               <button type="button" class="btn-secondary" id="bqBtnBack3">← Voltar</button>
               <button class="btn-primary" id="btnSimBQ" disabled>
@@ -2894,6 +2927,34 @@ function populateInstSelects(data) {
   });
 }
 
+/**
+ * Agrega contagens de atividades_contrato por IES e reuniões (tipo reuniao).
+ * Pagina com offset — uma única requisição com limit cortava o total acima do limite.
+ */
+async function _buildAtividadesCountMapsFromRest() {
+  const pageSize = 5000;
+  const m = {};
+  const r = {};
+  let offset = 0;
+  for (;;) {
+    const rows = await window._supaRest(
+      'atividades_contrato',
+      `select=ies_slug,tipo&limit=${pageSize}&offset=${offset}`
+    ).catch(() => []);
+    if (!rows || rows.length === 0) break;
+    for (const row of rows) {
+      if (!row.ies_slug) continue;
+      m[row.ies_slug] = (m[row.ies_slug] || 0) + 1;
+      if (String(row.tipo || '').toLowerCase() === 'reuniao') {
+        r[row.ies_slug] = (r[row.ies_slug] || 0) + 1;
+      }
+    }
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+  return { countMap: m, reuniaoMap: r, totalReuni: Object.values(r).reduce((a, b) => a + b, 0) };
+}
+
 async function loadAndRenderInstitutions() {
   // ── Cache em localStorage (TTL 15min, sobrevive entre abas) ──
   const TTL = 15 * 60 * 1000;
@@ -2905,7 +2966,7 @@ async function loadAndRenderInstitutions() {
     const cachedInst = _cacheGet('inst');
     const cachedSims = _cacheGet('sims');
     const cachedEnvs = _cacheGet('envs');
-    const cachedAtiv = _cacheGet('ativ');
+    const cachedAtiv = _cacheGet('ativ_v2');
 
     const [instData, simsData, envsData, ativMap] = await Promise.all([
       // 1. Instituições
@@ -2917,14 +2978,8 @@ async function loadAndRenderInstitutions() {
       // 3. Envios
       cachedEnvs || window._supaRest('simulados_envios', 'select=id,simulado_id,ies_slug,data_simulado,data_envio_coord,pdf_enviado,gabarito_enviado,grafica_enviada,simulado_aplicado,resultado_cadastrado,resultado_apresentado,relatorio_coord_enviado,boletins_individuais_enviados,concluido,concluido_em,notas').catch(() => []),
 
-      // 4. Atividades — count por IES + reuniões
-      cachedAtiv || window._supaRest('atividades_contrato', 'select=ies_slug,tipo&limit=5000').catch(() => []).then(rows => {
-        const m = {}, r = {};
-        (rows||[]).forEach(row => {
-          if(row.ies_slug) { m[row.ies_slug]=(m[row.ies_slug]||0)+1; if(row.tipo==='reuniao') r[row.ies_slug]=(r[row.ies_slug]||0)+1; }
-        });
-        return { countMap: m, reuniaoMap: r, totalReuni: Object.values(r).reduce((a,b)=>a+b,0) };
-      }),
+      // 4. Atividades — count por IES + reuniões (paginado)
+      cachedAtiv || _buildAtividadesCountMapsFromRest(),
     ]);
 
     const data = instData;
@@ -2934,7 +2989,7 @@ async function loadAndRenderInstitutions() {
     if (!cachedInst) _cacheSet('inst', data);
     if (!cachedSims && simsData?.length) _cacheSet('sims', simsData); // só cacheia se veio dados
     if (!cachedEnvs) _cacheSet('envs', envsData);
-    if (!cachedAtiv) _cacheSet('ativ', ativMap); // salva o mapa já computado
+    if (!cachedAtiv) _cacheSet('ativ_v2', ativMap); // salva o mapa já computado (v2: agregação paginada)
 
     window._instData          = data;
     window._allSimsBanco      = simsData || [];
@@ -3405,6 +3460,28 @@ window._renderGestaoGrid = function() {
     }
   }
 
+  // Build set of sim refs that have uploaded results (upload bar usa iesData inteiro, não o filtro)
+  const _uploadedRefs = new Set();
+  (window._boletimSimRefs || []).forEach(r => _uploadedRefs.add(r.simulado_ref));
+  window._uploadedRefs = _uploadedRefs;
+
+  const uploadBar = document.getElementById('simUploadTriggerBar');
+  if (uploadBar) {
+    let pendingUpload = false;
+    for (const ic of iesData) {
+      for (const r of ic.simRows) {
+        if (r.sim.status !== 'fechado') continue;
+        const ref = 'bq_' + ic.slug + '_' + r.sim.id.slice(0, 8);
+        if (!_uploadedRefs.has(ref)) {
+          pendingUpload = true;
+          break;
+        }
+      }
+      if (pendingUpload) break;
+    }
+    uploadBar.style.display = pendingUpload ? '' : 'none';
+  }
+
   // ── Render ─────────────────────────────────────────────────────────
   if (!filtered.length) {
     grid.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:0.82rem">Nenhuma IES encontrada com os filtros selecionados.</div>';
@@ -3414,10 +3491,6 @@ window._renderGestaoGrid = function() {
   const chk = (v, label) => v
     ? `<span style="color:var(--green);font-weight:600;font-size:0.68rem">☑ ${label}</span>`
     : `<span style="color:var(--text-muted);font-size:0.68rem">☐ ${label}</span>`;
-
-  // Build set of sim refs that have uploaded results
-  const _uploadedRefs = new Set();
-  (window._boletimSimRefs || []).forEach(r => _uploadedRefs.add(r.simulado_ref));
 
   grid.innerHTML = filtered.map(ic => {
     const { slug, nome, cidade, themeHex, logoUrl, simRows, iesStatus } = ic;
@@ -3462,9 +3535,9 @@ window._renderGestaoGrid = function() {
             const simRef = 'bq_' + slug + '_' + s.id.slice(0,8);
             const hasResult = _uploadedRefs.has(simRef);
             if (hasResult) {
-              return '<button onclick="event.stopPropagation();window._simOpenUpload(\'' + slug + '\',this)" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Resultado enviado — clique para reenviar">⬆ ✓</button>';
+              return '<button onclick="event.stopPropagation();window._simOpenUpload(\'' + slug + '\',\'' + s.id + '\',this)" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Resultado enviado — clique para reenviar">⬆ ✓</button>';
             } else {
-              return '<button onclick="event.stopPropagation();window._simOpenUpload(\'' + slug + '\',this)" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#f59e0b,#eab308);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Upload resultado — pendente">⬆</button>';
+              return '<button onclick="event.stopPropagation();window._simOpenUpload(\'' + slug + '\',\'' + s.id + '\',this)" style="padding:4px 10px;border-radius:7px;border:none;background:linear-gradient(135deg,#f59e0b,#eab308);color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer" title="Upload resultado — pendente">⬆</button>';
             }
           })()}
           <button onclick="window._simOpenPdfModal('${slug}','${s.id}')" style="padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-muted);font-size:0.72rem;cursor:pointer" title="Gerar PDF relatório">📄</button>
@@ -3821,6 +3894,9 @@ window._editSimLinks = async function(slug, simId, simTitulo) {
       if (!rows || !rows.length) throw new Error('Ranking não encontrado');
 
       const updated = { ...rows[0].respostas, link_gabarito: newLink || null, link_boletins: newBoletinsLink || null };
+      updated.link_boletins_pacotes = null;
+      updated.link_boletins_pacotes_rotulos = null;
+      updated.link_boletins_rotulo = null;
       const patchResp = await window._supaWrite(
         `simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__`,
         'PATCH',
@@ -5385,7 +5461,8 @@ window._confirmProfExclListBeforeUpload = async function(slugHint) {
 
   window._updateMultiBtn = function() {
     const hasFiles = window._periodSlots.some(s => s.turmaFiles.some(tf => tf.file));
-    $("btnProcess").disabled = !(hasFiles && $("updateInst").value);
+    const slugOk = $("updateInst").value || (window._newInstWizardPending && window._newInstWizardPending.slug);
+    $("btnProcess").disabled = !(hasFiles && slugOk);
   };
 
   // Compatibilidade: retorna view "plana" para o handler de upload
@@ -5430,6 +5507,25 @@ window._confirmProfExclListBeforeUpload = async function(slugHint) {
       if ($('processLog')) { $('processLog').innerHTML = ''; $('processLog').style.display = 'none'; }
       if ($('successBanner')) $('successBanner').classList.remove('visible');
     }
+  };
+
+  /** Voltar na etapa 1 do upload: no wizard Nova IES volta ao modal fase 1. */
+  window._uploadStep1Back = function() {
+    if (window._newInstWizardActive) window._newInstWizardBack();
+    else window._goToStep(0);
+  };
+
+  /** Botão "Fazer novo upload" no preview: fecha wizard Nova IES se ativo. */
+  window._previewFazerNovoUpload = function() {
+    if (window._newInstWizardActive) {
+      window._restoreNewInstUploadBundle();
+      window._newInstWizardActive = false;
+      window._newInstWizardPending = null;
+      if (typeof window._resetUploadForm === 'function') window._resetUploadForm();
+      window._closeNewInstModal();
+      return;
+    }
+    window._goToStep(0);
   };
 
   window._selectUploadMode = function(mode) {
@@ -5696,8 +5792,8 @@ window._confirmProfExclListBeforeUpload = async function(slugHint) {
   $("btnProcess").addEventListener("click", async()=>{
     clearLog(); $("previewCard").style.display="none"; $("successBanner").classList.remove("visible");
     if ($("validationPanel")) $("validationPanel").style.display = "none";
-    const slug=$("updateInst").value;
-    if(!slug){log("Selecione uma instituição","err");return;}
+    const slug = $("updateInst").value || (window._newInstWizardPending && window._newInstWizardPending.slug);
+    if (!slug) { log("Selecione uma instituição", "err"); return; }
 
     // Validar turma obrigatória em modo "nova turma" — cada arquivo deve ter turma
     if (window._selectedMode === 'new-turma') {
@@ -5730,6 +5826,33 @@ window._confirmProfExclListBeforeUpload = async function(slugHint) {
     if (validation.warnings.length > 0) {
       const proceed = await window._showValidationConfirm(validation.warnings);
       if (!proceed) { log("Processamento cancelado pelo operador.", "warn"); return; }
+    }
+
+    if (window._newInstWizardPending) {
+      const p = window._newInstWizardPending;
+      if ((window._instData || []).some(function(i) { return i.slug === p.slug; })) {
+        log("Já existe uma IES com este slug.", "err");
+        return;
+      }
+      try {
+        await window._postNewInstituicaoRow(p.slug, p.nome, p.cidade, p.wip);
+        showToast("IES registrada: " + p.slug, "success");
+        if (p.deploy) {
+          if ($("btnProcess")) $("btnProcess").innerHTML = "Gerando pasta...";
+          await window._deployNewIesFolder(p.slug, p.nome, p.cidade);
+          showToast("Pasta gerada e deploy realizado!", "success");
+        }
+        if (typeof loadAndRenderInstitutions === "function") await loadAndRenderInstitutions();
+        if (typeof window._refreshInstGrid === "function") window._refreshInstGrid();
+        $("updateInst").value = p.slug;
+        await window._detectUploadMode(p.slug);
+        window._newInstWizardPending = null;
+      } catch (e) {
+        const em = e && e.message ? e.message : String(e);
+        log(em, "err");
+        showToast(em, "error");
+        return;
+      }
     }
 
     $("btnProcess").disabled=true;
@@ -5997,18 +6120,25 @@ window._confirmProfExclListBeforeUpload = async function(slugHint) {
         await window._upsertAlunosMaster(slug, parsedPeriods, log);
       }
 
+      const skipPreviewAfterWizardOk = !!(engSaveOk && window._newInstWizardActive);
       if (engSaveOk) {
         log(`\n🎉 Dados publicados! O dashboard já está atualizado.`, "ok");
-        showToast(`${totalAlunosProcessed.size} alunos atualizados no Supabase`, 'success');
-        $("successBanner").classList.add("visible");
-        $("successText").innerHTML = `<strong>Dados publicados!</strong> ${parsedPeriods.length} período(s) e ${totalAlunosProcessed.size} alunos gravados no Supabase. O dashboard já está atualizado.`;
+        if (window._newInstWizardActive) {
+          window._newInstWizardOnSuccessClose(totalAlunosProcessed.size, parsedPeriods.length);
+        } else {
+          showToast(`${totalAlunosProcessed.size} alunos atualizados no Supabase`, 'success');
+          $("successBanner").classList.add("visible");
+          $("successText").innerHTML = `<strong>Dados publicados!</strong> ${parsedPeriods.length} período(s) e ${totalAlunosProcessed.size} alunos gravados no Supabase. O dashboard já está atualizado.`;
+        }
       } else {
         log(`\n❌ ERRO: O engajamento NÃO foi salvo no Supabase. Verifique se sua sessão está ativa e tente novamente.`, "err");
         showToast(`Erro ao salvar engajamento — sessão pode ter expirado`, 'error');
         $("successBanner").classList.add("visible");
         $("successText").innerHTML = `<strong style="color:#dc2626">Atenção:</strong> O processamento concluiu mas o engajamento <strong>NÃO foi gravado</strong> no Supabase. Faça login novamente e reprocesse.`;
       }
-      renderPreview(parsedPeriods);
+      if (!skipPreviewAfterWizardOk) {
+        renderPreview(parsedPeriods);
+      }
       window._refreshInstGrid?.();
       // Esconder etapa 1, mostrar preview
       if ($("uploadStep1")) $("uploadStep1").style.display = "none";
@@ -7756,6 +7886,10 @@ window._renderAlunosMaster = function() {
       a.id != null
         ? `<button type="button" onclick="window._openAlunoEditModal(${a.id})" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.68rem;font-weight:600;cursor:pointer" title="Editar nome">✎</button>`
         : '';
+    const deleteBtn =
+      a.id != null
+        ? `<button type="button" onclick="window._deleteAlunoMaster(${a.id})" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(220,38,38,0.45);background:rgba(220,38,38,0.08);color:#f87171;font-size:0.68rem;font-weight:600;cursor:pointer" title="Excluir aluno do cadastro">🗑</button>`
+        : '';
     return `<tr style="border-bottom:1px solid var(--border-subtle)">
     <td style="padding:10px 14px;font-weight:600;font-size:0.83rem">${nomeCell}</td>
     <td style="padding:10px 14px;font-size:0.76rem;color:var(--text-muted);font-variant-numeric:tabular-nums">${_fmtCpfCell(a.cpf)}</td>
@@ -7764,7 +7898,7 @@ window._renderAlunosMaster = function() {
     <td style="padding:10px 14px;font-size:0.82rem;font-weight:600;color:var(--text-soft)">${esc(a.instituicao)}</td>
     <td style="padding:10px 14px;font-size:0.78rem;color:var(--text-muted)">${String(a.turma || '').trim() ? esc(String(a.turma).trim()) : '<span style="color:var(--text-muted);opacity:0.7">—</span>'}</td>
     <td style="padding:10px 14px">${origemBadge}</td>
-    <td style="padding:10px 14px;text-align:center"><span style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:center">${boletimBtn}${emailBoletimBtn}${editBtn}</span></td>
+    <td style="padding:10px 14px;text-align:center"><span style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:center">${boletimBtn}${emailBoletimBtn}${editBtn}${deleteBtn}</span></td>
   </tr>`;
   }).join('') + (filtered.length > 300 ? '<tr><td colspan="8" style="padding:14px;text-align:center;color:var(--text-muted);font-size:0.75rem">Mostrando 300 de ' + filtered.length + ' — use filtros para refinar.</td></tr>' : '');
 };
@@ -7841,6 +7975,33 @@ window._saveAlunoNomeEdit = async function() {
     if (fb) { fb.style.color = 'var(--accent)'; fb.textContent = e.message || 'Erro'; }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Salvar'; }
+  }
+};
+
+/**
+ * Remove linha de alunos_master (DELETE via admin-proxy). Pedido de confirmação antes.
+ * @param {number|string} rowId
+ */
+window._deleteAlunoMaster = async function(rowId) {
+  const a = (window._allAlunos || []).find(x => String(x.id) === String(rowId));
+  if (!a || a.id == null) return;
+  const nomeVal = String(a.nome || '').trim() || 'Aluno (sem nome)';
+  const cpfDigits = String(a.cpf || '').replace(/\D/g, '');
+  const cpfHint = cpfDigits.length >= 4 ? ` — CPF …${cpfDigits.slice(-4)}` : '';
+  if (!confirm(`Excluir permanentemente do cadastro:\n\n${nomeVal}${cpfHint}\n\nEsta ação não pode ser desfeita.`)) return;
+  try {
+    const resp = await window._supaWrite(`alunos_master?id=eq.${encodeURIComponent(a.id)}`, 'DELETE', null);
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      showToast((t || 'Erro ao excluir').slice(0, 200), 'error');
+      return;
+    }
+    window._allAlunos = (window._allAlunos || []).filter(x => String(x.id) !== String(rowId));
+    window._renderAlunosMaster();
+    if (typeof window._refreshDashAlunoStats === 'function') window._refreshDashAlunoStats();
+    showToast('Aluno excluído do cadastro.', 'success');
+  } catch (e) {
+    showToast(e.message || 'Erro ao excluir', 'error');
   }
 };
 
@@ -7999,9 +8160,19 @@ async function saveUserEdit() {
 
     // Atualizar na lista local
     const idx = allUsers.findIndex(u => u.email === editingUserId);
-    if (idx !== -1) { allUsers[idx].role = role; allUsers[idx].instituicao = inst; allUsers[idx].ativo = ativo; }
+    const coordAccessEl = document.getElementById('modalCoordAccess');
+    const isApprovedCoord = role === 'coordenador' && coordAccessEl && coordAccessEl.value === 'approved';
+    if (idx !== -1) {
+      allUsers[idx].role = role;
+      allUsers[idx].instituicao = inst;
+      allUsers[idx].ativo = ativo;
+      if (role === 'coordenador' && coordAccessEl) allUsers[idx].access_approved = coordAccessEl.value === 'approved';
+    }
     filterUsers();
-    if (typeof window._refreshPendingApprovalUI === 'function') window._refreshPendingApprovalUI();
+    if (isApprovedCoord && typeof window._markPreCadastroNotifsReadForEmail === 'function') {
+      await window._markPreCadastroNotifsReadForEmail(editingUserId);
+    }
+    if (typeof window._refreshPendingApprovalUI === 'function') await window._refreshPendingApprovalUI();
 
     setTimeout(() => closeUserModal(), 1500);
   } catch(e) {
@@ -8328,13 +8499,38 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
   };
 
   /**
-   * Abre o modal de upload (opcionalmente com IES pré-selecionada).
-   * @param {string} [prefSlug] Slug da instituição
+   * Modo vindo da grade (IES + simulado fixos): só confirmação, sem dropdowns.
+   * @param {boolean} locked
    */
-  window._openSimUploadModal = function(prefSlug) {
+  window._setSimUploadLockedUI = function(locked) {
+    const sum = $('simUploadLockedSummary');
+    const pick = $('simUploadPickRow');
+    const hint = $('simUploadTipoHintRow');
+    const pickB = $('bqStep1PickBlock');
+    const note = $('bqStep1LockedNote');
+    const sub = $('simUploadModalHeaderSub');
+    if (sum) sum.style.display = locked ? 'grid' : 'none';
+    if (pick) pick.style.display = locked ? 'none' : '';
+    if (hint) hint.style.display = locked ? 'none' : '';
+    if (pickB) pickB.style.display = locked ? 'none' : '';
+    if (note) note.style.display = locked ? 'block' : 'none';
+    if (sub) {
+      sub.textContent = locked
+        ? 'Confira o contexto (IES e simulado) e envie a planilha de resultado.'
+        : 'Selecione a IES e o tipo de simulado para subir a planilha';
+    }
+  };
+
+  /**
+   * Abre o modal de upload (opcionalmente com IES e, na grade, simulado pré-definidos).
+   * @param {string} [prefSlug] Slug da instituição
+   * @param {string} [prefSimId] UUID do simulado (fluxo a partir da hero/linha da gestão)
+   */
+  window._openSimUploadModal = function(prefSlug, prefSimId) {
     const m = $('simUploadModal');
     if (!m) return;
     window._resetSimUploadModalViews();
+    window._simUploadPendingLockSimId = null;
     const _g = $('bqLinkGabarito');
     const _b = $('bqLinkBoletins');
     if (_g) _g.value = '';
@@ -8343,12 +8539,29 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     m.onclick = function(ev) {
       if (ev.target === m) window._closeSimUploadModal();
     };
-    if (prefSlug && $('simInst')) {
+
+    const locked = !!(prefSlug && prefSimId);
+    if (typeof window._setSimUploadLockedUI === 'function') window._setSimUploadLockedUI(locked);
+
+    if (locked && $('simInst')) {
+      $('simInst').value = prefSlug;
+      const ds = window.INSTITUTION_DATASETS || {};
+      const inst = ds[prefSlug];
+      const el = $('simUploadLockedInstName');
+      if (el) el.textContent = (inst && inst.institutionName) ? inst.institutionName : String(prefSlug).toUpperCase();
+      const tSim = $('simUploadLockedSimTitle');
+      if (tSim) tSim.textContent = 'Carregando…';
+      const typeSel = $('simUploadType');
+      if (typeSel) typeSel.value = 'bq';
+      window._simUploadPendingLockSimId = prefSimId;
+      if (typeof window._onSimUploadTypeChange === 'function') window._onSimUploadTypeChange();
+    } else if (prefSlug && $('simInst')) {
       $('simInst').value = prefSlug;
       const typeSel = $('simUploadType');
       if (typeSel) typeSel.value = 'bq';
       if (typeof window._onSimUploadTypeChange === 'function') window._onSimUploadTypeChange();
     }
+
     setTimeout(() => {
       const z = $('simUploadModalScroll');
       if (z) z.scrollTop = 0;
@@ -8391,6 +8604,9 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       );
       if (!rows || !rows.length) throw new Error('Ranking não encontrado');
       const updated = { ...rows[0].respostas, link_gabarito: newLink || null, link_boletins: newBoletinsLink || null };
+      updated.link_boletins_pacotes = null;
+      updated.link_boletins_pacotes_rotulos = null;
+      updated.link_boletins_rotulo = null;
       const patchResp = await window._supaWrite(
         `simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(c.slug)}&aluno_nome=eq.__RANKING__`,
         'PATCH',
@@ -8406,8 +8622,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     }
   };
 
-  /** Abre o upload a partir da seta na grade (modal + IES + fluxo BQ). */
-  window._simOpenUpload = function(slug, anchorEl) {
+  /** Abre o upload a partir do botão na grade (IES + simulado da linha). */
+  window._simOpenUpload = function(slug, simId, anchorEl) {
     document.querySelectorAll('.sim-dropdown').forEach(d => d.remove());
     document.querySelectorAll('.dash-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -8416,12 +8632,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     if (tb) tb.classList.add('active');
     if (tp) tp.classList.add('active');
 
-    window._openSimUploadModal(slug);
-
-    $('simInst').value = slug;
-    const typeSel = $('simUploadType');
-    if (typeSel) typeSel.value = 'bq';
-    if (typeof window._onSimUploadTypeChange === 'function') window._onSimUploadTypeChange();
+    window._openSimUploadModal(slug, simId);
 
     ['Tend', 'Pers', 'Bq'].forEach(t => {
       const c = $('simCard' + t), b = $('simBody' + t);
@@ -8431,8 +8642,13 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
     if (typeof window._bqSetWizardStep === 'function') window._bqSetWizardStep(1);
 
     setTimeout(() => {
-      const sel = $('simBQSelect');
-      if (sel) sel.focus();
+      const locked = !!(slug && simId);
+      const n1 = $('bqBtnNext1');
+      if (locked && n1) n1.focus();
+      else {
+        const sel = $('simBQSelect');
+        if (sel) sel.focus();
+      }
     }, 80);
   };
 
@@ -8481,6 +8697,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
         const _b = $('bqLinkBoletins');
         if (_g) _g.value = '';
         if (_b) _b.value = '';
+        window._simUploadPendingLockSimId = null;
+        if (typeof window._setSimUploadLockedUI === 'function') window._setSimUploadLockedUI(false);
         window._resetSimUploadModalViews();
         if (typeof window._bqSetWizardStep === 'function') window._bqSetWizardStep(1);
         const z = $('simUploadModalScroll');
@@ -9746,9 +9964,11 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
           ${isAprim ? '' : divHTML}
           ${turmaHTML}
 
-          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--border-subtle)">
-            <button id="_reviewCancelBtn" style="padding:10px 20px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-elevated);color:var(--text);font-weight:600;cursor:pointer;font-size:0.85rem">Cancelar upload</button>
-            <button id="_reviewNextBtn" style="padding:10px 24px;border-radius:10px;border:none;background:var(--accent,#3b82f6);color:#fff;font-weight:700;cursor:pointer;font-size:0.85rem">Confirmar fonte de notas →</button>
+          <div id="_reviewStep1Footer" style="display:flex;flex-direction:column;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border-subtle);width:100%;box-sizing:border-box">
+            <div style="display:flex;gap:10px;width:100%;box-sizing:border-box">
+              <button id="_reviewCancelBtn" style="flex:1;min-width:0;padding:10px 16px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-elevated);color:var(--text);font-weight:600;cursor:pointer;font-size:0.85rem">Cancelar upload</button>
+              <button id="_reviewNextBtn" style="flex:1;min-width:0;padding:10px 16px;border-radius:10px;border:none;background:var(--accent,#3b82f6);color:#fff;font-weight:700;cursor:pointer;font-size:0.85rem">Confirmar fonte de notas →</button>
+            </div>
           </div>
         </div>
 
@@ -9854,6 +10074,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
           if (!chk.checked) manualInput.focus();
         });
 
+        const s1f = modal.querySelector('#_reviewStep1Footer');
+        if (s1f) s1f.style.display = 'none';
         modal.querySelector('#_reviewStep1').style.display = 'none';
         modal.querySelector('#_reviewStepMedia').style.display = 'block';
       });
@@ -9862,6 +10084,8 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       modal.querySelector('#_reviewMediaBackBtn').addEventListener('click', () => {
         modal.querySelector('#_reviewStepMedia').style.display = 'none';
         modal.querySelector('#_reviewStep1').style.display = 'block';
+        const s1f = modal.querySelector('#_reviewStep1Footer');
+        if (s1f) s1f.style.display = 'flex';
       });
 
       // Step Media → Step 2 (confirmação final)
@@ -10737,6 +10961,7 @@ document.getElementById('btnGoToUsers').addEventListener('click', () => {
       });
     } catch(e) {
       sel.innerHTML = '<option value="">Erro ao carregar simulados</option>';
+      window._simUploadPendingLockSimId = null;
       console.error('_loadBQSimulados erro:', e);
     }
   }
@@ -14495,39 +14720,49 @@ function _loadScript(src) {
   </div>
 </div>
 
-<!-- Modal: nova IES (registro Supabase — superadmin) -->
+<!-- Modal: nova IES (registro Supabase — superadmin) — fluxo em 2 fases: dados + cadastro de turma(s) -->
 <div id="newInstModal" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;flex-direction:row">
-  <div style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:28px;width:min(92%,440px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
+  <div id="newInstModalInner" style="background:var(--bg-card,#181b23);border:1px solid var(--border,#2a2f3e);border-radius:20px;padding:28px;width:min(94%,720px);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <h3 style="font-size:1.05rem;font-weight:700;margin:0">➕ Nova IES</h3>
       <button type="button" onclick="window._closeNewInstModal()" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>
     </div>
-    <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.45;margin:0 0 16px">Cria o registro e opcionalmente gera a pasta do painel do coordenador com deploy automático.</p>
-    <div class="field" style="margin-bottom:12px">
-      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Slug <span class="req">*</span></label>
-      <input type="text" id="newInstSlug" placeholder="ex: minha-faculdade" autocomplete="off" oninput="var el=document.getElementById('newInstSlugPreview');if(el)el.textContent=(this.value||'').trim()||'slug'" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;font-family:monospace;outline:none">
-      <div style="font-size:0.68rem;color:var(--text-muted);margin-top:4px">Minúsculas, números e hífen. URL: /<span id="newInstSlugPreview">slug</span>/</div>
+    <div id="newInstPhase1">
+      <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.45;margin:0 0 16px"><strong>Fase 1/2</strong> — Preencha os dados. O registro no banco só é criado na <strong>fase 2</strong>, ao processar a(s) planilha(s) de turma (cadastro obrigatório).</p>
+      <div class="field" style="margin-bottom:12px">
+        <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Slug <span class="req">*</span></label>
+        <input type="text" id="newInstSlug" placeholder="ex: minha-faculdade" autocomplete="off" oninput="var el=document.getElementById('newInstSlugPreview');if(el)el.textContent=(this.value||'').trim()||'slug'" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;font-family:monospace;outline:none">
+        <div style="font-size:0.68rem;color:var(--text-muted);margin-top:4px">Minúsculas, números e hífen. URL: /<span id="newInstSlugPreview">slug</span>/</div>
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Nome de exibição <span class="req">*</span></label>
+        <input type="text" id="newInstNome" placeholder="Ex: FACULDADE EXEMPLO" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
+      </div>
+      <div class="field" style="margin-bottom:14px">
+        <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Cidade</label>
+        <input type="text" id="newInstCidade" placeholder="Opcional" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
+      </div>
+      <label class="settings-toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:0.85rem">
+        <input type="checkbox" id="newInstDeploy" checked onchange="document.getElementById('newInstWip').checked=!this.checked">
+        <span>Gerar pasta e fazer deploy automático</span>
+      </label>
+      <label class="settings-toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;font-size:0.82rem;color:var(--text-muted)">
+        <input type="checkbox" id="newInstWip">
+        <span>Marcar como WIP (Em breve)</span>
+      </label>
+      <div id="newInstError" style="font-size:0.8rem;color:var(--accent);min-height:20px;margin-bottom:8px;text-align:center"></div>
+      <div style="display:flex;gap:10px">
+        <button type="button" onclick="window._closeNewInstModal()" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
+        <button type="button" id="newInstSubmitBtn" onclick="window._newInstWizardContinue()" style="flex:1;padding:11px;border-radius:10px;border:none;background:var(--accent,#dc2626);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Continuar — cadastro de turmas</button>
+      </div>
     </div>
-    <div class="field" style="margin-bottom:12px">
-      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Nome de exibição <span class="req">*</span></label>
-      <input type="text" id="newInstNome" placeholder="Ex: FACULDADE EXEMPLO" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
-    </div>
-    <div class="field" style="margin-bottom:14px">
-      <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Cidade</label>
-      <input type="text" id="newInstCidade" placeholder="Opcional" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg-elevated);color:var(--text);font-size:0.88rem;outline:none">
-    </div>
-    <label class="settings-toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:0.85rem">
-      <input type="checkbox" id="newInstDeploy" checked onchange="document.getElementById('newInstWip').checked=!this.checked">
-      <span>Gerar pasta e fazer deploy automático</span>
-    </label>
-    <label class="settings-toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;font-size:0.82rem;color:var(--text-muted)">
-      <input type="checkbox" id="newInstWip">
-      <span>Marcar como WIP (Em breve)</span>
-    </label>
-    <div id="newInstError" style="font-size:0.8rem;color:var(--accent);min-height:20px;margin-bottom:8px;text-align:center"></div>
-    <div style="display:flex;gap:10px">
-      <button type="button" onclick="window._closeNewInstModal()" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-soft);font-size:0.88rem;font-weight:600;cursor:pointer">Cancelar</button>
-      <button type="button" id="newInstSubmitBtn" onclick="window._submitNewInst()" style="flex:1;padding:11px;border-radius:10px;border:none;background:var(--accent,#dc2626);color:#fff;font-size:0.88rem;font-weight:700;cursor:pointer">Criar registro</button>
+    <div id="newInstPhase2" style="display:none">
+      <p style="font-size:0.78rem;color:var(--text-muted);line-height:1.45;margin:0 0 12px"><strong>Fase 2/2 — Cadastramento da IES (turmas)</strong><br>Informe o número da turma e anexe a(s) planilha(s). O registro da IES será criado ao clicar em <strong>Processar e publicar</strong>.</p>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <button type="button" onclick="window._newInstWizardBack()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-soft);font-size:0.78rem;font-weight:600;cursor:pointer">← Voltar aos dados</button>
+        <span id="newInstPhase2Slug" style="font-size:0.8rem;color:var(--text-soft);font-family:monospace"></span>
+      </div>
+      <div id="newInstUploadHost" style="margin-top:8px"></div>
     </div>
   </div>
 </div>
@@ -15385,6 +15620,24 @@ window._saveEnvio = async function() {
       </select>
     </div>
     <div id="boletimInfo" style="display:none;margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--bg-elevated);font-size:0.8rem;color:var(--text-muted)"></div>
+    <div style="margin-bottom:10px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.82rem;color:var(--text);line-height:1.45">
+        <input type="checkbox" id="boletimPublishStorage" checked style="margin-top:3px;width:16px;height:16px;accent-color:#6366f1;flex-shrink:0">
+        <span><strong>Publicar no painel do coordenador</strong> — envio automático ao Supabase Storage; divide em vários pacotes ZIP se necessário (sem limite manual de alunos).</span>
+      </label>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.82rem;color:var(--text-muted);line-height:1.45">
+        <input type="checkbox" id="boletimDownloadLocal" style="margin-top:3px;width:16px;height:16px;accent-color:#64748b;flex-shrink:0">
+        <span>Também baixar cópias destes ZIPs neste computador (opcional).</span>
+      </label>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.82rem;color:var(--text);line-height:1.45">
+        <input type="checkbox" id="boletimEmailCoordAfterPublish" checked style="margin-top:3px;width:16px;height:16px;accent-color:#6366f1;flex-shrink:0">
+        <span><strong>E-mail automático à coordenação</strong> — após publicar no storage, envia Excel + links dos pacotes aos coordenadores cadastrados da IES (sem abrir outro modal).</span>
+      </label>
+    </div>
     <div id="boletimProgress" style="display:none;margin-bottom:14px">
       <div style="font-size:0.8rem;font-weight:600;color:var(--text);margin-bottom:6px" id="boletimProgressText">Gerando...</div>
       <div style="width:100%;height:6px;border-radius:3px;background:var(--border);overflow:hidden">
@@ -15428,7 +15681,7 @@ window._saveEnvio = async function() {
       <h3 id="boletimCoordModalTitle" style="font-size:1.02rem;font-weight:700;margin:0;line-height:1.3">Avisar coordenação</h3>
       <button type="button" onclick="document.getElementById('boletimCoordModal').style.display='none'" style="background:none;border:none;color:var(--text-soft);font-size:1.4rem;cursor:pointer">&times;</button>
     </div>
-    <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Será anexada a <strong>planilha Excel</strong> e o e-mail incluirá o <strong>link dos boletins</strong> (pasta ou página dos PDFs). É obrigatório cadastrar esse link no upload do resultado.</p>
+    <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Será anexada a <strong>planilha Excel</strong>. O e-mail incluirá o link para os boletins quando houver um endereço cadastrado no resultado; caso contrário o coordenador poderá usar o link do <strong>painel administrativo</strong> para gerar e baixar os PDFs.</p>
     <div id="boletimCoordLinkAviso" style="margin:0 0 14px;font-size:0.78rem;line-height:1.5;color:var(--text-muted)">Verificando link dos boletins…</div>
     <div class="field" style="margin-bottom:12px">
       <label style="display:block;font-size:0.72rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">Coordenadores</label>
@@ -15452,16 +15705,119 @@ window._saveEnvio = async function() {
 // ═══════════ MOTOR DE BOLETINS — Cálculos + PDF + ZIP ═══════════════
 // ══════════════════════════════════════════════════════════════════════
 
-/** Link dos boletins salvo no __RANKING__ após upload do simulado. */
-window._fetchRankingLinkBoletins = async function(slug, simRef) {
+/**
+ * URLs e rótulos (faixa alfabética) dos pacotes no __RANKING__.
+ * @returns {Promise<{ urls: string[], rotulos: string[] }>}
+ */
+window._fetchRankingBoletinsPacotesFull = async function(slug, simRef) {
   try {
-    const rows = await _supaRest('simulado_respostas',
-      `select=respostas&simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&limit=1`);
-    const lb = rows && rows[0] && rows[0].respostas && rows[0].respostas.link_boletins;
-    return typeof lb === 'string' ? lb.trim() : '';
+    const rows = await _supaRest(
+      'simulado_respostas',
+      `select=respostas&simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&limit=1`
+    );
+    const r = rows && rows[0] && rows[0].respostas;
+    if (!r) return { urls: [], rotulos: [] };
+    let urls = [];
+    const pac = r.link_boletins_pacotes;
+    if (Array.isArray(pac) && pac.length) {
+      urls = pac.map((u) => String(u || '').trim()).filter(Boolean);
+    } else {
+      const lb = r.link_boletins;
+      if (typeof lb === 'string' && lb.trim()) urls = [lb.trim()];
+    }
+    let rotulos = [];
+    if (urls.length > 1) {
+      const rr = r.link_boletins_pacotes_rotulos;
+      rotulos = urls.map((_, i) =>
+        Array.isArray(rr) && rr[i] != null && String(rr[i]).trim()
+          ? String(rr[i]).trim()
+          : 'Pacote ' + (i + 1)
+      );
+    } else if (urls.length === 1) {
+      const ru = r.link_boletins_rotulo;
+      rotulos = [ru && String(ru).trim() ? String(ru).trim() : ''];
+    }
+    return { urls, rotulos };
   } catch (e) {
-    console.warn('_fetchRankingLinkBoletins:', e);
-    return '';
+    console.warn('_fetchRankingBoletinsPacotesFull:', e);
+    return { urls: [], rotulos: [] };
+  }
+};
+
+/**
+ * URLs dos pacotes de boletins no __RANKING__ (um link ou vários após divisão automática).
+ * @returns {Promise<string[]>}
+ */
+window._fetchRankingLinkBoletinsUrls = async function(slug, simRef) {
+  const { urls } = await window._fetchRankingBoletinsPacotesFull(slug, simRef);
+  return urls;
+};
+
+/** Primeiro URL de boletins (compatível com chamadas antigas). */
+window._fetchRankingLinkBoletins = async function(slug, simRef) {
+  const urls = await window._fetchRankingLinkBoletinsUrls(slug, simRef);
+  return urls[0] || '';
+};
+
+/**
+ * Resolve UUID do simulado a partir do `simulado_ref` bq_* (para Excel / e-mail).
+ * @returns {string}
+ */
+window._resolveSimIdFromBoletimRef = function(slug, simRef) {
+  if (!slug || !simRef || typeof simRef !== 'string' || !simRef.startsWith('bq_')) return '';
+  const prefix = 'bq_' + slug + '_';
+  if (!simRef.startsWith(prefix)) return '';
+  let rest = simRef.slice(prefix.length);
+  if (rest.startsWith('tendencias_')) rest = rest.slice('tendencias_'.length);
+  const shortId = rest;
+  const activeSims = window._allSimsBanco || [];
+  const found = activeSims.find((s) => s && s.id && s.id.slice(0, 8) === shortId);
+  return found ? found.id : '';
+};
+
+/**
+ * Atualiza link_boletins no registro __RANKING__ (mesmo backend do admin-proxy).
+ * @param {string|string[]} publicUrlOrUrls
+ * @param {string[]|undefined} rotulosOpt Rótulos por pacote (ex.: "Alunos A – M"), mesmo comprimento que URLs quando vários pacotes.
+ */
+window._patchRankingLinkBoletins = async function(slug, simRef, publicUrlOrUrls, rotulosOpt) {
+  const rows = await window._supaRest(
+    'simulado_respostas',
+    `simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__&select=respostas`
+  );
+  if (!rows?.length) throw new Error('Registro de ranking não encontrado. Processe o resultado do simulado antes.');
+  const urls = Array.isArray(publicUrlOrUrls)
+    ? publicUrlOrUrls.map(u => String(u || '').trim()).filter(Boolean)
+    : publicUrlOrUrls
+      ? [String(publicUrlOrUrls).trim()]
+      : [];
+  const rotulosArr = Array.isArray(rotulosOpt) ? rotulosOpt.map(r => String(r || '').trim()) : [];
+  let pacotesRotulos = null;
+  let rotuloUnico = null;
+  if (urls.length > 1) {
+    pacotesRotulos = urls.map((_, i) => {
+      const r = rotulosArr[i];
+      return r || 'Pacote ' + (i + 1);
+    });
+  } else if (urls.length === 1) {
+    rotuloUnico = rotulosArr[0] || null;
+  }
+  const updated = {
+    ...rows[0].respostas,
+    link_boletins: urls[0] || null,
+    link_boletins_pacotes: urls.length > 1 ? urls : null,
+    link_boletins_pacotes_rotulos: pacotesRotulos,
+    link_boletins_rotulo: rotuloUnico
+  };
+  const patchResp = await window._supaWrite(
+    `simulado_respostas?simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}&aluno_nome=eq.__RANKING__`,
+    'PATCH',
+    { respostas: updated },
+    { prefer: 'return=minimal' }
+  );
+  if (!patchResp.ok) {
+    const t = await patchResp.text().catch(() => '');
+    throw new Error(t || 'HTTP ' + patchResp.status);
   }
 };
 
@@ -15580,28 +15936,54 @@ window._openBoletimEmailCoordModal = async function(slug, simId) {
   modal.style.display = 'flex';
   modal.onclick = function(ev) { if (ev.target === modal) modal.style.display = 'none'; };
   try {
-    const linkBol = await window._fetchRankingLinkBoletins(slug, simRef);
+    const { urls: linkUrls, rotulos: linkRotulos } = await window._fetchRankingBoletinsPacotesFull(slug, simRef);
     if (avisoEl) {
-      if (linkBol) {
+      if (linkUrls.length) {
         const esc = (s) => String(s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(34,197,94,0.45);background:rgba(34,197,94,0.1);color:var(--text)"><strong style="color:#16a34a">Link dos boletins cadastrado.</strong> Você pode enviar o e-mail — o coordenador receberá o Excel e o acesso: <span style="word-break:break-all;opacity:0.95">' + esc(linkBol) + '</span></div>';
+        const listHtml = linkUrls
+          .map((u, i) => {
+            const rot = Array.isArray(linkRotulos) && linkRotulos[i] && String(linkRotulos[i]).trim();
+            const badge = rot
+              ? '<strong style="color:var(--text)">' + esc(String(linkRotulos[i]).trim()) + '</strong>'
+              : '<strong>P' + (i + 1) + '</strong>';
+            return (
+              '<div style="font-size:0.78rem;word-break:break-all;margin-top:6px">' +
+              badge +
+              ' <span style="opacity:0.85">·</span> ' +
+              esc(u) +
+              '</div>'
+            );
+          })
+          .join('');
+        const titleOk =
+          linkUrls.length > 1
+            ? '<strong style="color:#16a34a">' +
+              linkUrls.length +
+              ' pacotes cadastrados.</strong> O e-mail incluirá todos os links:'
+            : '<strong style="color:#16a34a">Link dos boletins cadastrado.</strong> O coordenador receberá o Excel e o acesso:';
+        avisoEl.innerHTML =
+          '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(34,197,94,0.45);background:rgba(34,197,94,0.1);color:var(--text)">' +
+          titleOk +
+          listHtml +
+          '</div>';
       } else {
-        avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(234,179,8,0.55);background:rgba(234,179,8,0.12);color:var(--text)"><strong style="color:#b45309">Cadastre o link dos boletins antes de enviar.</strong> Vá em <strong>Simulados → Banco de Questões</strong>, processe de novo o resultado deste simulado (ou refaça o upload) e preencha o campo <em>Link dos boletins</em> com a URL da pasta ou página dos PDFs. Depois feche este modal e abra o aviso novamente.</div>';
+        avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(59,130,246,0.35);background:rgba(59,130,246,0.08);color:var(--text)"><strong style="color:#3b82f6">Nenhum link de pacote cadastrado.</strong> Você pode enviar mesmo assim — o e-mail usará o painel administrativo para o coordenador gerar ou baixar os boletins. Se quiser incluir um link direto (ex.: pasta no Drive ou arquivo no storage), cadastre em <strong>Simulados</strong> no pós-upload do resultado.</div>';
       }
     }
     if (sendBtn) {
-      sendBtn.disabled = !linkBol;
-      sendBtn.style.opacity = linkBol ? '1' : '0.55';
-      sendBtn.style.cursor = linkBol ? 'pointer' : 'not-allowed';
+      sendBtn.disabled = false;
+      sendBtn.style.opacity = '1';
+      sendBtn.style.cursor = 'pointer';
     }
   } catch (e) {
     console.warn(e);
     if (avisoEl) {
-      avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(220,38,38,0.35);background:rgba(220,38,38,0.08)">Não foi possível verificar o link. Tente de novo ou cadastre o link no upload.</div>';
+      avisoEl.innerHTML = '<div style="padding:12px 14px;border-radius:10px;border:1.5px solid rgba(234,179,8,0.45);background:rgba(234,179,8,0.1);color:var(--text)"><strong style="color:#b45309">Não foi possível verificar o link cadastrado.</strong> Você pode enviar mesmo assim — o e-mail usará o painel administrativo para o coordenador acessar os boletins.</div>';
     }
     if (sendBtn) {
-      sendBtn.disabled = true;
-      sendBtn.style.opacity = '0.55';
+      sendBtn.disabled = false;
+      sendBtn.style.opacity = '1';
+      sendBtn.style.cursor = 'pointer';
     }
   }
 };
@@ -15623,95 +16005,128 @@ window._buildBoletinsZipBlob = async function(slug, simRef) {
   return zip.generateAsync({ type: 'blob' });
 };
 
+/**
+ * Gera Excel e envia o template “coordenador” (Excel + links de pacotes) via SendGrid.
+ * @param {{ slug: string, simId: string, titulo: string, nomeIes: string, simRef: string, emails: string[], nomeDestinatario?: string }}
+ * @returns {Promise<{ sentCount: number, total: number, lastError: string }>}
+ */
+window._sendBoletimCoordPackageExcel = async function(opts) {
+  const emails = [
+    ...new Set(
+      (opts.emails || [])
+        .map((e) => String(e || '').trim().toLowerCase())
+        .filter((e) => e.includes('@'))
+    )
+  ];
+  if (!emails.length) return { sentCount: 0, total: 0, lastError: 'Nenhum e-mail' };
+  const { urls: linkUrls, rotulos: linkRotulos } = await window._fetchRankingBoletinsPacotesFull(
+    opts.slug,
+    opts.simRef
+  );
+  const token = await window._getAdminToken();
+  if (!token) throw new Error('Faça login novamente.');
+  const linkPainel = new URL('admin.html', location.href).href;
+  const pack = await window._simGeneratePDF(opts.slug, opts.simId, { blobsOnly: true });
+  if (!pack || !pack.xlsxBlob) {
+    throw new Error('Não foi possível gerar a planilha Excel. Há resultado cadastrado para este simulado?');
+  }
+  const b64xlsx = await window._blobToBase64(pack.xlsxBlob);
+  const base = pack.baseName || 'Relatorio';
+  const attachments = [
+    {
+      filename: base + '.xlsx',
+      content_base64: b64xlsx,
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }
+  ];
+  const nomeDest = (opts.nomeDestinatario || 'Coordenação').trim() || 'Coordenação';
+  const payloadBase = {
+    supabase_access_token: token,
+    titulo_simulado: opts.titulo,
+    nome_ies: opts.nomeIes,
+    link_boletim: linkPainel,
+    link_boletins_individuais: linkUrls[0] || '',
+    link_boletins_pacotes: linkUrls.length > 1 ? linkUrls : undefined,
+    link_boletins_pacotes_rotulos:
+      linkUrls.length > 1 && Array.isArray(linkRotulos) && linkRotulos.length === linkUrls.length
+        ? linkRotulos
+        : undefined,
+    coord_excel_e_link: true,
+    notificacao_coordenador: true,
+    attachments
+  };
+  let sentCount = 0;
+  let lastError = '';
+  for (const emailTo of emails) {
+    try {
+      const res = await fetch(location.origin + '/.netlify/functions/send-boletim-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payloadBase,
+          to: emailTo,
+          nome_aluno: nomeDest
+        })
+      });
+      let j = {};
+      try {
+        j = await res.json();
+      } catch (_) {}
+      if (res.ok) sentCount++;
+      else {
+        lastError = j.error || 'Erro HTTP ' + res.status;
+        console.warn('Erro ao enviar para ' + emailTo + ':', lastError);
+      }
+    } catch (e) {
+      lastError = e.message;
+      console.warn('Erro ao enviar para ' + emailTo + ':', e);
+    }
+  }
+  return { sentCount, total: emails.length, lastError };
+};
+
 window._submitBoletimCoordEmail = async function() {
   const p = window._boletimCoordPending;
   if (!p) return;
   const manual = document.getElementById('boletimCoordEmailManual');
 
-  // Coletar emails dos checkboxes marcados
   const checkedCbs = document.querySelectorAll('.boletim-coord-cb:checked');
-  const emailsFromCb = Array.from(checkedCbs).map(cb => cb.value.trim().toLowerCase()).filter(e => e.includes('@'));
-
-  // Coletar emails manuais (separados por vírgula)
-  const emailsFromManual = (manual.value || '').split(',').map(e => e.trim().toLowerCase()).filter(e => e.includes('@'));
-
-  // Juntar e remover duplicatas
+  const emailsFromCb = Array.from(checkedCbs)
+    .map((cb) => cb.value.trim().toLowerCase())
+    .filter((e) => e.includes('@'));
+  const emailsFromManual = (manual.value || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.includes('@'));
   const allEmails = [...new Set([...emailsFromCb, ...emailsFromManual])];
   if (!allEmails.length) {
     showToast('Selecione ao menos um coordenador ou digite um e-mail.', 'warn');
     return;
   }
 
-  // Nome do primeiro destinatário para o template
   let nomeDest = 'Coordenação';
   if (checkedCbs.length > 0) {
     const dn = checkedCbs[0].getAttribute('data-nome');
     if (dn) nomeDest = dn.trim() || nomeDest;
   }
-  const linkBoletinsRanking = await window._fetchRankingLinkBoletins(p.slug, p.simRef);
-  if (!linkBoletinsRanking) {
-    showToast('Cadastre o link dos boletins no processamento do resultado (campo Link dos boletins) antes de enviar o e-mail ao coordenador.', 'error');
-    return;
-  }
   document.getElementById('boletimCoordModal').style.display = 'none';
   try {
     showToast('Gerando Excel e preparando e-mail…', 'info');
-    const token = await window._getAdminToken();
-    if (!token) {
-      showToast('Faça login novamente.', 'error');
-      return;
-    }
-    const linkPainel = new URL('admin.html', location.href).href;
-    const pack = await window._simGeneratePDF(p.slug, p.simId, { blobsOnly: true });
-    if (!pack || !pack.xlsxBlob) {
-      showToast('Não foi possível gerar a planilha Excel. Há resultado cadastrado para este simulado?', 'error');
-      return;
-    }
-    const b64xlsx = await window._blobToBase64(pack.xlsxBlob);
-    const base = pack.baseName || 'Relatorio';
-    const attachments = [
-      { filename: base + '.xlsx', content_base64: b64xlsx, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
-    ];
-    let sentCount = 0;
-    let lastError = '';
-    for (const emailTo of allEmails) {
-      try {
-        const res = await fetch(location.origin + '/.netlify/functions/send-boletim-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            supabase_access_token: token,
-            to: emailTo,
-            nome_aluno: nomeDest,
-            titulo_simulado: p.titulo,
-            nome_ies: p.nomeIes,
-            link_boletim: linkPainel,
-            link_boletins_individuais: linkBoletinsRanking,
-            coord_excel_e_link: true,
-            notificacao_coordenador: true,
-            attachments
-          })
-        });
-        let j = {};
-        try { j = await res.json(); } catch (_) {}
-        if (res.ok) {
-          sentCount++;
-        } else {
-          lastError = j.error || 'Erro HTTP ' + res.status;
-          console.warn('Erro ao enviar para ' + emailTo + ':', lastError);
-        }
-      } catch (e) {
-        lastError = e.message;
-        console.warn('Erro ao enviar para ' + emailTo + ':', e);
-      }
-    }
-    if (sentCount === allEmails.length) {
-      showToast(`E-mail enviado para ${sentCount} destinatário(s).`, 'success');
-    } else if (sentCount > 0) {
-      showToast(`${sentCount} de ${allEmails.length} e-mail(s) enviado(s). Erro: ${lastError}`, 'warn');
+    const r = await window._sendBoletimCoordPackageExcel({
+      slug: p.slug,
+      simId: p.simId,
+      titulo: p.titulo,
+      nomeIes: p.nomeIes,
+      simRef: p.simRef,
+      emails: allEmails,
+      nomeDestinatario: nomeDest
+    });
+    if (r.sentCount === r.total) {
+      showToast(`E-mail enviado para ${r.sentCount} destinatário(s).`, 'success');
+    } else if (r.sentCount > 0) {
+      showToast(`${r.sentCount} de ${r.total} e-mail(s) enviado(s). Erro: ${r.lastError}`, 'warn');
     } else {
-      showToast('Falha ao enviar: ' + lastError, 'error');
-      return;
+      showToast('Falha ao enviar: ' + r.lastError, 'error');
     }
   } catch (e) {
     showToast('Erro: ' + e.message, 'error');
@@ -16566,11 +16981,104 @@ window._enviarBoletimEmail = async function(nome, instituicao, cpf, emailDestino
   }
 };
 
-// ── Geração em lote (ZIP) ──
+// ── Geração em lote (ZIP) — lotes automáticos + storage ──
+window._BOLETIM_MAX_RAW_SEGMENT = 70 * 1024 * 1024;
+window._BOLETIM_MAX_ZIP_UPLOAD = 90 * 1024 * 1024;
+
+/**
+ * Rótulo por faixa alfabética do primeiro caractere do nome (ordenado pt-BR), ex.: "Alunos A – C".
+ * @param {string[]} names
+ * @returns {string}
+ */
+window._boletimLabelFromAlunoNames = function(names) {
+  const arr = names
+    .map((n) => String(n || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  if (!arr.length) return '';
+  const firstLetter = (name) => {
+    const t = String(name || '').trim();
+    if (!t) return '?';
+    const ch = t.charAt(0);
+    const de = ch.normalize('NFD').replace(/\p{M}/gu, '');
+    return de.toUpperCase() || '?';
+  };
+  const a = firstLetter(arr[0]);
+  const b = firstLetter(arr[arr.length - 1]);
+  if (arr.length === 1 || a === b) return 'Alunos ' + a;
+  return 'Alunos ' + a + ' – ' + b;
+};
+
+/**
+ * Divide PDFs até cada ZIP caber no limite de upload (recursivo por quantidade de arquivos).
+ * @param {{ blob: Blob, safeName: string, aluno_nome: string }[]} items
+ * @returns {Promise<{ blob: Blob, label: string }[]>}
+ */
+window._buildBoletimZipBlobsRecursive = async function(items) {
+  if (!items || !items.length) return [];
+  const zip = new JSZip();
+  const nameList = items.map((it) => it.aluno_nome || it.safeName || '');
+  for (let k = 0; k < items.length; k++) {
+    const it = items[k];
+    zip.file(it.safeName + '.pdf', it.blob);
+  }
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const label = window._boletimLabelFromAlunoNames(nameList);
+  if (zipBlob.size <= window._BOLETIM_MAX_ZIP_UPLOAD || items.length === 1) {
+    if (zipBlob.size > window._BOLETIM_MAX_ZIP_UPLOAD) {
+      throw new Error('Um único boletim PDF excede o limite de envio ao storage.');
+    }
+    return [{ blob: zipBlob, label }];
+  }
+  const mid = Math.ceil(items.length / 2);
+  const left = await window._buildBoletimZipBlobsRecursive(items.slice(0, mid));
+  const right = await window._buildBoletimZipBlobsRecursive(items.slice(mid));
+  return left.concat(right);
+};
+
+/**
+ * @param {string} slug
+ * @param {string} simRef
+ * @param {Blob} zipBlob
+ * @param {number} partIndex 1-based
+ * @param {number} totalParts
+ * @returns {Promise<string>} publicUrl
+ */
+window._uploadBoletimZipPart = async function(slug, simRef, zipBlob, partIndex, totalParts) {
+  const up = await window._adminProxyAction({
+    action: 'boletins_storage_signed_upload',
+    slug,
+    simRef,
+    partIndex,
+    totalParts
+  });
+  const fd = new FormData();
+  fd.append('cacheControl', '3600');
+  fd.append('', zipBlob, 'boletins.zip');
+  const putRes = await fetch(up.signedUrl, {
+    method: 'PUT',
+    body: fd,
+    headers: { 'x-upsert': 'true' }
+  });
+  if (!putRes.ok) {
+    const errTxt = await putRes.text().catch(() => '');
+    throw new Error('Upload HTTP ' + putRes.status + (errTxt ? ': ' + errTxt.slice(0, 200) : ''));
+  }
+  return up.publicUrl;
+};
+
 window._generateBoletinsLote = async function() {
   const slug = document.getElementById('boletimIES').value;
   const simRef = document.getElementById('boletimSim').value;
-  if(!slug || !simRef) return;
+  if (!slug || !simRef) return;
+
+  const publishStorage = document.getElementById('boletimPublishStorage')?.checked !== false;
+  const downloadLocal = document.getElementById('boletimDownloadLocal')?.checked === true;
+  const autoEmailCoord = document.getElementById('boletimEmailCoordAfterPublish')?.checked === true;
+  if (!publishStorage && !downloadLocal) {
+    showToast('Marque publicar no painel ou baixar cópias locais (ou ambos).', 'warn');
+    return;
+  }
 
   const btn = document.getElementById('boletimGenBtn');
   const prog = document.getElementById('boletimProgress');
@@ -16580,43 +17088,132 @@ window._generateBoletinsLote = async function() {
   prog.style.display = 'block'; bar.style.width = '0%';
 
   try {
-    // Buscar todos os registros META + BATCH (via REST)
     const records = await _supaRest('simulado_respostas', `select=*&simulado_ref=eq.${encodeURIComponent(simRef)}&ies_slug=eq.${encodeURIComponent(slug)}`);
-    if(!records?.length) throw new Error('Nenhum dado encontrado');
+    if (!records?.length) throw new Error('Nenhum dado encontrado');
 
     const { allAlunosData, questionsMeta } = window._expandBoletimData(records);
-    const inst = (window._instData||[]).find(i => i.slug === slug);
+    const inst = (window._instData || []).find(i => i.slug === slug);
     const iesInfo = { nome: inst?.nome || slug.toUpperCase(), themeHex: inst?.theme_hex || '#1B6D85', logoUrl: inst?.logo_url || '' };
-
-    const zip = new JSZip();
     const total = allAlunosData.length;
+    if (!total) throw new Error('Nenhum aluno para gerar');
 
-    for(let i=0; i<total; i++) {
+    const MAX_RAW = window._BOLETIM_MAX_RAW_SEGMENT;
+    const rawSegments = [];
+    let buffer = [];
+    let bufBytes = 0;
+
+    for (let i = 0; i < total; i++) {
       const a = allAlunosData[i];
-      txt.textContent = `Gerando ${i+1}/${total}: ${a.aluno_nome}`;
-      bar.style.width = ((i+1)/total*100).toFixed(0) + '%';
+      txt.textContent = `Gerando PDF ${i + 1}/${total}: ${a.aluno_nome}`;
+      bar.style.width = ((i + 1) / total * 100).toFixed(0) + '%';
 
       const blob = await window._gerarBoletimPDF(a, allAlunosData, questionsMeta, iesInfo);
-      const safeName = a.aluno_nome.replace(/[^a-zA-ZÀ-ÿ0-9 ]/g,'_').trim();
-      zip.file(`${safeName}.pdf`, blob);
+      const safeName = a.aluno_nome.replace(/[^a-zA-ZÀ-ÿ0-9 ]/g, '_').trim();
+      const item = { blob, safeName, aluno_nome: a.aluno_nome };
 
-      // Yield ao browser a cada 5 PDFs
-      if(i % 5 === 0) await new Promise(r => setTimeout(r, 10));
+      if (buffer.length && bufBytes + blob.size > MAX_RAW) {
+        rawSegments.push(buffer);
+        buffer = [];
+        bufBytes = 0;
+      }
+      buffer.push(item);
+      bufBytes += blob.size;
+      if (i % 5 === 0) await new Promise(r => setTimeout(r, 10));
+    }
+    if (buffer.length) rawSegments.push(buffer);
+
+    txt.textContent = '📦 Montando pacotes ZIP (divisão automática)…';
+    const allZipParts = [];
+    for (let s = 0; s < rawSegments.length; s++) {
+      txt.textContent = `📦 Compactando lote ${s + 1}/${rawSegments.length}…`;
+      const parts = await window._buildBoletimZipBlobsRecursive(rawSegments[s]);
+      for (let p = 0; p < parts.length; p++) allZipParts.push(parts[p]);
     }
 
-    txt.textContent = '📦 Compactando ZIP...';
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `Boletins_${iesInfo.nome}_${simRef}.zip`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const totalParts = allZipParts.length;
+    if (!totalParts) throw new Error('Nenhum pacote gerado');
 
-    txt.textContent = `✅ ${total} boletins gerados!`;
+    const safeFileSlug = String(iesInfo.nome || 'IES').replace(/[^\w\s-à-üÀ-Ü]/g, '_').trim() || 'IES';
+
+    if (downloadLocal) {
+      for (let p = 0; p < totalParts; p++) {
+        txt.textContent = `💾 Preparando download ${p + 1}/${totalParts}…`;
+        const dlUrl = URL.createObjectURL(allZipParts[p].blob);
+        const a = document.createElement('a');
+        a.href = dlUrl;
+        a.download = `Boletins_${safeFileSlug}_${simRef}_parte${p + 1}de${totalParts}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(dlUrl);
+      }
+    }
+
+    const urls = [];
+    if (publishStorage) {
+      const rotulos = allZipParts.map((part) => part.label || '');
+      for (let p = 0; p < totalParts; p++) {
+        txt.textContent = `☁️ Enviando pacote ${p + 1}/${totalParts} ao storage…`;
+        bar.style.width = ((p + 1) / totalParts * 100).toFixed(0) + '%';
+        const u = await window._uploadBoletimZipPart(slug, simRef, allZipParts[p].blob, p + 1, totalParts);
+        urls.push(u);
+      }
+      await window._patchRankingLinkBoletins(slug, simRef, urls, rotulos);
+      if (typeof window._loadBoletimAvailability === 'function') window._loadBoletimAvailability();
+    }
+
+    let coordMailSuffix = '';
+    if (publishStorage && autoEmailCoord) {
+      txt.textContent = '📧 Enviando Excel à coordenação…';
+      const simIdResolved = window._resolveSimIdFromBoletimRef(slug, simRef);
+      let coords = [];
+      try {
+        coords = await window._fetchCoordenadoresForIes(slug);
+      } catch (e) {
+        console.warn(e);
+      }
+      const coordEmails = coords.map((c) => c.email).filter(Boolean);
+      if (simIdResolved && coordEmails.length) {
+        const refRow = (window._boletimSimRefs || []).find((r) => r.ies_slug === slug && r.simulado_ref === simRef);
+        const tituloSim = refRow && refRow.titulo ? refRow.titulo : 'Simulado';
+        const nomeIes = inst ? (inst.nome || slug.toUpperCase()) : slug.toUpperCase();
+        try {
+          const sent = await window._sendBoletimCoordPackageExcel({
+            slug,
+            simId: simIdResolved,
+            titulo: tituloSim,
+            nomeIes,
+            simRef,
+            emails: coordEmails,
+            nomeDestinatario: 'Coordenação'
+          });
+          if (sent.sentCount === sent.total) {
+            coordMailSuffix = ` E-mail com Excel enviado a ${sent.sentCount} coordenador(es).`;
+          } else if (sent.sentCount > 0) {
+            coordMailSuffix = ` E-mail à coordenação parcial (${sent.sentCount}/${sent.total}).`;
+          } else {
+            coordMailSuffix = ' Falha no e-mail à coordenação.';
+          }
+        } catch (err) {
+          console.warn(err);
+          coordMailSuffix = ' E-mail à coordenação não enviado: ' + (err && err.message ? err.message : String(err)) + '.';
+        }
+      } else if (!coordEmails.length) {
+        coordMailSuffix = ' Nenhum coordenador cadastrado para e-mail automático.';
+      } else {
+        coordMailSuffix = ' Não foi possível enviar e-mail automático (simulado não resolvido).';
+      }
+    }
+
+    txt.textContent = `✅ ${total} boletins em ${totalParts} pacote(s).`;
     bar.style.width = '100%';
-    showToast(`${total} boletins gerados e baixados!`, 'success');
-
-  } catch(e) {
+    showToast(
+      publishStorage
+        ? `${total} boletins → ${totalParts} link(s) no painel do coordenador.${coordMailSuffix}`
+        : `${total} boletins → ${totalParts} arquivo(s) baixado(s).`,
+      'success'
+    );
+  } catch (e) {
     txt.textContent = '❌ Erro: ' + e.message;
     showToast('Erro: ' + e.message, 'error');
     console.error(e);
@@ -17215,6 +17812,13 @@ window._savePvAtiv = async function() {
       window._atividadeCountMap[slug] = (window._atividadeCountMap[slug] || 0) + 1;
       if (typeof _populateAtivCount === 'function') _populateAtivCount();
     }
+    if (tipo === 'reuniao' && window._reuniaoCountMap) {
+      const slug = window._pvCurrentSlug;
+      window._reuniaoCountMap[slug] = (window._reuniaoCountMap[slug] || 0) + 1;
+      window._totalReunioes = (window._totalReunioes || 0) + 1;
+      const statRe = document.getElementById('statReunioes');
+      if (statRe) statRe.textContent = (window._totalReunioes || 0).toLocaleString('pt-BR');
+    }
   } catch(e) {
     errEl.textContent = e.message;
   } finally {
@@ -17605,6 +18209,26 @@ function _htmlPendingApprovalNotifBlock() {
   </div>`;
 }
 
+/** @param {unknown} raw */
+function _normalizeLidoPor(raw) {
+  if (Array.isArray(raw)) return raw.map(String);
+  if (raw == null || raw === '') return [];
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t.startsWith('[')) {
+      try {
+        const p = JSON.parse(t);
+        return Array.isArray(p) ? p.map(String) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+  if (typeof raw === 'object') return Object.values(/** @type {Record<string, unknown>} */ (raw)).map(String);
+  return [];
+}
+
 window._loadNotifications = async function() {
   const list = document.getElementById('notifList');
   if (!list) return;
@@ -17617,6 +18241,7 @@ window._loadNotifications = async function() {
     const preN = window._preCadastroCount || 0;
     const totalPending = coordPending + preN;
     if (!Array.isArray(notifs) || !notifs.length) {
+      window._notifCache = [];
       list.innerHTML = pendingTop || '<div style="padding:30px;text-align:center;color:var(--text-muted);font-size:0.82rem">Nenhuma notificação.</div>';
       _updateNotifBadge(totalPending > 0 ? totalPending : 0);
       return;
@@ -17626,7 +18251,7 @@ window._loadNotifications = async function() {
     const prioIcons = { urgent: '🔴', warn: '⚠️', info: 'ℹ️' };
     const prioColors = { urgent: 'rgba(220,38,38,0.08)', warn: 'rgba(245,158,11,0.08)', info: 'transparent' };
     const notifsHtml = notifs.map(n => {
-      const lidoPor = Array.isArray(n.lido_por) ? n.lido_por : [];
+      const lidoPor = _normalizeLidoPor(n.lido_por);
       const isRead = lidoPor.includes(userEmail);
       if (!isRead) unread++;
       const icon = prioIcons[n.prioridade] || 'ℹ️';
@@ -17679,34 +18304,101 @@ window._onPreCadastroNotifClick = async function(id) {
 window._markNotifRead = async function(id) {
   const userEmail = (window._adminProfile?.email || '');
   if (!userEmail) return;
-  const notif = window._notifCache.find(n => String(n.id) === String(id));
+  let notif = (window._notifCache || []).find(n => String(n.id) === String(id));
+  if (!notif) {
+    try {
+      const rows = await window._supaRest(
+        'notificacoes_admin',
+        'select=id,lido_por&id=eq.' + encodeURIComponent(id) + '&limit=1'
+      );
+      notif = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    } catch (_) {
+      notif = null;
+    }
+  }
   if (!notif) return;
-  const lidoPor = Array.isArray(notif.lido_por) ? [...notif.lido_por] : [];
+  const lidoPor = [..._normalizeLidoPor(notif.lido_por)];
   if (lidoPor.includes(userEmail)) return;
   lidoPor.push(userEmail);
   try {
-    await window._supaWrite('notificacoes_admin?id=eq.' + encodeURIComponent(id), 'PATCH', { lido_por: lidoPor });
+    const resp = await window._supaWrite('notificacoes_admin?id=eq.' + encodeURIComponent(id), 'PATCH', { lido_por: lidoPor });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      showToast('Não foi possível marcar como lida.' + (errText ? ' ' + errText.slice(0, 80) : ''), 'error');
+      return;
+    }
     window._loadNotifications();
-  } catch (_) {}
+  } catch (e) {
+    showToast('Não foi possível marcar como lida.', 'error');
+  }
 };
 
 window._markAllNotifsRead = async function() {
   const userEmail = (window._adminProfile?.email || '');
   if (!userEmail) return;
-  const unread = window._notifCache.filter(n => {
-    const lp = Array.isArray(n.lido_por) ? n.lido_por : [];
-    return !lp.includes(userEmail);
-  });
-  if (!unread.length) return;
+  let notifs = window._notifCache;
+  if (!Array.isArray(notifs) || !notifs.length) {
+    try {
+      notifs = await window._supaRest(
+        'notificacoes_admin',
+        'select=id,lido_por&order=created_at.desc&limit=50'
+      );
+    } catch (_) {
+      showToast('Não foi possível carregar notificações.', 'error');
+      return;
+    }
+  }
+  if (!Array.isArray(notifs)) notifs = [];
+  const unread = notifs.filter(n => !_normalizeLidoPor(n.lido_por).includes(userEmail));
+  if (!unread.length) {
+    if (typeof showToast === 'function') showToast('Nenhuma notificação nova para marcar.', 'info');
+    return;
+  }
   try {
     for (const n of unread) {
-      const lidoPor = Array.isArray(n.lido_por) ? [...n.lido_por] : [];
-      lidoPor.push(userEmail);
-      await window._supaWrite('notificacoes_admin?id=eq.' + encodeURIComponent(n.id), 'PATCH', { lido_por: lidoPor });
+      const lidoPor = [..._normalizeLidoPor(n.lido_por), userEmail];
+      const resp = await window._supaWrite('notificacoes_admin?id=eq.' + encodeURIComponent(n.id), 'PATCH', { lido_por: lidoPor });
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        showToast('Falha ao marcar notificações.' + (errText ? ' ' + errText.slice(0, 80) : ''), 'error');
+        window._loadNotifications();
+        return;
+      }
     }
     window._loadNotifications();
     showToast('Todas marcadas como lidas.', 'success');
-  } catch (_) {}
+  } catch (_) {
+    showToast('Falha ao marcar notificações.', 'error');
+  }
+};
+
+/**
+ * Após aprovar pré-cadastro no painel Usuários, marca como lidas as notificações de tipo pre_cadastro daquele e-mail.
+ * @param {string} approvedEmail
+ */
+window._markPreCadastroNotifsReadForEmail = async function(approvedEmail) {
+  const adminEmail = (window._adminProfile?.email || '');
+  if (!approvedEmail || !adminEmail) return;
+  try {
+    const rows = await window._supaRest(
+      'notificacoes_admin',
+      'select=id,lido_por,mensagem&tipo=eq.pre_cadastro&order=created_at.desc&limit=100'
+    );
+    if (!Array.isArray(rows)) return;
+    const needle = String(approvedEmail).trim().toLowerCase();
+    const targets = rows.filter((r) => String(r.mensagem || '').toLowerCase().includes(needle));
+    for (const n of targets) {
+      const lidoPor = [..._normalizeLidoPor(n.lido_por)];
+      if (lidoPor.includes(adminEmail)) continue;
+      lidoPor.push(adminEmail);
+      const resp = await window._supaWrite(
+        'notificacoes_admin?id=eq.' + encodeURIComponent(n.id),
+        'PATCH',
+        { lido_por: lidoPor }
+      );
+      if (!resp.ok) continue;
+    }
+  } catch (_) { /* ignore */ }
 };
 
 // ── Auto-notificações de simulados (1-7 dias antes) ─────────────
